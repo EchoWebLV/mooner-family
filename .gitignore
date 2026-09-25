@@ -1,0 +1,10 @@
+# secrets: never commit keys or env files
+.env
+.env.*
+*keypair*.json
+id.json
+
+# build output
+**/target/
+node_modules/
+programs/presale/litesvm/fixtures/*.so

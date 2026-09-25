@@ -76,7 +76,7 @@ All are PDAs of the presale program. Byte offsets are fixed; `u64` and `i64` are
 | 66 | bot: the key allowed to run `release` |
 | 98 | dbc_config: the only Meteora config a launch may use |
 
-**Presale** `["presale", mint]`, 264 bytes:
+**Presale** `["presale", mint]`, 272 bytes:
 
 | off | field |
 |---|---|
@@ -100,7 +100,8 @@ All are PDAs of the presale program. Byte offsets are fixed; `u64` and `i64` are
 | 235 | claimed_tokens |
 | 243 | claims_done |
 | 251 | fees_paid (settle fees the pot paid while FULL) |
-| 259 | spare: 5 bytes |
+| 259 | settled_sum (Σ commits moved into the Presale by settle_seat) |
+| 267 | spare: 5 bytes |
 
 A layout unit test pins these offsets.
 
@@ -139,16 +140,16 @@ The tag is the first data byte. The undelegate callback uses its 8-byte discrimi
 | # | name | who | what |
 |---|---|---|---|
 | 0 | init_config | the program's upgrade authority (read from ProgramData) | creates Config |
-| 1 | set_config | admin | rotates gate, bot, dbc_config |
+| 1 | set_config | admin | rotates admin, gate, bot, dbc_config |
 | 2 | open_presale | creator + gate + mint key | creates Presale (OPEN, deadline = now + 1h) and the creator's Seat (deposit ≥ commit, commit a valid seat size); raised = commit; seats_committed = 1 |
 | 3 | join | user + gate | creates a Seat with `deposit` in [MIN_SEAT, MAX_SEAT]. The Presale is read from its raw L1 snapshot (it is delegated): it must be OPEN and before the deadline. The escrow moves wallet → seat |
-| 4 | delegate | payer | kind 0 Presale (payer = creator; stores the validator), kind 1 Seat (payer = seat.user; validator must equal presale.validator). SDK `delegate_account`, with periodic commits off if `DelegateConfig` allows it (checked in the SDK source during the build) |
+| 4 | delegate | payer | kind 0 Presale (payer = creator; state must be OPEN, so a Presale never re-enters the ER; stores the validator), kind 1 Seat (payer = seat.user; validator must equal presale.validator). SDK `delegate_account`, with periodic commits off if `DelegateConfig` allows it (checked in the SDK source during the build) |
 | 5 | settle_seat | anyone | see "Settling a seat" |
 | 6 | release | bot | launch tx only, see "Launch tx" |
 | 7 | settle | anyone | launch tx only, see "Launch tx" |
 | 8 | claim | anyone | tokens to `seat.user`, pro rata; funds the ATA from the pot if missing; closes the seat, rent to the user |
 | 9 | fail | anyone | FULL, home, now ≥ full_ts + GRACE → FAILED |
-| 10 | close_presale | anyone | after every committed seat is claimed (SETTLED) or refunded (EXPIRED/FAILED): closes the vault and the presale, rent and dust to the creator |
+| 10 | close_presale | anyone | after every committed seat is claimed (SETTLED) or refunded (EXPIRED/FAILED): on SETTLED, burns any tokens left in the vault (a stray token must not block the close) and closes it; closes the presale; rent and dust to the creator |
 
 **Inside the ER:**
 
@@ -161,16 +162,26 @@ The tag is the first data byte. The undelegate callback uses its 8-byte discrimi
 | 15 | commit_presale | anyone | FULL or EXPIRED → commit and undelegate the Presale |
 | 16 | commit_seats | anyone | the Presale is not OPEN (it may already be home: the ER reads it) → commit and undelegate the listed seats of this presale |
 
+## Home guard (the ER-lane trap)
+
+Inside the ER a delegated account looks program-owned, so an L1-only instruction could run there on a delegated Presale or Seat and its writes would commit home. MagicPad's rollout notes flag the same trap. The fix:
+- every L1-only instruction that writes a Presale or a Seat (settle_seat, release, fail, close_presale) also takes that account's MagicBlock delegation record (`["delegation", account]` under `DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh`);
+- it requires that record to be empty.
+
+The record exists only while the account is delegated. `claim` and `settle` don't need the guard, because SETTLED and LAUNCHING are reachable only on L1 and delegate kind 0 requires OPEN.
+
+The MagicBlock session fee is taken from the delegation record and metadata rent at undelegation, not from the delegated account (`processor/fast/undelegate.rs` in the delegation program). So a seat's escrow comes home whole.
+
 ## Settling a seat (L1, permissionless)
 
 The seat must be home, meaning owned by this program. The payout always goes to `seat.user`. A cranker who is not the user gets their share of TX_FEE, taken as stated below.
 
 | case | effect |
 |---|---|
-| commit == 0 (never committed, withdrew, or left) | refund the whole deposit, close the seat, rent to the user. The Presale may still be delegated. The fee comes out of the refund |
-| Presale home + FULL, commit > 0, not settled | commit → Presale, (deposit − commit) → user, mark settled, seats_settled += 1. The fee comes from the pot and is added to `fees_paid` |
+| commit == 0 (never committed, withdrew, or left) | refund the whole deposit, close the seat, rent to the user. The Presale isn't read (the seat's own PDA pins it), so this works while the Presale is delegated or after it is closed. The fee comes out of the refund |
+| Presale home + FULL, commit > 0, not settled | commit → Presale, (deposit − commit) → user, mark settled, seats_settled += 1, settled_sum += commit. The fee comes from the pot and is added to `fees_paid` |
 | Presale home + EXPIRED/FAILED, commit > 0, not settled | the whole deposit goes from the seat to the user. Close the seat, seats_refunded += 1. The fee comes out of the refund |
-| Presale home + FAILED, commit > 0, settled | the rest of the deposit already went home at settle. The Presale pays `commit − fees_paid × commit / raised` (rounded down), so every seat shares the pot's settle fees pro rata. Close the seat, seats_refunded += 1. The fee comes out of the refund |
+| Presale home + FAILED, commit > 0, settled | the rest of the deposit already went home at settle. The Presale pays `commit − ceil(fees_paid × commit / settled_sum)`, so the settled seats share the pot's settle fees pro rata and the payouts never exceed what the Presale holds (`settled_sum − fees_paid`). Seats that never settled aren't in the Presale, which is why the divisor is `settled_sum`, not `raised`. Close the seat, seats_refunded += 1. The fee comes out of the refund |
 
 "Your share of TX_FEE" means TX_FEE divided by the number of this program's instructions with the same tag in the tx (read from the instructions sysvar). A cranker can't farm fees by splitting work into more instructions.
 
