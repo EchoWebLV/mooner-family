@@ -8,3 +8,6 @@ id.json
 **/target/
 node_modules/
 programs/presale/litesvm/fixtures/*.so
+
+# engine canary state and keys (local and devnet)
+engine/.canary/

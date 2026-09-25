@@ -223,8 +223,10 @@ If any check fails, the whole tx reverts and the pot stays intact. After GRACE, 
 ## Flows
 
 - **Happy path:**
-  1. Open, which the creator pays for: open_presale, then delegate the presale and the creator seat.
-  2. Joins, each paid by its user: join + delegate.
+  1. Open, which the creator pays for: open_presale, then delegate the presale, then delegate the creator seat, all in one tx.
+  2. Joins, each paid by its user: join + delegate, in one tx.
+
+  The entry and its delegates must share a tx. A seat is created with commit 0, and settle_seat on a commit-0 seat is permissionless, so a cranker could settle it home (and take a fee from the deposit) in the gap between a separate open or join and its delegate. The co-signer only signs these exact shapes, with the presale delegated before the seat (delegate(seat) reads the validator that delegate(presale) writes).
   3. Free commits in the ER, until the last one hits 10 SOL and makes it FULL.
   4. The bot runs commit_presale and commit_seats in the ER.
   5. The bot settles every committed seat on L1.
@@ -268,7 +270,7 @@ If any check fails, the whole tx reverts and the pot stays intact. After GRACE, 
 
 - **engine/** (Node ESM, @solana/web3.js 1, the MagicBlock SDK): PDAs, instruction builders, account decoders.
   - A **bot** loop, following MagicPad's keeper lanes: expire, commit home, settle seats, launch, claim, fail, close.
-  - A **co-signer** stub, which signs open and join for an allowlist.
+  - A **co-signer** stub, which signs open and join for an allowlist. It signs only `open + delegate(presale) + delegate(creator seat)` and `join + delegate(seat)`, with compute-budget instructions allowed and nothing else (see Flows).
   - A **devnet canary** that runs the whole happy path and the expiry path against the MagicBlock devnet ER and DBC on devnet.
 - The DBC launch-ix builders are ported from `launch-test/launch.py` and `dbc_layout.py`.
 

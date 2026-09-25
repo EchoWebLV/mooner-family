@@ -216,8 +216,8 @@ The CPI itself is covered by the canary.
 - [ ] Red → implement → green → commit.
 
 ### Task 10: engine (Node) and the devnet canary
-- [ ] `engine/src/*`: mirror the table above, plus the DBC builders ported from launch.py.
-- [ ] `bot.js`: one loop, one lane at a time:
+- [x] `engine/src/*`: mirror the table above, plus the DBC builders ported from launch.py.
+- [x] `bot.js`: one loop, one lane at a time:
   1. OPEN past the deadline → expire (ER);
   2. FULL or EXPIRED in the ER → commit_presale + commit_seats;
   3. home and FULL → settle_seat, in batches;
@@ -225,11 +225,11 @@ The CPI itself is covered by the canary.
   5. SETTLED → claim, in batches;
   6. FULL past grace → fail;
   7. everything done → close.
-- [ ] `canary.js` on devnet:
+- [x] `canary.js` on devnet:
   - deploy with a fresh keypair, then init_config;
-  - happy path: the creator plus throwaway users, funded from the devnet payer, fill 10 SOL. The canary's own config uses devnet amounts, because devnet SOL is scarce. The program is identical, and the TARGET is a compile-time feature `canary` = 0.5 SOL with MIN and MAX scaled down, used only for the canary build.
+  - happy path: the creator plus throwaway users, funded from the devnet payer, fill 10 SOL. The canary's own config uses devnet amounts, because devnet SOL is scarce. The program is identical, and the TARGET is a compile-time feature `canary` = 0.2 SOL (MIN 0.01, MAX 0.1, STEP 0.001, GRACE 60 s), used only for the canary build.
   - expiry path: `canary` DURATION = 120 s.
-- [ ] Commit, then report the devnet results.
+- [x] Commit, then report the devnet results (engine/CANARY.md: devnet 13/13, local 13/13).
 
 ## Self-review
 - **Spec coverage:**
