@@ -45,11 +45,13 @@ pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     require_key(vault, &ata(presale.key, &p.mint, &TOKEN22))?;
     require_key(user_ata, &ata(user.key, &p.mint, &TOKEN22))?;
 
-    // a missing ATA is paid from the reserve: the Presale pre-funds the address, so the
-    // ATA program only allocates (it tops up just the shortfall, which is zero)
+    // a missing ATA is paid from the reserve: the cranker fronts the shortfall inside the
+    // ATA program and the Presale pays it back below. Direct lamport moves must come after
+    // the last CPI: a CPI syncs only the accounts it is given, so a Presale debit made
+    // before it fails the runtime's balance check (UnbalancedInstruction).
+    let mut fronted = 0;
     if user_ata.data_is_empty() {
-        let short = rent(vault.data_len())?.saturating_sub(user_ata.lamports());
-        move_lamports(presale, user_ata, short)?;
+        let before = cranker.lamports();
         invoke(
             &Instruction {
                 program_id: ATA_PROGRAM,
@@ -65,6 +67,8 @@ pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
             },
             &[cranker.clone(), user_ata.clone(), user.clone(), mint.clone(), system.clone(), token22.clone()],
         )?;
+        // the ATA program takes only the shortfall if the address was prefunded
+        fronted = before.saturating_sub(cranker.lamports()).min(rent(vault.data_len())?);
     }
     let (u_mint, u_owner, _) = token_account(user_ata, &TOKEN22)?;
     if u_mint != p.mint || u_owner != *user.key {
@@ -97,7 +101,7 @@ pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     } else {
         fee_share(TxIxs::new(sysvar)?.same_tag(program_id, IX_CLAIM)?)
     };
-    move_lamports(presale, cranker, fee)?;
+    move_lamports(presale, cranker, fronted + fee)?;
     p.claimed_tokens += share;
     p.claims_done += 1;
     p.store(presale)?;

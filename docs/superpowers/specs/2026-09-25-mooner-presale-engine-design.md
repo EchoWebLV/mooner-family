@@ -51,7 +51,13 @@ Four things must hold throughout:
   - its group-launch spec is the closest precedent for this one.
 - **The MagicBlock native SDK** `ephemeral-rollups-sdk` 0.16.2 with `solana-program` 4.0 builds under `cargo-build-sbf` 4.1.0. Delegate, commit-and-undelegate and the undelegate callback all ran on devnet (`launch-test/er-speed`). Mainnet and devnet validators run magicblock-core 0.16.0.
 - **MagicBlock fees:** 300,000 lamports per delegated account per session. The account's delegation payer pays it.
-- **Pre-funded ATAs:** when an ATA address already holds lamports, the ATA program only tops up the shortfall from the payer (`spl-associated-token-account` 6.0.0, `tools/account.rs:28`). So the program can fund a buyer's token account from the pot.
+- **Pre-funded ATAs:** when an ATA address already holds lamports, the ATA program only tops up the shortfall from the payer (`spl-associated-token-account` 6.0.0, `tools/account.rs:28`; confirmed on ATA 1.1.1 in litesvm).
+- **Paying a buyer's ATA from the pot:** claim can't move pot lamports into the ATA address before the ATA CPI. A CPI syncs only the accounts it's given, so the Presale's debit is missed and the runtime fails the instruction with UnbalancedInstruction (seen in litesvm). Instead:
+  1. the cranker pays the shortfall inside the ATA program;
+  2. the token transfer runs;
+  3. the Presale pays the cranker back what the CPI took, capped at rent(vault len), together with the crank fee.
+
+  Every direct lamport move comes after the last CPI.
 - Rent comes from the Rent sysvar at runtime. The program never hard-codes it.
 
 ## Why native, not Anchor
