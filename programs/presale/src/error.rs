@@ -35,6 +35,7 @@ pub enum Error {
     PotNotEmpty = 27,      // the pot kept wSOL after the buy
     AlreadyExists = 28,    // seat / presale / config already created
     BadData = 29,          // instruction data length or layout
+    BuyMissedFloor = 30,   // the pot's buy paid more than DBC's 1% floor fee
 }
 
 impl From<Error> for ProgramError {

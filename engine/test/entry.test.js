@@ -1,13 +1,13 @@
 // Entry txs: their shape, their size, and what the gate co-signer accepts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Keypair, PublicKey, SystemProgram, VersionedTransaction } from "@solana/web3.js";
+import { AddressLookupTableAccount, Keypair, PublicKey, SystemProgram, VersionedTransaction } from "@solana/web3.js";
 import * as I from "../src/ix.js";
 import { cosign, Refused } from "../src/cosigner.js";
 import { presalePda, seatPda } from "../src/pdas.js";
 import { build } from "../src/tx.js";
 import { MOONER_DBC_CONFIG } from "../src/consts.js";
-import { launchIxs } from "../src/bot.js";
+import { launchAltKeys, launchIxs } from "../src/bot.js";
 
 const pid = Keypair.generate().publicKey;
 const gateKey = Keypair.generate();
@@ -50,7 +50,8 @@ test("open + delegate presale + delegate seat fits one tx and gets co-signed", a
   const creator = Keypair.generate();
   const mint = Keypair.generate();
   const tx = await unsigned(creator, openIxs(creator.publicKey, mint.publicKey));
-  const out = cosign(b64(tx), { pid, gateKey, mintSigner: (m) => (m.equals(mint.publicKey) ? mint : undefined) });
+  const mintSigner = (m, u) => (m.equals(mint.publicKey) && u.equals(creator.publicKey) ? mint : undefined);
+  const out = cosign(b64(tx), { pid, gateKey, validators: [validator], mintSigner });
   assert.equal(out.kind, "open");
   const signed = VersionedTransaction.deserialize(Buffer.from(out.tx, "base64"));
   assert.ok(signed.signatures.every((s) => s.some((b) => b !== 0)), "creator, gate and mint all signed");
@@ -75,7 +76,7 @@ test("the co-signer refuses anything else", async () => {
   const refused = async (what, ixs, opts = {}) => {
     const payer = opts.payer ?? user;
     const tx = await unsigned(payer, ixs);
-    assert.throws(() => cosign(b64(tx), { pid, gateKey, mintSigner, ...opts }), Refused, what);
+    assert.throws(() => cosign(b64(tx), { pid, gateKey, mintSigner, validators: [validator], ...opts }), Refused, what);
   };
   await refused("join without its delegate", joinIxs(user.publicKey, presale).slice(0, 1));
   await refused("an extra program", [...joinIxs(user.publicKey, presale), SystemProgram.transfer({ fromPubkey: user.publicKey, toPubkey: gate, lamports: 1 })]);
@@ -85,12 +86,22 @@ test("the co-signer refuses anything else", async () => {
   await refused("open without the seat delegate", openIxs(creator.publicKey, mint.publicKey, { drop: 2 }), { payer: creator });
   await refused("seat delegated before the presale", openIxs(creator.publicKey, mint.publicKey, { order: "swapped" }), { payer: creator });
   await refused("a mint the server didn't issue", openIxs(creator.publicKey, mint.publicKey), { payer: creator, mintSigner: () => undefined });
+  const issuedTo = (who) => (m, u) => (m.equals(mint.publicKey) && u.equals(who) ? mint : undefined);
+  await refused("a mint issued to another wallet", openIxs(creator.publicKey, mint.publicKey), { payer: creator, mintSigner: issuedTo(user.publicKey) });
+  await refused("the mint as the creator", openIxs(mint.publicKey, mint.publicKey), { payer: mint });
+  const misused = openIxs(creator.publicKey, mint.publicKey);
+  misused[1].keys[5] = { pubkey: mint.publicKey, isSigner: false, isWritable: true };
+  await refused("the mint key outside the mint slot", misused, { payer: creator });
+
+  // a server with no ER validators configured refuses to run at all
+  const tx = await unsigned(user, joinIxs(user.publicKey, presale));
+  assert.throws(() => cosign(b64(tx), { pid, gateKey }), (e) => !(e instanceof Refused) && /validators/.test(e.message));
 
   // the gate as the fee payer
   const ixs = joinIxs(user.publicKey, presale);
   const { TransactionMessage } = await import("@solana/web3.js");
   const msg = new TransactionMessage({ payerKey: gate, recentBlockhash: BH, instructions: ixs }).compileToV0Message();
-  assert.throws(() => cosign(b64(new VersionedTransaction(msg)), { pid, gateKey }), Refused);
+  assert.throws(() => cosign(b64(new VersionedTransaction(msg)), { pid, gateKey, validators: [validator] }), Refused);
 });
 
 test("crank batches and the launch tx fit the packet limit", async () => {
@@ -98,19 +109,26 @@ test("crank batches and the launch tx fit the packet limit", async () => {
   const presale = presalePda(pid, Keypair.generate().publicKey);
   const mint = Keypair.generate();
   const users = Array.from({ length: 8 }, () => Keypair.generate().publicKey);
-  const size = async (ixs, signers = [], legacy = false) =>
-    (await build(fakeConn, { ixs, payer: bot, signers, legacy, blockhash: BH })).serialize().length;
+  const size = async (ixs, signers = [], legacy = false, alts = []) =>
+    (await build(fakeConn, { ixs, payer: bot, signers, legacy, alts, blockhash: BH })).serialize().length;
 
   const settles = users.map((u) => I.settleSeat(pid, { cranker: bot.publicKey, seat: seatPda(pid, presale, u), user: u, presale }));
   assert.ok((await size(settles)) <= 1232, "8 settle_seats");
   const claims = users.slice(0, 6).map((u) => I.claim(pid, { cranker: bot.publicKey, presale, user: u, mint: mint.publicKey }));
-  assert.ok((await size(claims)) <= 1232, "6 claims");
+  assert.ok((await size(claims)) <= 1232, `6 claims are ${await size(claims)} bytes`);
   const seats = users.concat(users.slice(0, 2)).map((u) => seatPda(pid, presale, u));
   assert.ok((await size([I.commitSeats(pid, { payer: bot.publicKey, presale, seats })], [], true)) <= 1232, "commit_seats x10 (legacy, ER)");
 
   const p = { mint: mint.publicKey, feeDest: Keypair.generate().publicKey };
   const meta = { name: "Mooner Canary Token", symbol: "MCANARY", uri: "https://ipfs.io/ipfs/bafkreidz2o3o2msfbddbrfvd6bnvvspzq6bpranau26ykahelm5zw7ko3e" };
-  const ixs = launchIxs({ pid, bot: bot.publicKey, presale, p, dbcConfig: MOONER_DBC_CONFIG, meta, released: 9_000_000_000n, minTokens: 1n, cuLimit: 400_000, cuPrice: 1000 });
-  const n = await size(ixs, [mint]);
-  assert.ok(n <= 1232, `launch tx without an ALT is ${n} bytes`);
+  const pot = Keypair.generate();
+  const ixs = launchIxs({ pid, bot: bot.publicKey, pot: pot.publicKey, presale, p, dbcConfig: MOONER_DBC_CONFIG, meta, released: 9_000_000_000n, minTokens: 1n, cuLimit: 400_000, cuPrice: 1000 });
+  const alt = new AddressLookupTableAccount({
+    key: Keypair.generate().publicKey,
+    state: { deactivationSlot: 2n ** 64n - 1n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, addresses: launchAltKeys(pid, MOONER_DBC_CONFIG) },
+  });
+  const n = await size(ixs, [mint, pot], false, [alt]);
+  assert.ok(n <= 1232, `launch tx with its ALT is ${n} bytes`);
+  const tx = await build(fakeConn, { ixs, payer: bot, signers: [mint, pot], alts: [alt], blockhash: BH });
+  assert.equal(tx.message.header.numRequiredSignatures, 3, "bot, mint and pot sign");
 });

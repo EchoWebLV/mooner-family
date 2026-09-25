@@ -11,3 +11,7 @@ programs/presale/litesvm/fixtures/*.so
 
 # engine canary state and keys (local and devnet)
 engine/.canary/
+
+# mainnet keys and deployment record (engine/scripts/mainnet.js)
+engine/.mainnet/
+engine/.rehearsal/

@@ -147,13 +147,13 @@ The tag is the first data byte. The undelegate callback uses its 8-byte discrimi
 |---|---|---|---|
 | 0 | init_config | the program's upgrade authority (read from ProgramData) | creates Config |
 | 1 | set_config | admin | rotates admin, gate, bot, dbc_config |
-| 2 | open_presale | creator + gate + mint key | creates Presale (OPEN, deadline = now + 1h) and the creator's Seat (deposit ≥ commit, commit a valid seat size); raised = commit; seats_committed = 1 |
+| 2 | open_presale | creator + gate + mint key | creates Presale (OPEN, deadline = now + 1h) and the creator's Seat (deposit ≥ commit, commit a valid seat size); raised = commit; seats_committed = 1. The mint can't be the creator |
 | 3 | join | user + gate | creates a Seat with `deposit` in [MIN_SEAT, MAX_SEAT]. The Presale is read from its raw L1 snapshot (it is delegated): it must be OPEN and before the deadline. The escrow moves wallet → seat |
-| 4 | delegate | payer | kind 0 Presale (payer = creator; state must be OPEN, so a Presale never re-enters the ER; stores the validator), kind 1 Seat (payer = seat.user; validator must equal presale.validator). SDK `delegate_account`, with periodic commits off if `DelegateConfig` allows it (checked in the SDK source during the build) |
+| 4 | delegate | payer | kind 0 Presale (payer = creator; state must be OPEN, so a Presale never re-enters the ER; the validator must be one of ER_VALIDATORS, MagicBlock's as/eu/us, and is stored), kind 1 Seat (payer = seat.user; validator must equal presale.validator). SDK `delegate_account`, with periodic commits off if `DelegateConfig` allows it (checked in the SDK source during the build) |
 | 5 | settle_seat | anyone | see "Settling a seat" |
 | 6 | release | bot | launch tx only, see "Launch tx" |
 | 7 | settle | anyone | launch tx only, see "Launch tx" |
-| 8 | claim | anyone | tokens to `seat.user`, pro rata; funds the ATA from the pot if missing; closes the seat, rent to the user |
+| 8 | claim | anyone | tokens to `seat.user`, pro rata; funds the ATA from the pot if missing; a memo CPI right before the transfer, so an ATA that requires memos still receives; closes the seat, its rent and the rest of the deposit to the user |
 | 9 | fail | anyone | FULL, home, now ≥ full_ts + GRACE → FAILED |
 | 10 | close_presale | anyone | after every committed seat is claimed (SETTLED) or refunded (EXPIRED/FAILED): on SETTLED, burns any tokens left in the vault (a stray token must not block the close) and closes it; closes the presale; rent and dust to the creator |
 
@@ -185,9 +185,9 @@ The seat must be home, meaning owned by this program. The payout always goes to 
 | case | effect |
 |---|---|
 | commit == 0 (never committed, withdrew, or left) | refund the whole deposit, close the seat, rent to the user. The Presale isn't read (the seat's own PDA pins it), so this works while the Presale is delegated or after it is closed. The fee comes out of the refund |
-| Presale home + FULL, commit > 0, not settled | commit → Presale, (deposit − commit) → user, mark settled, seats_settled += 1, settled_sum += commit. The fee comes from the pot and is added to `fees_paid` |
+| Presale home + FULL, commit > 0, not settled | commit → Presale, mark settled, seats_settled += 1, settled_sum += commit. The rest of the deposit stays in the seat and goes to the user with the seat's rent at claim (or refund): paying a small amount to a wallet the user emptied would fail Solana's rent check and block the launch. The fee comes from the pot and is added to `fees_paid` |
 | Presale home + EXPIRED/FAILED, commit > 0, not settled | the whole deposit goes from the seat to the user. Close the seat, seats_refunded += 1. The fee comes out of the refund |
-| Presale home + FAILED, commit > 0, settled | the rest of the deposit already went home at settle. The Presale pays `commit − ceil(fees_paid × commit / settled_sum)`, so the settled seats share the pot's settle fees pro rata and the payouts never exceed what the Presale holds (`settled_sum − fees_paid`). Seats that never settled aren't in the Presale, which is why the divisor is `settled_sum`, not `raised`. Close the seat, seats_refunded += 1. The fee comes out of the refund |
+| Presale home + FAILED, commit > 0, settled | the seat still holds the rest of the deposit, which goes to the user when it closes. The Presale pays `commit − ceil(fees_paid × commit / settled_sum)`, so the settled seats share the pot's settle fees pro rata and the payouts never exceed what the Presale holds (`settled_sum − fees_paid`). Seats that never settled aren't in the Presale, which is why the divisor is `settled_sum`, not `raised`. Close the seat, seats_refunded += 1. The fee comes out of the refund |
 
 "Your share of TX_FEE" means TX_FEE divided by the number of this program's instructions with the same tag in the tx (read from the instructions sysvar). A cranker can't farm fees by splitting work into more instructions.
 
@@ -205,15 +205,16 @@ The seat must be home, meaning owned by this program. The payout always goes to 
 
    The delivery reserve is seats_committed × (rent(vault.data_len) + TX_FEE).
 
-   released = the Presale's lamports − its rent − launch cost − delivery reserve. `released` goes to the pot's wSOL and the launch cost to the bot. State LAUNCHING, pot recorded.
-5. `sync_native`, then the pot's **swap2**: exact-in `released`, from the pot's wSOL, output = the presale vault, with the instructions sysvar attached (the 1% first-buy floor).
+   released = settled_sum − fees_paid − launch cost − delivery reserve, from the ledger and not the balance, so lamports sent to the Presale can't change what the bot planned (they go to the creator at close). The Presale must still hold its rent + reserve + cost + released. `released` goes to the pot's wSOL and the launch cost to the bot. State LAUNCHING, pot recorded.
+5. `sync_native`, then the pot's **swap2**: exact-in `released`, from the pot's wSOL, output = the presale vault, with the instructions sysvar attached. Without the sysvar DBC skips the 1% first-buy floor and charges the config's full scheduler fee, so settle requires it.
 6. **settle** (`min_tokens`). It checks:
    - the tx order is init_pool < release < the one swap < settle;
    - exactly one DBC swap in the tx;
    - the pot's wSOL is empty;
    - the vault is ours and holds ≥ min_tokens;
    - init_pool.config == Config.dbc_config;
-   - a DBC `transfer_pool_creator` exists for this pool, where creator = init_pool's creator and new_creator = presale.fee_dest.
+   - a DBC `transfer_pool_creator` exists for this pool, where creator = init_pool's creator and new_creator = presale.fee_dest;
+   - the pool (passed to settle) shows the buy paid at most the floor fee: released − quote_reserve ≤ ceil(released / 100), else BuyMissedFloor.
 
    Then total_tokens = the vault balance and state SETTLED.
 7. `transfer_pool_creator` (bot → fee_dest), then close the pot's wSOL (its rent goes back to the bot).

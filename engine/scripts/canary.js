@@ -15,7 +15,9 @@
 // Expiry path: E opens with 0.05, F commits 0.02, G joins but never commits; the timer
 //   runs out and the bot expires, sends home, refunds and closes.
 //
-// State and throwaway keys live in engine/.canary/<cluster>/ (gitignored).
+// State and throwaway keys live in engine/.canary/<cluster>/ (gitignored). Devnet has its
+// own program key there (a closed program id can't be deployed again); local uses the
+// canary build's key, as scripts/local-validator.sh does.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -25,16 +27,14 @@ import { parseArgs } from "node:util";
 import {
   AddressLookupTableProgram, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, VersionedTransaction,
 } from "@solana/web3.js";
-import {
-  DELEGATION_PROGRAM, IX_SYSVAR, MOONER_DBC_CONFIG, SYSTEM, TOKEN22, WSOL, numbers,
-} from "../src/consts.js";
+import { DELEGATION_PROGRAM, MOONER_DBC_CONFIG, TOKEN22, numbers } from "../src/consts.js";
 import { STATE, STATE_NAME, decodeConfig, decodePresale } from "../src/layout.js";
 import * as I from "../src/ix.js";
 import * as D from "../src/dbc.js";
-import { ata, configPda, eventAuthority, poolAddresses, poolAuthority, presalePda, seatPda, vaultOf } from "../src/pdas.js";
+import { ata, configPda, poolAddresses, presalePda, seatPda, vaultOf } from "../src/pdas.js";
 import { build, connect, send, sendSigned } from "../src/tx.js";
 import { cosign } from "../src/cosigner.js";
-import { Bot } from "../src/bot.js";
+import { Bot, launchAltKeys } from "../src/bot.js";
 import { tokenShare } from "../src/math.js";
 
 const ENGINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -85,7 +85,9 @@ const l1 = connect(args.rpc ?? (cluster === "devnet" ? "https://api.devnet.solan
 const [validatorStr, erUrl] = REGIONS[args.region];
 const validator = new PublicKey(validatorStr);
 const er = useEr ? connect(erUrl) : null;
-const pid = loadKey(PROGRAM_KP).publicKey;
+const ers = useEr ? { [validator.toBase58()]: er } : {};
+const programKp = useEr ? (keyAt("program"), `${dir}/program-keypair.json`) : PROGRAM_KP;
+const pid = loadKey(programKp).publicKey;
 const N = numbers(true);
 
 const report = { cluster, pid: pid.toBase58(), startedAt: new Date().toISOString(), steps: [], checks: [] };
@@ -120,7 +122,8 @@ async function entry(user, ixs, what, mint) {
   }
   const tx = await build(l1, { ixs, payer: user });
   const out = cosign(Buffer.from(tx.serialize()).toString("base64"), {
-    pid, gateKey: ctx.gate, validators: [validator], mintSigner: (m) => (mint && m.equals(mint.publicKey) ? mint : undefined),
+    pid, gateKey: ctx.gate, validators: Object.keys(ers).map((k) => new PublicKey(k)),
+    mintSigner: (m, u) => (mint && m.equals(mint.publicKey) && u.equals(user.publicKey) ? mint : undefined),
   });
   const sig = await sendSigned(l1, VersionedTransaction.deserialize(Buffer.from(out.tx, "base64")), { ixs, pid, what });
   step(what, sig);
@@ -189,7 +192,7 @@ async function setup() {
     if (!useEr) throw new Error("program missing: start scripts/local-validator.sh first");
     const size = fs.statSync(SO).size;
     log(`  deploying the canary build (${size} bytes)…`);
-    execFileSync("solana", ["program", "deploy", "-u", "devnet", "--keypair", payerFile, "--program-id", PROGRAM_KP, "--max-len", String(size), SO], { stdio: "inherit" });
+    execFileSync("solana", ["program", "deploy", "-u", "devnet", "--keypair", payerFile, "--program-id", programKp, "--max-len", String(size), SO], { stdio: "inherit" });
     step("deploy");
   }
 
@@ -222,7 +225,7 @@ async function setup() {
   await topUp(ctx.bot.publicKey, SOL(0.1));
 
   // the launch tx's lookup table: keys every launch shares that no top-level ix invokes
-  const altKeys = [configPda(pid), ctx.dbcConfig, poolAuthority(), eventAuthority(), WSOL, TOKEN22, SYSTEM, IX_SYSVAR];
+  const altKeys = launchAltKeys(pid, ctx.dbcConfig);
   let alt = saved.alt && (await l1.getAddressLookupTable(new PublicKey(saved.alt))).value;
   if (!alt || !altKeys.every((k) => alt.state.addresses.some((a) => a.equals(k)))) {
     const slot = await l1.getSlot("finalized");
@@ -240,7 +243,7 @@ async function setup() {
 
 function newBot(mint) {
   return new Bot({
-    pid, l1, ers: useEr ? { [validator.toBase58()]: er } : {}, bot: ctx.bot, dbcConfig: ctx.dbcConfig, canary: true,
+    pid, l1, ers, bot: ctx.bot, dbcConfig: ctx.dbcConfig, canary: true,
     mintSigner: (m) => (m.equals(mint.publicKey) ? mint : undefined),
     tokenMeta: async () => META,
     alts: [ctx.alt],

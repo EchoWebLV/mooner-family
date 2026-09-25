@@ -19,8 +19,12 @@ pub fn open_presale(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) 
     let (fee_dest, session_key) = (key_at(d, 0), key_at(d, 32));
     let (deposit, commit) = (u64_at(d, 64), u64_at(d, 72));
     require_signer(creator)?;
-    // the mint key signs, so nobody can squat a presale for a CA the server announced
+    // the mint key signs, so nobody can squat a presale for a CA the server announced;
+    // and it can't stand in for the creator, or the server's signature would be enough
     require_signer(mint)?;
+    if creator.key == mint.key {
+        return Err(Error::NotAuthorized.into());
+    }
     let c = Config::load(config, program_id)?;
     require_gate(&c.gate, gate_signer)?;
     if fee_dest == Pubkey::default() || session_key == Pubkey::default() {
@@ -93,7 +97,8 @@ pub fn join(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> Progr
 
 /// [payer s w, pda w, owner_program, buffer w, record w, metadata w, delegation_program,
 ///  system, validator, presale (kind 1)]  data: kind (0 presale, 1 seat)
-/// kind 0: the creator delegates the OPEN Presale and pins the ER validator.
+/// kind 0: the creator delegates the OPEN Presale and pins the ER validator (one of
+/// ER_VALIDATORS).
 /// kind 1: the seat's user delegates the Seat to the same validator.
 pub fn delegate(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> ProgramResult {
     let [payer, pda, owner_program, buffer, record, metadata, delegation_program, system, validator, extra @ ..] = accounts
@@ -126,8 +131,9 @@ pub fn delegate(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> P
             if p.state != OPEN {
                 return Err(Error::BadState.into());
             }
-            if *validator.key == Pubkey::default() {
-                return Err(Error::ZeroKey.into());
+            // only a known MagicBlock validator: it alone can send the accounts home
+            if !ER_VALIDATORS.contains(validator.key) {
+                return Err(Error::WrongValidator.into());
             }
             p.validator = *validator.key;
             p.store(pda)?;

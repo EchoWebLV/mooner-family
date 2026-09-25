@@ -17,11 +17,13 @@ fn token_ix(accounts: Vec<AccountMeta>, data: Vec<u8>) -> Instruction {
 }
 
 /// [cranker s w, presale w, seat w, user w, presale_vault w, user_ata w, mint, token22,
-///  ata_program, system, ix_sysvar]
+///  ata_program, system, ix_sysvar, memo]
 /// Sends the seat's pro-rata tokens to the user's ATA (created and funded from the
-/// Presale's delivery reserve if missing) and closes the seat, rent to the user.
+/// Presale's delivery reserve if missing) and closes the seat, rent and any deposit left
+/// over to the user.
 pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
-    let [cranker, presale, seat, user, vault, user_ata, mint, token22, ata_program, system, sysvar, ..] = accounts
+    let [cranker, presale, seat, user, vault, user_ata, mint, token22, ata_program, system, sysvar, memo, ..] =
+        accounts
     else {
         return Err(Error::BadData.into());
     };
@@ -42,6 +44,7 @@ pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     require_key(token22, &TOKEN22)?;
     require_key(ata_program, &ATA_PROGRAM)?;
     require_key(system, &SYSTEM)?;
+    require_key(memo, &MEMO)?;
     require_key(vault, &ata(presale.key, &p.mint, &TOKEN22))?;
     require_key(user_ata, &ata(user.key, &p.mint, &TOKEN22))?;
 
@@ -81,6 +84,9 @@ pub fn claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     let mut data = vec![12u8]; // TransferChecked
     data.extend_from_slice(&share.to_le_bytes());
     data.push(decimals);
+    // a memo right before the transfer, so an ATA that requires memos (Token-2022
+    // MemoTransfer) still takes the tokens and can't hold up close_presale
+    invoke(&Instruction { program_id: MEMO, accounts: vec![], data: b"mooner claim".to_vec() }, std::slice::from_ref(memo))?;
     let bump = [p.bump];
     invoke_signed(
         &token_ix(

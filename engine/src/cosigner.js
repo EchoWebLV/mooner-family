@@ -4,7 +4,8 @@
 //   join:  [compute budget]* join + delegate(seat)
 // Opening and delegating in one tx means nobody can crank a commit-0 seat home (and take
 // its fee) before it reaches the ER. The server also holds each presale's mint key and
-// signs with it for opens, so the CA is known before the presale exists.
+// signs with it for opens, so the CA is known before the presale exists. A mint key signs
+// only for the wallet it was issued to, and only in the mint slot of open_presale.
 
 import { VersionedTransaction } from "@solana/web3.js";
 import { COMPUTE_BUDGET, IX } from "./consts.js";
@@ -16,9 +17,11 @@ const refuse = (why) => {
   throw new Refused(why);
 };
 
-/** Checks an unsigned-by-us entry tx. Returns { kind: "open"|"join", user, presale,
- *  mint, validator }. Throws Refused. */
-export function checkEntryTx(tx, { pid, gate, allow = null, validators = null }) {
+/** Checks an unsigned-by-us entry tx. `validators`: the ER validators the bot has
+ *  endpoints for (`bot.validators`); a presale on any other would stall. Returns
+ *  { kind: "open"|"join", user, presale, mint, validator }. Throws Refused. */
+export function checkEntryTx(tx, { pid, gate, allow = null, validators }) {
+  if (!validators?.length) throw new Error("checkEntryTx needs the bot's ER validators");
   const msg = tx.message;
   if (msg.addressTableLookups?.length) refuse("lookup tables are not allowed in entry txs");
   const keys = msg.staticAccountKeys;
@@ -71,6 +74,14 @@ export function checkEntryTx(tx, { pid, gate, allow = null, validators = null })
     const s = ds.filter((d) => d.kind === 1 && d.target.equals(seat) && d.presale?.equals(presale));
     if (ds.length !== 2 || p.length !== 1 || s.length !== 1) refuse("open must delegate the presale and the creator seat in the same tx");
     if (!p[0].validator.equals(s[0].validator)) refuse("presale and seat on different validators");
+    if (mint.equals(user)) refuse("the mint can't be the creator");
+    // the mint key signs the whole tx: it may appear only in open's mint slot
+    const mi = keys.findIndex((k) => k.equals(mint));
+    for (const ci of msg.compiledInstructions) {
+      ci.accountKeyIndexes.forEach((i, n) => {
+        if (i === mi && !(keys[ci.programIdIndex].equals(pid) && ci.data[0] === IX.OPEN_PRESALE && n === 3)) refuse("the mint key is used outside the mint slot");
+      });
+    }
     validator = p[0].validator;
     // delegate(seat) reads the validator that delegate(presale) writes
     if (p[0].order > s[0].order) refuse("delegate the presale before the seat");
@@ -83,20 +94,21 @@ export function checkEntryTx(tx, { pid, gate, allow = null, validators = null })
     }
     validator = ds[0].validator;
   }
-  if (validators && !validators.some((v) => v.equals(validator))) refuse("unknown ER validator");
+  if (!validators.some((v) => v.equals(validator))) refuse("unknown ER validator");
   return { kind: entry.tag === IX.OPEN_PRESALE ? "open" : "join", user, presale, mint, validator };
 }
 
 /**
- * Checks and co-signs a serialized entry tx (base64). For an open, `mintSigner(mint)`
- * must return the server's mint Keypair for that CA. Returns the tx, base64.
+ * Checks and co-signs a serialized entry tx (base64). For an open, `mintSigner(mint,
+ * user)` must return the server's mint Keypair for that CA, and only if it was issued to
+ * `user`. Returns the tx, base64.
  */
 export function cosign(b64, { pid, gateKey, allow, validators, mintSigner }) {
   const tx = VersionedTransaction.deserialize(Buffer.from(b64, "base64"));
   const info = checkEntryTx(tx, { pid, gate: gateKey.publicKey, allow, validators });
   const signers = [gateKey];
   if (info.kind === "open") {
-    const mk = mintSigner?.(info.mint);
+    const mk = mintSigner?.(info.mint, info.user);
     if (!mk || !mk.publicKey.equals(info.mint)) refuse("not a mint this server issued");
     signers.push(mk);
   }

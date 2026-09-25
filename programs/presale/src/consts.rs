@@ -44,6 +44,17 @@ pub const WSOL: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 pub const DBC: Pubkey = pubkey!("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
 pub const DELEGATION_PROGRAM: Pubkey = pubkey!("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 pub const BPF_UPGRADEABLE: Pubkey = pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
+pub const MEMO: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+pub const IX_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+
+// ---- MagicBlock ER validators a Presale may be delegated to (the same identities on
+// mainnet and devnet). Only the validator can send the accounts home, so an unknown one
+// could keep the escrowed SOL forever.
+pub const ER_VALIDATORS: [Pubkey; 3] = [
+    pubkey!("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"), // as.magicblock.app
+    pubkey!("MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e"), // eu.magicblock.app
+    pubkey!("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd"), // us.magicblock.app
+];
 
 // ---- Meteora DBC anchor discriminators, sha256("global:<name>")[..8] (IDL v0.1.10) ----
 pub const SWAP2_DISC: [u8; 8] = [65, 75, 63, 76, 235, 91, 91, 136];
@@ -58,6 +69,11 @@ pub const INIT_POOL_DISCS: [[u8; 8]; 3] = [
     [182, 13, 233, 177, 42, 145, 135, 2],   // initialize_virtual_pool_with_token2022_transfer_hook
 ];
 pub const TRANSFER_POOL_CREATOR_DISC: [u8; 8] = [20, 7, 169, 33, 58, 147, 166, 33];
+// swap2's accounts end with the instructions sysvar; without it DBC charges the full
+// anti-sniper fee instead of the 1% first-swap floor
+pub const SWAP2_SYSVAR_AT: usize = 15;
+// VirtualPool.quote_reserve: 8 discriminator + 64 volatility tracker + 5 keys + base_reserve
+pub const POOL_QUOTE_RESERVE: usize = 240;
 
 // MagicBlock undelegate callback, sent by the delegation program
 pub const UNDELEGATE_CALLBACK: [u8; 8] = [196, 28, 41, 206, 48, 37, 51, 167];

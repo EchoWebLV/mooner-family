@@ -76,28 +76,57 @@ fn full_with_excess(e: &mut Env) -> (Opened, Vec<Keypair>, Keypair, Keypair) {
 }
 
 #[test]
-fn full_moves_the_commit_in_and_the_excess_home() {
+fn full_moves_only_the_commit_in() {
     let mut e = Env::new(false);
     let (o, _, x, y) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
-    let (x0, y0, p0, b0) = (
-        lamports(&e.svm, &x.pubkey()),
-        lamports(&e.svm, &y.pubkey()),
-        lamports(&e.svm, &o.presale),
-        lamports(&e.svm, &bot.pubkey()),
-    );
+    let (x0, p0, b0) = (lamports(&e.svm, &x.pubkey()), lamports(&e.svm, &o.presale), lamports(&e.svm, &bot.pubkey()));
     let fee = settle(&mut e, &bot, &o, &[&x]);
-    assert_eq!(lamports(&e.svm, &x.pubkey()), x0 + 500_000_000, "X gets its 0.5 excess, no fee");
+    assert_eq!(lamports(&e.svm, &x.pubkey()), x0, "X is paid nothing yet, and no fee");
     assert_eq!(lamports(&e.svm, &o.presale), p0 + 500_000_000 - TX_FEE, "the pot pays the crank");
     assert_eq!(lamports(&e.svm, &bot.pubkey()), b0 + TX_FEE - fee);
     let sx = read_seat(&e.svm, &seat(&o, &x));
     assert_eq!(sx.flags & F_SETTLED, F_SETTLED);
-    assert_eq!(lamports(&e.svm, &seat(&o, &x)), rent(&e.svm, SEAT_LEN), "the seat keeps only its rent");
+    assert_eq!(lamports(&e.svm, &seat(&o, &x)), rent(&e.svm, SEAT_LEN) + 500_000_000, "the 0.5 excess waits in the seat");
 
     settle(&mut e, &bot, &o, &[&y]);
-    assert_eq!(lamports(&e.svm, &y.pubkey()), y0 + 300_000_000);
+    assert_eq!(lamports(&e.svm, &seat(&o, &y)), rent(&e.svm, SEAT_LEN) + 300_000_000);
     let p = read_presale(&e.svm, &o.presale);
     assert_eq!((p.seats_settled, p.settled_sum, p.fees_paid), (2, 1_000_000_000, 2 * TX_FEE));
+}
+
+#[test]
+fn an_emptied_wallet_cannot_veto_the_launch() {
+    // 1 lamport over the commit, then the wallet is emptied: paying that lamport out at
+    // settle would fail Solana's rent check and block every launch
+    let mut e = Env::new(false);
+    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let mut buyers = vec![o.creator.insecure_clone()];
+    for i in 0..9 {
+        let u = e.user(2);
+        e.join(&u, &o.presale, MAX_SEAT);
+        if i == 0 {
+            let s = seat(&o, &u);
+            ok(send(&mut e.svm, &u, &[], &[ix_transfer(&u.pubkey(), &s, 1)]), "a lamport into the seat");
+        }
+        e.commit(&u, &o.presale, MAX_SEAT);
+        buyers.push(u);
+    }
+    let griefer = buyers[1].insecure_clone();
+    let g = griefer.pubkey();
+    let sink = Address::new_unique();
+    let left = lamports(&e.svm, &g) - 5_000;
+    ok(send(&mut e.svm, &griefer, &[], &[ix_transfer(&g, &sink, left)]), "empty the wallet");
+    assert!(!exists(&e.svm, &g), "the wallet is gone");
+
+    e.settle_all(&o.presale, &buyers);
+    e.launch(&o);
+    let s = seat(&o, &griefer);
+    let owed = lamports(&e.svm, &s);
+    assert_eq!(owed, rent(&e.svm, SEAT_LEN) + 1);
+    let bot = e.bot.insecure_clone();
+    ok(send(&mut e.svm, &bot, &[], &[ix_claim(&bot.pubkey(), &o.presale, &g, &o.mint.pubkey())]), "claim");
+    assert_eq!(lamports(&e.svm, &g), owed, "the rent and the lamport come home at claim (the pot pays the crank)");
 }
 
 #[test]

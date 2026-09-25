@@ -129,6 +129,36 @@ fn a_prefunded_ata_address_still_claims() {
 }
 
 #[test]
+fn an_ata_that_requires_memos_still_claims() {
+    // Token-2022 MemoTransfer on the buyer's ATA: the claim's own memo lets the tokens in,
+    // so one buyer can't hold up close_presale
+    let mut e = Env::new(false);
+    let (o, buyers) = launched(&mut e);
+    let (m, u) = (o.mint.pubkey(), buyers[3].0.insecure_clone());
+    let (up, ua) = (u.pubkey(), user_ata(&o, &u));
+    let mut realloc = vec![29u8]; // Reallocate for MemoTransfer (extension type 8)
+    realloc.extend_from_slice(&8u16.to_le_bytes());
+    let ixs = [
+        ix_create_ata(&up, &up, &m, &token22_id()),
+        Instruction {
+            program_id: token22_id(),
+            accounts: vec![AccountMeta::new(ua, false), AccountMeta::new(up, true), AccountMeta::new_readonly(system_id(), false), AccountMeta::new_readonly(up, true)],
+            data: realloc,
+        },
+        Instruction { program_id: token22_id(), accounts: vec![AccountMeta::new(ua, false), AccountMeta::new_readonly(up, true)], data: vec![30, 0] },
+    ];
+    ok(send(&mut e.svm, &u, &[], &ixs), "require memos on the ATA");
+    let bot = e.bot.insecure_clone();
+    let everyone: Vec<&Keypair> = buyers.iter().map(|(k, _)| k).collect();
+    for chunk in everyone.chunks(5) {
+        claim(&mut e, &bot, &o, chunk);
+    }
+    assert!(token_balance(&e.svm, &ua) > 0, "the memo-only ATA got its tokens");
+    ok(send(&mut e.svm, &bot, &[], &[ix_close_presale(&o.presale, &o.creator.pubkey(), &m)]), "close");
+    assert!(!exists(&e.svm, &o.presale));
+}
+
+#[test]
 fn self_claim_pays_no_fee() {
     let mut e = Env::new(false);
     let (o, buyers) = launched(&mut e);

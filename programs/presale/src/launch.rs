@@ -93,13 +93,19 @@ pub fn release(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
         .seats_committed
         .checked_mul(rent(presale_vault.data_len())? + TX_FEE)
         .ok_or(Error::Overflow)?;
-    let released = presale
-        .lamports()
-        .checked_sub(rent(PRESALE_LEN)?)
+    // from the ledger, not the balance: lamports sent to the Presale can't change the
+    // amount the bot planned (they stay in it and go to the creator at close)
+    let released = p
+        .settled_sum
+        .checked_sub(p.fees_paid)
         .and_then(|x| x.checked_sub(cost))
         .and_then(|x| x.checked_sub(reserve))
         .filter(|x| *x > 0)
         .ok_or(Error::NothingReleased)?;
+    let keep = [rent(PRESALE_LEN)?, reserve, cost, released].iter().try_fold(0u64, |a, x| a.checked_add(*x));
+    if keep.is_none_or(|k| presale.lamports() < k) {
+        return Err(Error::NothingReleased.into());
+    }
     move_lamports(presale, pot_wsol, released)?;
     move_lamports(presale, bot, cost)?;
     p.released = released;
@@ -108,11 +114,12 @@ pub fn release(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     p.store(presale)
 }
 
-/// [presale w, config, presale_vault, pot_wsol, ix_sysvar]  data: min_tokens 8
+/// [presale w, config, presale_vault, pot_wsol, ix_sysvar, pool]  data: min_tokens 8
 /// The whole tx must be: init_pool < release < the one pot swap < settle, plus a
-/// transfer_pool_creator to fee_dest, and no program outside the allowlist.
+/// transfer_pool_creator to fee_dest, and no program outside the allowlist. The buy must
+/// have paid DBC's 1% floor fee, read back from the pool.
 pub fn settle(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> ProgramResult {
-    let [presale, config, vault, pot_wsol, sysvar, ..] = accounts else {
+    let [presale, config, vault, pot_wsol, sysvar, pool_acc, ..] = accounts else {
         return Err(Error::BadData.into());
     };
     let min_tokens = u64_at(args::<8>(rest)?, 0);
@@ -175,6 +182,7 @@ pub fn settle(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> Pro
                 && a(7) == Some(p.mint)
                 && a(9) == Some(p.pot)
                 && a(12) == Some(DBC) // no referral
+                && a(SWAP2_SYSVAR_AT) == Some(IX_SYSVAR) // or DBC skips the floor fee
             {
                 bought_at = Some(i);
             }
@@ -196,6 +204,21 @@ pub fn settle(program_id: &Pubkey, accounts: &[AccountInfo], rest: &[u8]) -> Pro
     }
     if tokens == 0 || tokens < min_tokens {
         return Err(Error::TooFewTokens.into());
+    }
+    // the pool starts with no quote; the buy's fee never reaches the reserve
+    if pool != Some(*pool_acc.key) || *pool_acc.owner != DBC {
+        return Err(Error::BadAccount.into());
+    }
+    let quote = {
+        let d = pool_acc.try_borrow_data()?;
+        if d.len() < POOL_QUOTE_RESERVE + 8 {
+            return Err(Error::BadAccount.into());
+        }
+        u64_at(&d, POOL_QUOTE_RESERVE)
+    };
+    if p.released.saturating_sub(quote) > p.released.div_ceil(100) {
+        msg!("the pot's buy paid more than the 1% floor fee");
+        return Err(Error::BuyMissedFloor.into());
     }
     p.total_tokens = tokens;
     p.state = SETTLED;

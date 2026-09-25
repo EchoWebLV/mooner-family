@@ -87,6 +87,7 @@ pub const E_WRONG_VALIDATOR: u32 = 26;
 pub const E_POT_NOT_EMPTY: u32 = 27;
 pub const E_ALREADY_EXISTS: u32 = 28;
 pub const E_BAD_DATA: u32 = 29;
+pub const E_BUY_MISSED_FLOOR: u32 = 30;
 
 // ---- states and flags ----
 pub const OPEN: u8 = 0;
@@ -142,6 +143,13 @@ pub fn bpf_upgradeable_id() -> Address {
 }
 pub fn ix_sysvar_id() -> Address {
     addr("Sysvar1nstructions1111111111111111111111111")
+}
+pub fn memo_id() -> Address {
+    addr("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+}
+/// The MagicBlock ER validators the program accepts (consts::ER_VALIDATORS).
+pub fn er_validator() -> Address {
+    addr("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57")
 }
 pub fn magic_program_id() -> Address {
     addr("Magic11111111111111111111111111111111111111")
@@ -505,8 +513,9 @@ pub fn ix_release(bot: &Address, presale: &Address, pot: &Address, mint: &Addres
 }
 
 pub fn ix_settle(presale: &Address, pot: &Address, mint: &Address, min_tokens: u64) -> Instruction {
+    let (pool, _, _) = pool_addresses(&dbc_config(), mint);
     ix(IX_SETTLE, &min_tokens.to_le_bytes(), vec![
-        w(*presale), r(config_pda()), r(vault(mint)), r(ata(pot, &wsol(), &token_id())), r(ix_sysvar_id()),
+        w(*presale), r(config_pda()), r(vault(mint)), r(ata(pot, &wsol(), &token_id())), r(ix_sysvar_id()), r(pool),
     ])
 }
 
@@ -514,6 +523,7 @@ pub fn ix_claim(cranker: &Address, presale: &Address, user: &Address, mint: &Add
     ix(IX_CLAIM, &[], vec![
         ws(*cranker), w(*presale), w(seat_pda(presale, user)), w(*user), w(vault(mint)),
         w(ata(user, mint, &token22_id())), r(*mint), r(token22_id()), r(ata_program_id()), r(system_id()), r(ix_sysvar_id()),
+        r(memo_id()),
     ])
 }
 
@@ -575,7 +585,7 @@ pub fn ix_close_account(account: &Address, dest: &Address, owner: &Address) -> I
     Instruction { program_id: token_id(), accounts: vec![w(*account), w(*dest), rs(*owner)], data: vec![9] }
 }
 pub fn ix_memo(text: &str) -> Instruction {
-    Instruction { program_id: addr("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: vec![], data: text.as_bytes().to_vec() }
+    Instruction { program_id: memo_id(), accounts: vec![], data: text.as_bytes().to_vec() }
 }
 pub fn ix_transfer(from: &Address, to: &Address, lamports: u64) -> Instruction {
     let mut d = 2u32.to_le_bytes().to_vec();

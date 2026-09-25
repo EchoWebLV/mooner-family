@@ -51,6 +51,16 @@ fn the_mint_must_sign() {
 }
 
 #[test]
+fn the_mint_cannot_be_the_creator() {
+    // else the server's mint signature alone would open a presale, with anyone's fee_dest
+    let mut e = Env::new(false);
+    let creator = e.user(3);
+    let c = creator.pubkey();
+    let ix = ix_open_presale(&c, e.gate(), &c, &Address::new_unique(), &c, MAX_SEAT, MAX_SEAT);
+    assert_err(send(&mut e.svm, &creator, &[], &[ix]), E_NOT_AUTHORIZED, "the creator signs as the mint");
+}
+
+#[test]
 fn open_rejects_bad_sizes_and_zero_keys() {
     let mut e = Env::new(false);
     let creator = e.user(3);
@@ -174,7 +184,14 @@ fn only_the_creator_delegates_an_open_presale() {
     let ix = ix_delegate(&stranger.pubkey(), &o.presale, &v, 0, None);
     assert_err(send(&mut e.svm, &stranger, &[], &[ix]), E_NOT_AUTHORIZED, "kind 0 by a stranger");
     let ix = ix_delegate(&o.creator.pubkey(), &o.presale, &Address::default(), 0, None);
-    assert_err(send(&mut e.svm, &o.creator, &[], &[ix]), E_ZERO_KEY, "kind 0 with a zero validator");
+    assert_err(send(&mut e.svm, &o.creator, &[], &[ix]), E_WRONG_VALIDATOR, "kind 0 with a zero validator");
+    // a validator that isn't MagicBlock's could keep the escrow in its ER forever
+    let ix = ix_delegate(&o.creator.pubkey(), &o.presale, &Address::new_unique(), 0, None);
+    assert_err(send(&mut e.svm, &o.creator, &[], &[ix]), E_WRONG_VALIDATOR, "kind 0 with an unknown validator");
+    // a listed one gets past every check to the delegation CPI (no delegation program here)
+    let ix = ix_delegate(&o.creator.pubkey(), &o.presale, &v, 0, None);
+    let err = send(&mut e.svm, &o.creator, &[], &[ix]).expect_err("litesvm has no delegation program");
+    assert!(!format!("{:?}", err.err).contains("Custom("), "a listed validator passes: {:?}", err.err);
 
     let deadline = read_presale(&e.svm, &o.presale).deadline_ts;
     warp_to(&mut e.svm, deadline);

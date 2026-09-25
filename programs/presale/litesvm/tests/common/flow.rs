@@ -30,7 +30,7 @@ impl Env {
         svm.airdrop(&admin.pubkey(), SOL).unwrap();
         svm.airdrop(&bot.pubkey(), 10 * SOL).unwrap();
         let gate_key = if gate_on { gate.pubkey() } else { Address::default() };
-        let mut e = Env { svm, auth, admin, gate, gate_on, bot, validator: Address::new_unique() };
+        let mut e = Env { svm, auth, admin, gate, gate_on, bot, validator: er_validator() };
         let ix = ix_init_config(&e.auth.pubkey(), &e.admin.pubkey(), &gate_key, &e.bot.pubkey(), &dbc_config());
         ok(send(&mut e.svm, &e.auth, &[], &[ix]), "init_config");
         e
@@ -137,14 +137,15 @@ impl Env {
         ]
     }
 
-    /// What release will move to the pot, computed the way the program does. The DBC
-    /// account sizes come from a dry run of the pool creation on a copy of the chain.
+    /// What release will move to the pot, computed the way the program does: from the
+    /// Presale's ledger, not its balance. The DBC account sizes come from a dry run of the
+    /// pool creation on a copy of the chain.
     pub fn expected_release(&self, o: &Opened) -> u64 {
         let p = read_presale(&self.svm, &o.presale);
         let sizes = self.launch_sizes(o);
         let cost = LAUNCH_TX_FEE + sizes.iter().map(|l| rent(&self.svm, *l)).sum::<u64>();
         let reserve = p.seats_committed * (rent(&self.svm, sizes[4]) + TX_FEE);
-        lamports(&self.svm, &o.presale) - rent(&self.svm, PRESALE_LEN) - cost - reserve
+        p.settled_sum - p.fees_paid - cost - reserve
     }
 
     /// Data sizes of [mint, pool, base_vault, quote_vault, presale_vault] after the pool

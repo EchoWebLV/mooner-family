@@ -17,6 +17,14 @@ export const MAGIC_PROGRAM = pk("Magic11111111111111111111111111111111111111");
 export const MAGIC_CONTEXT = pk("MagicContext1111111111111111111111111111111");
 export const BPF_UPGRADEABLE = pk("BPFLoaderUpgradeab1e11111111111111111111111");
 export const IX_SYSVAR = pk("Sysvar1nstructions1111111111111111111111111");
+export const MEMO = pk("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+
+// MagicBlock ER validators a Presale may be delegated to (the program pins the same list)
+export const ER_VALIDATORS = [
+  pk("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"), // as
+  pk("MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e"), // eu
+  pk("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd"), // us
+];
 
 // Mooner's DBC config on mainnet (1% floor for the first swap in the pool tx, 50/50 fees)
 export const MOONER_DBC_CONFIG = pk("HnKg7Vb2aHPhX8LVy4gMXZ6dACGPHUPFkQeX82FB8LmF");
@@ -72,6 +80,7 @@ export const ERRORS = [
   "NoCreatorTransfer", "CostCap", "BadAccount", "TooFewTokens", "SeatsOpen",
   "BeforeGrace", "CommitNotZero", "WrongPresale", "NothingReleased", "Overflow",
   "ZeroKey", "WrongValidator", "PotNotEmpty", "AlreadyExists", "BadData",
+  "BuyMissedFloor",
 ];
 
 /** `{InstructionError: [i, {Custom: n}]}` -> "ix i: Name (n)" when ix i is ours

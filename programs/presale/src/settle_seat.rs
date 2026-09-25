@@ -1,6 +1,8 @@
 //! 5 settle_seat (spec "Settling a seat"). Solana only, permissionless.
 //! A seat's lamports only ever go to `seat.user`, or exactly `commit` to the Presale
-//! while FULL. A cranker who isn't the user earns its share of TX_FEE.
+//! while FULL. A cranker who isn't the user earns its share of TX_FEE. Nothing here pays
+//! a user less than a seat's rent: a smaller credit to an empty wallet fails Solana's rent
+//! check, and a user could use that to block the launch.
 
 use crate::consts::*;
 use crate::error::Error;
@@ -40,15 +42,13 @@ pub fn settle_seat(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResu
 
     match (p.state, s.is_settled()) {
         (FULL, false) => {
-            // commit -> Presale, the rest of the deposit -> user; the pot pays the fee
+            // commit -> Presale; the rest of the deposit stays in the seat and goes home
+            // with its rent at claim (or refund). The pot pays the fee.
             let keep = rent(seat.data_len())?;
-            let excess = seat
-                .lamports()
-                .checked_sub(keep)
-                .and_then(|x| x.checked_sub(s.commit))
-                .ok_or(Error::Overflow)?;
+            if seat.lamports().checked_sub(keep).is_none_or(|x| x < s.commit) {
+                return Err(Error::Overflow.into());
+            }
             move_lamports(seat, presale, s.commit)?;
-            move_lamports(seat, user, excess)?;
             move_lamports(presale, cranker, fee)?;
             p.fees_paid += fee;
             p.seats_settled += 1;

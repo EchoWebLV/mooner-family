@@ -7,6 +7,8 @@
 #   programs/presale/litesvm/fixtures/fetch.sh                      (dumps dbc.so)
 # RPC_PORT moves it off 8899 when another validator is running there (the canary then
 # needs --rpc http://127.0.0.1:$RPC_PORT); the other ports follow it.
+# Genesis copies mainnet's feature set: the test validator otherwise turns on every
+# feature, including SIMD-0500 (no new SBPF v0 deploys), which mainnet doesn't have.
 set -euo pipefail
 RPC_PORT=${RPC_PORT:-8899}
 cd "$(dirname "$0")/.."
@@ -18,6 +20,7 @@ mkdir -p "$DIR"
 PAYER=$(solana-keygen pubkey "$DIR/payer-keypair.json")
 PID=$(solana-keygen pubkey "$PRESALE/target/canary/mooner_presale-keypair.json")
 exec solana-test-validator --reset --quiet --ledger "$DIR/ledger" \
+  --clone-feature-set --url mainnet-beta \
   --rpc-port "$RPC_PORT" --faucet-port $((RPC_PORT + 1001)) --gossip-port $((RPC_PORT + 101)) \
   --dynamic-port-range $((RPC_PORT + 201))-$((RPC_PORT + 301)) \
   --mint "$PAYER" \

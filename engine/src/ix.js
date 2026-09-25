@@ -4,7 +4,7 @@
 
 import { PublicKey, TransactionInstruction } from "@solana/web3.js";
 import {
-  ATA_PROGRAM, DELEGATION_PROGRAM, IX, IX_SYSVAR, MAGIC_CONTEXT, MAGIC_PROGRAM, SYSTEM, TOKEN, TOKEN22, WSOL,
+  ATA_PROGRAM, DELEGATION_PROGRAM, IX, IX_SYSVAR, MAGIC_CONTEXT, MAGIC_PROGRAM, MEMO, SYSTEM, TOKEN, TOKEN22, WSOL,
 } from "./consts.js";
 import {
   ata, bufferPda, configPda, metadataPda, poolAddresses, presalePda, programDataPda, recordPda, seatPda, vaultOf,
@@ -110,16 +110,18 @@ export function release(pid, { bot, presale, pot, mint, dbcConfig }) {
   ]);
 }
 
-export function settle(pid, { presale, pot, mint, minTokens }) {
+/** The pool is read back to check the buy paid DBC's floor fee. */
+export function settle(pid, { presale, pot, mint, minTokens, dbcConfig }) {
   return ix(pid, IX.SETTLE, [u64le(minTokens)], [
     w(presale), r(configPda(pid)), r(vaultOf(presale, mint)), r(ata(pot, WSOL, TOKEN)), r(IX_SYSVAR),
+    r(poolAddresses(dbcConfig, mint).pool),
   ]);
 }
 
 export function claim(pid, { cranker, presale, user, mint }) {
   return ix(pid, IX.CLAIM, [], [
     ws(cranker), w(presale), w(seatPda(pid, presale, user)), w(user), w(vaultOf(presale, mint)),
-    w(ata(user, mint, TOKEN22)), r(mint), r(TOKEN22), r(ATA_PROGRAM), r(SYSTEM), r(IX_SYSVAR),
+    w(ata(user, mint, TOKEN22)), r(mint), r(TOKEN22), r(ATA_PROGRAM), r(SYSTEM), r(IX_SYSVAR), r(MEMO),
   ]);
 }
 

@@ -20,6 +20,10 @@ export const connect = (url) =>
 /** A signed tx. `alts`: AddressLookupTableAccount[] (v0 only). */
 export async function build(conn, { ixs, payer, signers = [], alts = [], legacy = false, blockhash }) {
   const bh = blockhash ?? (await conn.getLatestBlockhash("confirmed")).blockhash;
+  return sign({ ixs, payer, signers, alts, legacy, blockhash: bh });
+}
+
+function sign({ ixs, payer, signers, alts, legacy, blockhash: bh }) {
   const all = [payer, ...signers.filter((s) => !s.publicKey.equals(payer.publicKey))];
   if (legacy) {
     const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: bh }).add(...ixs);
@@ -44,26 +48,40 @@ export class TxError extends Error {
 }
 
 /** Sends a signed tx and waits for "confirmed". The raw tx is re-sent while pending
- *  (Solana drops txs under load). Throws TxError, with our error names, if it failed. */
-export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000 } = {}) {
+ *  (Solana drops txs under load). Throws TxError, with our error names, if it failed.
+ *  With `lastValidBlockHeight` it gives up only once the blockhash has expired, so a tx
+ *  it calls dead can't land later; otherwise after `timeoutMs`. `stuckMs` bounds the
+ *  wait for an RPC whose block height stops moving; that error says the outcome is
+ *  unknown (the keeper re-reads the chain before it acts again). */
+export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000, stuckMs = 300_000, lastValidBlockHeight } = {}) {
   const raw = tx.serialize();
   const sig = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
   const t0 = Date.now();
   let lastSend = t0;
+  const done = async (st) => {
+    if (st.err) {
+      const logs = await txLogs(conn, sig);
+      throw new TxError(sig, describeTxError(st.err, ixs?.map((i) => i.programId), pid), logs, what);
+    }
+    return sig;
+  };
+  const landed = (st) => st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized";
   for (;;) {
     const st = (await conn.getSignatureStatuses([sig])).value[0];
-    if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") {
-      if (st.err) {
-        const logs = await txLogs(conn, sig);
-        throw new TxError(sig, describeTxError(st.err, ixs?.map((i) => i.programId), pid), logs, what);
-      }
-      return sig;
-    }
-    if (Date.now() - t0 > timeoutMs) throw new TxError(sig, "not confirmed in time", [], what);
+    if (landed(st)) return done(st);
     if (Date.now() - lastSend > resendMs) {
       lastSend = Date.now();
+      if (lastValidBlockHeight != null && (await conn.getBlockHeight("confirmed")) > lastValidBlockHeight) {
+        // one last look: it may have landed in the last block before expiry
+        const last = (await conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0];
+        if (!last) throw new TxError(sig, "expired: the blockhash ran out and the tx never landed", [], what);
+        if (landed(last)) return done(last);
+        continue;
+      }
       await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
     }
+    if (lastValidBlockHeight == null && Date.now() - t0 > timeoutMs) throw new TxError(sig, "not confirmed in time", [], what);
+    if (Date.now() - t0 > stuckMs) throw new TxError(sig, "outcome unknown: the RPC's block height stopped moving", [], what);
     await sleep(conn.rpcEndpoint.includes("magicblock") ? 100 : 400);
   }
 }
@@ -77,10 +95,12 @@ async function txLogs(conn, sig) {
   return [];
 }
 
-/** Build, sign, send, confirm. */
+/** Build, sign, send, confirm. Solana txs wait out their blockhash (see sendSigned);
+ *  ER txs (`legacy`) use the wall-clock timeout. */
 export async function send(conn, opts) {
-  const tx = await build(conn, opts);
-  return sendSigned(conn, tx, opts);
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
+  const tx = sign({ signers: [], alts: [], legacy: false, ...opts, blockhash });
+  return sendSigned(conn, tx, { ...opts, lastValidBlockHeight: opts.legacy ? undefined : lastValidBlockHeight });
 }
 
 /** Simulates without signatures. `accounts`: PublicKeys whose post-state to return

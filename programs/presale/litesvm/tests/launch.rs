@@ -290,6 +290,38 @@ fn the_pot_pays_at_most_the_cost_cap() {
 }
 
 #[test]
+fn a_swap_without_the_ix_sysvar_is_refused() {
+    // without the sysvar DBC skips the first-swap floor and charges its 99% fee
+    let mut e = Env::new(false);
+    let o = ready(&mut e);
+    let mut ixs = e.launch_ixs(&o, 1);
+    assert_eq!(ixs[SWAP].accounts.pop().map(|m| m.pubkey), Some(ix_sysvar_id()));
+    assert_err(try_launch(&mut e, &o, &ixs, &[]), E_BAD_LAUNCH_TX, "swap2 without the sysvar");
+}
+
+#[test]
+fn settle_reads_the_fee_from_the_real_pool() {
+    let mut e = Env::new(false);
+    let o = ready(&mut e);
+    let mut ixs = e.launch_ixs(&o, 1);
+    ixs[SETTLE].accounts[5].pubkey = dbc_config(); // a DBC account, not the pool
+    assert_err(try_launch(&mut e, &o, &ixs, &[]), E_BAD_ACCOUNT, "another account as the pool");
+}
+
+#[test]
+fn a_donation_to_the_presale_does_not_stop_the_launch() {
+    let mut e = Env::new(false);
+    let o = ready(&mut e);
+    let ixs = e.launch_ixs(&o, 1); // the bot plans first
+    let released = e.expected_release(&o);
+    let griefer = e.user(1);
+    ok(send(&mut e.svm, &griefer, &[], &[ix_transfer(&griefer.pubkey(), &o.presale, 1)]), "donate a lamport");
+    ok(try_launch(&mut e, &o, &ixs, &[]), "launch after a donation");
+    let p = read_presale(&e.svm, &o.presale);
+    assert_eq!((p.state, p.released), (SETTLED, released), "the ledger, not the balance, sets the amount");
+}
+
+#[test]
 fn a_launched_presale_cannot_launch_again() {
     let mut e = Env::new(false);
     let o = ready(&mut e);
