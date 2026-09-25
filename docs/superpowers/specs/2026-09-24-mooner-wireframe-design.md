@@ -1,10 +1,25 @@
 # Mooner — Wireframe & Demo Design
 
 - **Date:** 2026-09-24
-- **Status:** Revision 2 — updated after review, awaiting spec review
+- **Status:** Revision 5 — 1-hour presale timer; the user pays to join (one Solana tx), changing and withdrawing inside the presale are free; Mooner pays nothing per presale (see `2026-09-25-mooner-presale-engine-design.md`)
 - **Scope of this spec:** a clickable, simulated front-end demo. No wallet, chain, MagicBlock integration, chat server, auth, or X data ingestion — each of those gets its own spec later.
 
-## 0. Revision 2 changes
+## 0. Changes
+
+### Revision 4
+
+| Area | Revision 3 | Revision 4 |
+|---|---|---|
+| Max commit | 2 SOL per wallet | **1 SOL per wallet**: a full pool needs at least 10 people |
+| Presale cost | not stated | **Join = one Solana tx the user pays** (network fee + MagicBlock delegation fee; the account rent comes back). Changing and withdrawing inside the presale are free; the refund lands through one Solana settle (§3.2) |
+
+### Revision 3
+
+| Area | Revision 2 | Revision 3 |
+|---|---|---|
+| Presale target | 8.5 SOL | **10 SOL**: the pool on MagicBlock ER launches the moment it reaches 10 SOL |
+
+### Revision 2
 
 | Area | Revision 1 | Revision 2 |
 |---|---|---|
@@ -17,14 +32,15 @@
 
 ## 1. Product in one paragraph
 
-Mooner is a social, gamified Solana launchpad, built to be the fairest way to launch a token. Every token starts as a **presale**: anyone chips in 0.1–2 SOL and everyone watches people join live, as circles. The presale runs on a MagicBlock Ephemeral Rollup, before the token exists on Solana. The moment the pool reaches **8.5 SOL** it settles to Solana and the token launches with the whole pool as its first buy, split **pro-rata at one price for everyone, creator included**. Everyone carries **titles** — KOL, Diamond Hands, Shiller, Raider — that level up through five badges, and it all lands on a **public leaderboard** that shows who is behind every project. Home is one big **global chat** next to three Axiom-style **rails** that only ever show Mooner tokens; every token has its own chart and chat.
+Mooner is a social, gamified Solana launchpad, built to be the fairest way to launch a token. Every token starts as a **presale**: anyone chips in 0.1–1 SOL, free to change and free to withdraw, and everyone watches people join live, as circles. The presale runs on a MagicBlock Ephemeral Rollup, before the token exists on Solana. The moment the pool reaches **10 SOL** it settles to Solana and the token launches with the whole pool as its first buy, split **pro-rata at one price for everyone, creator included**. Everyone carries **titles** — KOL, Diamond Hands, Shiller, Raider — that level up through five badges, and it all lands on a **public leaderboard** that shows who is behind every project. Home is one big **global chat** next to three Axiom-style **rails** that only ever show Mooner tokens; every token has its own chart and chat.
 
 ## 2. Decisions
 
 | Topic | Decision |
 |---|---|
-| Allocation | Same price, pro-rata to SOL committed. 2 SOL gets 20× what 0.1 SOL gets. (Confirmed twice.) |
-| Launch trigger | Automatic when the pool reaches exactly 8.5 SOL. No Ready step. |
+| Allocation | Same price, pro-rata to SOL committed. 1 SOL gets 10× what 0.1 SOL gets. (Confirmed twice.) |
+| Presale cost | Joining is one Solana tx the user pays; changing and withdrawing inside the presale are free. Mooner pays nothing per presale (§3.2). |
+| Launch trigger | Automatic when the pool reaches exactly 10 SOL. No Ready step. |
 | Rails | **New Pairs** = presales filling · **Final Stretch** = launched, live on the curve · **Migrated** = graduated to an AMM pool |
 | Presale infrastructure | MagicBlock Ephemeral Rollup during the presale → settles to Solana at launch. The demo shows this; real integration is a later spec. |
 | Titles | Four titles, five levels each, one named badge per level (20 badges). Earned, not chosen; never a requirement to join. |
@@ -39,9 +55,9 @@ Mooner is a social, gamified Solana launchpad, built to be the fairest way to la
 ### 3.1 Lifecycle
 
 ```
-presale ──(pool reaches 8.5 SOL)──▶ launching ──▶ live ──(curve sold out)──▶ migrated
+presale ──(pool reaches 10 SOL)──▶ launching ──▶ live ──(curve sold out)──▶ migrated
    │
-   └──(timer runs out before 8.5 SOL)──▶ expired  (everyone refunded)
+   └──(timer runs out before 10 SOL)──▶ expired  (everyone refunded)
 ```
 
 | Stage | Where it runs | Rail | What you can do |
@@ -60,20 +76,21 @@ All SOL math uses **integer lamports** (1 SOL = 1,000,000,000) so pool totals ar
 
 | Constant | Value |
 |---|---|
-| `PRESALE_TARGET` | 8.5 SOL |
-| `MIN_COMMIT` / `MAX_COMMIT` | 0.1 SOL / 2 SOL per wallet |
+| `PRESALE_TARGET` | 10 SOL |
+| `MIN_COMMIT` / `MAX_COMMIT` | 0.1 SOL / 1 SOL per wallet |
 | `COMMIT_STEP` | 0.01 SOL — every commit is a multiple of it, so what's left in the pool always is too |
 | `LAUNCH_SETTLE` | 4 s (demo animation only) |
-| Presale timer | the creator picks 5, 10 or 15 min; bot-opened presales use 2–8 min |
+| Presale timer | 1 hour, fixed |
 
 - **Remaining:** `remaining = PRESALE_TARGET − pool`.
 - **Commit range** for your total position: let `room = remaining + your current commit`; then `min = min(MIN_COMMIT, room)` and `max = min(MAX_COMMIT, room)`. When `room` is under 0.1 SOL (only possible for someone who hasn't joined yet), min = max = room: the commit is exactly what's left, so the pool can always be completed.
-- **Pool cap:** the pool can never exceed 8.5 SOL. A requested amount above the max is clamped, and the UI says so.
-- **Participants:** one position per wallet. The count falls out of the limits: at least 5 (4 × 2 SOL + 0.5), at most 85 (85 × 0.1 SOL).
+- **Pool cap:** the pool can never exceed 10 SOL. A requested amount above the max is clamped, and the UI says so.
+- **Participants:** one position per wallet. The count falls out of the limits: at least 10 (10 × 1 SOL), at most 100 (100 × 0.1 SOL).
 - **Change / withdraw:** while in `presale`, you can raise or lower your commit within the range, or withdraw it entirely (full refund).
+- **Costs:** joining is one Solana transaction the user signs and pays: it escrows their SOL in their own seat account and moves the seat into the MagicBlock ER (network fee + MagicBlock's delegation fee; the seat's rent comes back at claim or refund). Changing your commit and withdrawing happen inside the ER and cost nothing. A withdrawal or refund lands in your wallet through one Solana settle, which you can send yourself or let the bot send for a small fee taken from the refund. The creator pays to open; the pot pays the launch and token delivery; Mooner pays nothing per presale. The demo shows "Free to change or withdraw" beside the commit controls.
 - **Escrow:** committing moves SOL from the wallet into the pool immediately. Lowering, withdrawing, or expiry returns it.
-- **Launch:** the moment the pool reaches exactly 8.5 SOL, the presale moves to `launching`, then `live`. No Ready step, no waiting on anyone.
-- **Creator:** commits like everyone else — same price, same 2 SOL cap, no team allocation. The creator can change their commit but can't withdraw it.
+- **Launch:** the moment the pool reaches exactly 10 SOL, the presale moves to `launching`, then `live`. No Ready step, no waiting on anyone.
+- **Creator:** commits like everyone else — same price, same 1 SOL cap, no team allocation. The creator can change their commit but can't withdraw it.
 - **Titles never gate anything:** anyone can join any public presale.
 - **Private presales:** appear in New Pairs with a lock icon; joining needs the invite link (`/presale/[id]?invite=CODE`). Find Match never places anyone in a private presale. Bots join both kinds (in private ones they stand in for invited friends).
 - **Expiry:** at the presale timer, an unfilled presale becomes `expired` and refunds everyone.
@@ -85,11 +102,11 @@ How the design removes each advantage. The demo shows it; the real guarantees be
 | Advantage elsewhere | Why it doesn't exist on Mooner |
 |---|---|
 | Bots buying in the creation block | During the presale the token doesn't exist on Solana — there is no mint to watch or buy. |
-| Buying between creation and the community | Launch creates the token and executes the whole 8.5 SOL pool as the first curve buy in one transaction, so nothing can land in between. |
+| Buying between creation and the community | Launch creates the token and executes the whole 10 SOL pool as the first curve buy in one transaction, so nothing can land in between. |
 | Cheaper insider entry | Everyone in the presale, creator included, gets the identical price (§3.4). There is no team allocation. |
 | Hidden holders | Every participant appears publicly with their titles, levels and leaderboard rank — on the presale circles, the token page, and the leaderboard. |
 
-**Known limit (for the on-chain spec, not the pitch):** one person can still split SOL across several wallets. The 2 SOL per-wallet cap limits the size of that, and titles plus the public leaderboard make anonymous wallets visible as such, but neither prevents it.
+**Known limit (for the on-chain spec, not the pitch):** one person can still split SOL across several wallets. The 1 SOL per-wallet cap limits the size of that (a full pool needs at least 10 wallets), and titles plus the public leaderboard make anonymous wallets visible as such, but neither prevents it.
 
 ### 3.4 Bonding curve and allocation
 
@@ -106,7 +123,7 @@ Constant-product math with virtual reserves. **All parameters are placeholders**
 
 - **Buy:** `tokensOut = vT − k / (vS + solIn)`, `k = vS × vT`. A buy that would exceed the remaining for-sale tokens is capped and charges only the SOL needed.
 - **Sell:** `solOut = vS − k / (vT + tokensIn)`.
-- **Launch:** the 8.5 SOL pool is the first buy. `T = tokensOut(8.5 SOL)`; participant *i* gets `T × commit_i / 8.5`. Everyone's price is `8.5 / T` — identical by construction.
+- **Launch:** the 10 SOL pool is the first buy. `T = tokensOut(10 SOL)`; participant *i* gets `T × commit_i / 10`. Everyone's price is `10 / T` — identical by construction.
 - **Migration:** when all `CURVE_TOKENS_FOR_SALE` are sold. The AMM pool is seeded with the SOL raised and `LP_TOKENS`, then trades with the same constant-product formula on real reserves.
 - **Curve progress:** tokens sold ÷ `CURVE_TOKENS_FOR_SALE`.
 - **Market cap:** spot price × `TOTAL_SUPPLY` (× `SOL_USD` for display).
@@ -116,14 +133,14 @@ Numbers these placeholders produce (computed, not estimated):
 
 | | Value |
 |---|---|
-| Presale tokens (`T`) | 236,896,104 — **23.69 % of supply goes to presale participants** |
-| 1.0 SOL commit | 27,870,130 tokens (2.787 % of supply) |
-| Presale price | 3.588e-8 SOL per token |
-| Market cap at start → after presale buy | 27.96 SOL → 46.05 SOL |
-| SOL raised at migration | 85.005 SOL (the 8.5 SOL presale is ≈ 10 % of it) |
+| Presale tokens (`T`) | 268,250,000 — **26.83 % of supply goes to presale participants** |
+| 1.0 SOL commit | 26,825,000 tokens (2.683 % of supply) |
+| Presale price | 3.728e-8 SOL per token |
+| Market cap at start → after presale buy | 27.96 SOL → 49.70 SOL |
+| SOL raised at migration | 85.005 SOL (the 10 SOL presale is ≈ 12 % of it) |
 | Market cap at migration | 410.9 SOL |
 
-> **Parameter to revisit with the real curve:** at these values presale participants hold ~23.7 % of supply at launch.
+> **Parameter to revisit with the real curve:** at these values presale participants hold ~26.8 % of supply at launch; one wallet holds at most 2.68 % (1 SOL).
 
 ## 4. Titles, levels, badges, leaderboard
 
@@ -196,7 +213,7 @@ Three rails plus the global chat docked on the right (collapsible).
 
 | Rail | Sort | Card shows |
 |---|---|---|
-| New Pairs | newest first | token art, name, $TICKER, age, "MagicBlock ER" chip, **mini participant circles** (first 12, then "+N"), pool bar "6.2 / 8.5 SOL", participant count, time left, the three highest-level participants' badges, **Join** |
+| New Pairs | newest first | token art, name, $TICKER, age, "MagicBlock ER" chip, **mini participant circles** (first 12, then "+N"), pool bar "7.7 / 10 SOL", participant count, time left, the three highest-level participants' badges, **Join** |
 | Final Stretch | curve progress, highest first | art, name, ticker, time since launch, market cap, curve progress bar, volume, holders, price change, the three highest-level presale participants' badges, **quick buy 0.1 SOL** |
 | Migrated | most recently migrated first | art, name, ticker, market cap, liquidity, volume, holders, price change, "migrated 12m ago", **quick buy 0.1 SOL** |
 
@@ -211,12 +228,12 @@ The same screen serves a presale opened from New Pairs and one reached through F
 
 - **Header:** token art, name, ticker, creator with their main badge, description, Public or Private (with a copyable invite link), time left, "Runs on MagicBlock ER" chip.
 - **Participant circles in rows:** one circle per participant — avatar, main-title badge in the corner, level, handle underneath. New joins pop in. Your circle is marked **YOU**. If you haven't joined, a pulsing **+** circle closes the rows. Circle size steps down as the presale grows (64 px up to 20 people, 44 px up to 50, 32 px beyond). Clicking a circle opens a player card: all four titles with levels, leaderboard rank, presales joined, % migrated.
-- **Pool bar:** segmented by participant, labelled "6.2 / 8.5 SOL · 2.3 to launch".
+- **Pool bar:** segmented by participant, labelled "7.7 / 10 SOL · 2.3 to launch".
 - **Your panel:**
   - Not joined: amount slider (range from §3.2, 0.01 steps) and **Join**.
   - Joined: change amount, **Withdraw** (not offered to the creator).
   - The input explains its limit, e.g. "max 0.40 SOL — that's all that's left".
-  - **Allocation preview:** "1.00 SOL → ≈ 27.87M $MOON (2.79 % of supply) — same price as everyone, creator included".
+  - **Allocation preview:** "1.00 SOL → ≈ 26.8M $MOON (2.68 % of supply) — same price as everyone, creator included".
 - **Launch sequence** (plays for everyone the moment the pool fills): "POOL FULL" → "Settling to Solana" → "Token created · pool is the first buy" → "LIVE" → navigate to `/token/[id]` → level-up overlay if your XP crossed a threshold.
 - **Chat:** the token's channel, with a tab to switch to Global.
 - A `live` or `migrated` token's presale URL redirects to its token page.
@@ -225,8 +242,8 @@ The same screen serves a presale opened from New Pairs and one reached through F
 
 Opened from the top bar.
 
-1. **Pick your amount:** 0.1–2 SOL (checked against your wallet).
-2. **Find Match:** among public presales you aren't in, picks the one that can take your full amount with the least room to spare — the closest to launching — with ties going to the one soonest to expire. If none can take your full amount, a bot opens a new public presale (10 min timer) and you join it. You land on `/presale/[id]` in LOOKING FOR MATCH mode and watch the circles fill; if your amount fills the pool exactly, the launch sequence starts right away.
+1. **Pick your amount:** 0.1–1 SOL (checked against your wallet).
+2. **Find Match:** among public presales you aren't in, picks the one that can take your full amount with the least room to spare — the closest to launching — with ties going to the one soonest to expire. If none can take your full amount, a new public presale (1 hour timer) is opened and you join it. You land on `/presale/[id]` in LOOKING FOR MATCH mode and watch the circles fill; if your amount fills the pool exactly, the launch sequence starts right away.
 
 ### 5.5 Token — `/token/[id]`
 
@@ -242,8 +259,8 @@ Opened from the top bar.
 ### 5.6 Launch wizard — `/launch`
 
 1. **Token:** name, ticker (2–10 characters, uppercased), description, optional X / Telegram / website. Art is generated from the name (upload is a disabled stub).
-2. **Presale:** Public (open to Find Match) or Private (invite link); timer 5 / 10 / 15 min.
-3. **Your commit:** amount (0.1–2 SOL), review, **Open presale**. The new token appears at the top of New Pairs and you land on its presale page.
+2. **Presale:** Public (open to Find Match) or Private (invite link); the timer is 1 hour.
+3. **Your commit:** amount (0.1–1 SOL), review, **Open presale**. The new token appears at the top of New Pairs and you land on its presale page.
 
 ### 5.7 Leaderboard — `/leaderboard`
 
@@ -348,7 +365,7 @@ interface Presale {
   visibility: 'public' | 'private'; inviteCode?: string;
   participants: Participant[];           // join order
   expiresAt: number;
-  launchStartedAt?: number;              // set when the pool reaches 8.5 SOL
+  launchStartedAt?: number;              // set when the pool reaches 10 SOL
 }
 
 interface Pool { solReserve: number; tokenReserve: number; tokensSold: number } // curve: virtual reserves; AMM: real reserves
@@ -416,17 +433,17 @@ Every action validates through `presale.ts` / `curve.ts` / `levels.ts` and eithe
 | Buy larger than what's left on the curve | Capped; only the needed SOL is charged |
 | Sell more than you hold | Capped to your position |
 | Unknown token or profile id | "Not found" state with a link back to Pulse |
-| Find Match with no public presale that can take your full amount | A bot opens a new public presale (10 min timer) and you join it |
+| Find Match with no public presale that can take your full amount | A new public presale opens (1 hour timer) and you join it |
 | Creator tries to withdraw | Not offered; they can lower their commit to 0.1 SOL |
 
 ## 9. Testing and verification
 
 **Vitest (pure logic):**
-- `curve.test.ts` — price strictly increases with buys and decreases with sells; 8.5 SOL from the initial state yields 236,896,104 ± 1 tokens; migration happens at 85.005 ± 0.001 SOL raised; buy-then-sell never returns more SOL than went in; pro-rata allocations sum to `T` (within 1 token) and give every participant the same price.
-- `presale.test.ts` — the commit range follows §3.2, including the under-0.1 remainder; no position drops below 0.1 SOL except the one that fills the pool; the pool never exceeds 8.5 SOL; the presale launches exactly when the pool reaches 8.5 SOL and not before; change and withdraw refund correctly; the creator can't withdraw; expiry refunds everyone; a private presale rejects joins without the invite code; `pickMatch` follows §5.4.
+- `curve.test.ts` — price strictly increases with buys and decreases with sells; 10 SOL from the initial state yields 268,250,000 ± 1 tokens; migration happens at 85.005 ± 0.001 SOL raised; buy-then-sell never returns more SOL than went in; pro-rata allocations sum to `T` (within 1 token) and give every participant the same price.
+- `presale.test.ts` — the commit range follows §3.2, including the under-0.1 remainder; no position drops below 0.1 SOL except the one that fills the pool; the pool never exceeds 10 SOL; the presale launches exactly when the pool reaches 10 SOL and not before; change and withdraw refund correctly; the creator can't withdraw; expiry refunds everyone; a private presale rejects joins without the invite code; `pickMatch` follows §5.4.
 - `levels.test.ts` — thresholds map to the right levels and names; main title picks the highest level, then XP; awards cross thresholds correctly.
 - `leaderboard.test.ts` — overall and per-title rankings order by XP with a stable tie-break on handle.
-- `step.test.ts` — over 2,000 ticks from a fixed seed: no pool above 8.5 SOL, no negative reserves, stages only move forward, every launched token had a full pool, every migrated token sold out its curve, list sizes stay within their caps, and the same seed gives the same world.
+- `step.test.ts` — over 2,000 ticks from a fixed seed: no pool above 10 SOL, no negative reserves, stages only move forward, every launched token had a full pool, every migrated token sold out its curve, list sizes stay within their caps, and the same seed gives the same world.
 
 **Build:** `pnpm build` passes (type check included).
 
