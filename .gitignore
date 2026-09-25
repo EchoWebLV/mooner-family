@@ -3,6 +3,9 @@
 .env.*
 *keypair*.json
 id.json
+# the server's database holds mint secret keys
+*.db
+*.db-journal
 
 # build output
 **/target/

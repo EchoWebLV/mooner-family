@@ -1,11 +1,11 @@
 // The keeper's safety checks against a fake RPC: counting seats before a close, the
-// crank's per-ix fallback, and when a send gives up.
+// crank's per-ix fallback, when a send gives up, and what a full presale does first.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Keypair, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { Bot } from "../src/bot.js";
 import { DELEGATION_PROGRAM } from "../src/consts.js";
-import { S, SEAT_LEN, SEAT_VERSION } from "../src/layout.js";
+import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE, decodePresale } from "../src/layout.js";
 import { presalePda, seatPda } from "../src/pdas.js";
 import { sendSigned } from "../src/tx.js";
 
@@ -137,4 +137,82 @@ test("sendSigned: after the blockhash runs out, one history look decides", async
   await assert.rejects(sendSigned(conn(null), tx, opts), /expired/);
   // an RPC whose block height never moves ends too
   await assert.rejects(sendSigned(conn(null, 0), tx, { ...opts, stuckMs: 50 }), /outcome unknown/);
+});
+
+// ---- a full presale: the launch comes before any listing ----
+
+const validator = new PublicKey("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57");
+
+function presaleBytes({ state = STATE.FULL, fullTs, committed, settled }) {
+  const d = Buffer.alloc(PRESALE_LEN);
+  d[0] = PRESALE_VERSION;
+  d[P.STATE] = state;
+  validator.toBuffer().copy(d, P.VALIDATOR);
+  d.writeBigInt64LE(BigInt(fullTs), P.FULL_TS);
+  d.writeBigUInt64LE(committed, P.SEATS_COMMITTED);
+  d.writeBigUInt64LE(settled, P.SEATS_SETTLED);
+  return d;
+}
+
+/** A bot whose listings, sends and launch only record that they ran. `chain.bytes` is the
+ *  presale account now; `homeUnsettled` how many home seats the listing shows unsettled;
+ *  `settleLands` whether the settle shows up in the next read. */
+function fullBot({ committed = 4n, settled = 0n, homeUnsettled = 4, settleLands = true, age = 10, state } = {}) {
+  const T = 1_800_000_000;
+  const chain = { bytes: presaleBytes({ state, fullTs: T - age, committed, settled }) };
+  const l1 = { rpcEndpoint: "http://fake", getAccountInfo: async () => ({ owner: pid, data: chain.bytes, lamports: 1 }) };
+  const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: { rpcEndpoint: "https://devnet-as.magicblock.app" } }, bot: Keypair.generate(), canary: true, log: () => {} });
+  const calls = [];
+  bot.now = () => T;
+  bot.homeSeats = async () => (calls.push("list home seats"), Array.from({ length: homeUnsettled }, () => ({ settled: false })));
+  bot.commitSeatsHome = async () => (calls.push("list ER seats"), []);
+  bot.settleSeats = async (_, open) => {
+    calls.push(`settle x${open.length}`);
+    if (settleLands) chain.bytes = presaleBytes({ state, fullTs: T - age, committed, settled: settled + BigInt(open.length) });
+    return [`settle_seat x${open.length}`];
+  };
+  bot.crank = async (_, what) => (calls.push(what), what);
+  bot.launch = async (_, p) => (calls.push(`launch (${p.seatsSettled}/${p.seatsCommitted} settled)`), {});
+  return { bot, calls, p: () => decodePresale(chain.bytes) };
+}
+
+test("full, every seat settled: the launch goes out with no listing in front of it", async () => {
+  const f = fullBot({ settled: 4n });
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["launch (4/4 settled)"]);
+  assert.deepEqual(r.did, ["launch"]);
+});
+
+test("full, seats to settle: settle, read again, launch in the same tick", async () => {
+  const f = fullBot();
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list home seats", "settle x4", "launch (4/4 settled)"], "the launch sees the presale after the settle");
+  assert.deepEqual(r.did, ["settle_seat x4", "launch"]);
+});
+
+test("full, the settle not visible yet: wait for it, no ER listing", async () => {
+  const f = fullBot({ settleLands: false });
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list home seats", "settle x4"]);
+  assert.equal(r.wait, "settles landing");
+});
+
+test("full, committed seats not home: look for them in the ER", async () => {
+  const f = fullBot({ settled: 2n, homeUnsettled: 0 });
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list home seats", "list ER seats"]);
+  assert.match(r.wait, /2 committed seat\(s\) not home/);
+});
+
+test("full past the grace: fail, nothing listed first", async () => {
+  const f = fullBot({ settled: 4n, age: 61 });
+  assert.equal(f.bot.n.GRACE, 60);
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual([f.calls, r.did], [["fail"], ["fail"]]);
+});
+
+test("other states still bring late seats home first", async () => {
+  const f = fullBot({ state: STATE.LAUNCHING, settled: 4n });
+  await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list ER seats"]);
 });

@@ -62,7 +62,8 @@ test("join + delegate seat fits one tx and gets co-signed", async () => {
   const user = Keypair.generate();
   const presale = presalePda(pid, Keypair.generate().publicKey);
   const tx = await unsigned(user, joinIxs(user.publicKey, presale));
-  const out = cosign(b64(tx), { pid, gateKey, allow: new Set([user.publicKey.toBase58()]), validators: [validator] });
+  // joins are open to every wallet, the openers list included
+  const out = cosign(b64(tx), { pid, gateKey, openers: new Set(), validators: [validator] });
   assert.equal(out.kind, "join");
   assert.ok(out.presale.equals(presale));
 });
@@ -81,7 +82,7 @@ test("the co-signer refuses anything else", async () => {
   await refused("join without its delegate", joinIxs(user.publicKey, presale).slice(0, 1));
   await refused("an extra program", [...joinIxs(user.publicKey, presale), SystemProgram.transfer({ fromPubkey: user.publicKey, toPubkey: gate, lamports: 1 })]);
   await refused("two joins", [...joinIxs(user.publicKey, presale), ...joinIxs(user.publicKey, presale)]);
-  await refused("not on the beta list", joinIxs(user.publicKey, presale), { allow: new Set() });
+  await refused("an open by a wallet not on the openers list", openIxs(creator.publicKey, mint.publicKey), { payer: creator, openers: new Set([user.publicKey.toBase58()]) });
   await refused("an unknown validator", joinIxs(user.publicKey, presale), { validators: [Keypair.generate().publicKey] });
   await refused("open without the seat delegate", openIxs(creator.publicKey, mint.publicKey, { drop: 2 }), { payer: creator });
   await refused("seat delegated before the presale", openIxs(creator.publicKey, mint.publicKey, { order: "swapped" }), { payer: creator });

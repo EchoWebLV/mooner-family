@@ -5,6 +5,10 @@
 //   --path happy|expiry|all  (default all)
 //   --rpc <url>       override the Solana RPC (e.g. a local validator on another port)
 //   --resume <mint>   pick up a stopped happy run at the bot's half (reads its run.json)
+//   --server          devnet: run the real server (server/main.js) and go through it. Mint
+//                     keys come from POST /api/mint, opens and joins from POST /api/cosign,
+//                     and the server's keeper does the bot's half. Only the creator and E
+//                     are on its openers list; every joiner is not.
 //
 // Happy path (canary TARGET 0.2 SOL):
 //   creator commits 0.05 at open; A commits 0.05 through an unfunded session key;
@@ -21,7 +25,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -36,6 +41,7 @@ import { build, connect, send, sendSigned } from "../src/tx.js";
 import { cosign } from "../src/cosigner.js";
 import { Bot, launchAltKeys } from "../src/bot.js";
 import { tokenShare } from "../src/math.js";
+import { mintMessage, signMessage } from "../server/auth.js";
 
 const ENGINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(ENGINE, "..");
@@ -61,11 +67,15 @@ const { values: args } = parseArgs({
     region: { type: "string", default: "as" },
     rpc: { type: "string" },
     resume: { type: "string" },
+    server: { type: "boolean", default: false },
   },
 });
 const cluster = args.cluster;
 if (!["local", "devnet"].includes(cluster)) throw new Error("--cluster local|devnet");
 const useEr = cluster === "devnet";
+const useServer = args.server;
+if (useServer && !useEr) throw new Error("--server runs on devnet (it needs the ER and the gate)");
+if (useServer && args.resume) throw new Error("--resume drives the bot here; with --server the server's keeper does that");
 const dir = `${ENGINE}/.canary/${cluster}`;
 fs.mkdirSync(dir, { recursive: true });
 
@@ -116,6 +126,13 @@ async function topUp(to, want) {
 /** The client signs its part, the gate server checks and co-signs (devnet); locally
  *  the gate is off and the tx goes out as is. */
 async function entry(user, ixs, what, mint) {
+  if (useServer) {
+    const tx = await build(l1, { ixs, payer: user });
+    const r = await api("POST", "/api/cosign", { tx: Buffer.from(tx.serialize()).toString("base64") });
+    if (r.status !== 200 && r.status !== 202) throw new Error(`${what}: the server said ${r.status} ${JSON.stringify(r.json)}`);
+    if (r.status === 202) await waitSig(r.json.sig, what);
+    return step(`${what} (via the server)`, r.json.sig);
+  }
   if (!useEr) {
     const sig = await send(l1, { ixs, payer: user, signers: mint ? [mint] : [], pid, what });
     return step(what, sig);
@@ -178,6 +195,143 @@ async function runBot(bot, presale, onTick, timeoutMs) {
     if (r.done) return;
     if (Date.now() - t0 > timeoutMs) throw new Error(`bot didn't finish: last state ${r.state}`);
     await sleep(r.did.length ? 1500 : Math.min(5000, typeof r.wait === "number" ? Math.max(1, r.wait) * 1000 : 3000));
+  }
+}
+
+// ---- the server (--server) ----
+
+const srv = { base: null, child: null };
+
+async function api(method, p, body) {
+  const r = await fetch(srv.base + p, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
+  return { status: r.status, json: await r.json().catch(() => null) };
+}
+
+async function waitSig(sig, what, timeoutMs = 90_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const st = (await l1.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0];
+    if (st?.err) throw new Error(`${what} (${sig}) failed: ${JSON.stringify(st.err)}`);
+    if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return;
+    if (Date.now() - t0 > timeoutMs) throw new Error(`${what} (${sig}) didn't confirm`);
+    await sleep(1000);
+  }
+}
+
+/** A 1x1 PNG, a real one. */
+function tinyPng() {
+  const chunk = (type, data) => {
+    const td = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const idat = zlib.deflateSync(Buffer.from([0, 0xf5, 0xc5, 0x18]));
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", Buffer.alloc(0))]);
+}
+
+/** What POST /api/mint takes: the details, signed by the creator's wallet. */
+function mintRequest(creator, name) {
+  const image = tinyPng();
+  const b = { wallet: creator.publicKey.toBase58(), name, symbol: "MCAN", description: "Mooner canary run", links: {}, time: Math.floor(Date.now() / 1000) };
+  const msg = mintMessage({ wallet: creator.publicKey, name, symbol: b.symbol, image, details: [b.description, "", "", ""], time: b.time });
+  return { ...b, image: image.toString("base64"), signature: signMessage(creator, msg).toString("base64") };
+}
+
+/** Starts server/main.js on this devnet deployment, with only the creator and E on its
+ *  openers list. Its env is built here from scratch: engine/.env is not read, so no
+ *  mainnet setting leaks in and nothing is uploaded to Pinata. */
+async function startServer() {
+  const openers = [keyAt("creator"), keyAt("e")].map((k) => k.publicKey.toBase58());
+  fs.writeFileSync(`${dir}/openers.txt`, `# the canary's openers: the creator and E\n${openers.join("\n")}\n`);
+  const stamp = Date.now();
+  const logFile = `${dir}/server-${stamp}.log`;
+  const out = fs.createWriteStream(logFile);
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("MOONER_") && !k.startsWith("PINATA_")));
+  Object.assign(env, {
+    MOONER_ENV: `${dir}/none.env`,
+    MOONER_CLUSTER: "devnet",
+    MOONER_CANARY: "1",
+    MOONER_DIR: dir,
+    MOONER_RPC: l1.rpcEndpoint,
+    MOONER_PROGRAM: pid.toBase58(),
+    MOONER_DBC_CONFIG: ctx.dbcConfig.toBase58(),
+    MOONER_ALT: saved.alt,
+    MOONER_GATE_KEY: `${dir}/gate-keypair.json`,
+    MOONER_BOT_KEY: `${dir}/bot-keypair.json`,
+    MOONER_DB: `${dir}/server-${stamp}.db`,
+    MOONER_OPENERS: `${dir}/openers.txt`,
+    MOONER_PORT: "0",
+    MOONER_POLL_MS: "2000",
+  });
+  const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", `${ENGINE}/server/main.js`], { cwd: ENGINE, env, stdio: ["ignore", "pipe", "pipe"] });
+  srv.child = child;
+  const port = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`the server didn't start; see ${logFile}`)), 120_000);
+    let rest = "";
+    const onData = (buf) => {
+      out.write(buf);
+      rest += buf.toString("utf8");
+      const lines = rest.split("\n");
+      rest = lines.pop();
+      for (const line of lines) {
+        log(`  server │ ${line}`);
+        const m = line.match(/listening on http:\/\/[^:]+:(\d+)/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(Number(m[1]));
+        }
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`the server exited with code ${code}; see ${logFile}`));
+    });
+  });
+  srv.base = `http://127.0.0.1:${port}`;
+  step(`server up at ${srv.base} (log ${path.relative(ENGINE, logFile)})`);
+  const info = await api("GET", "/api/info");
+  check("the server's gate and bot are the Config's", info.json.gate === ctx.gateKey.toBase58() && info.json.bot === ctx.bot.publicKey.toBase58());
+}
+
+async function stopServer() {
+  const c = srv.child;
+  if (!c || c.exitCode !== null) return;
+  const exited = new Promise((r) => c.once("exit", r));
+  c.kill("SIGTERM");
+  await Promise.race([exited, sleep(60_000)]); // a launch in flight finishes first
+}
+
+/** Waits for the server's keeper to finish `presale`, reading the chain on the side to
+ *  catch it SETTLED (the token checks need that snapshot). */
+// The presale account is read every second (one getAccountInfo) so the short SETTLED
+// window isn't missed; the server's view (which lists seats with getProgramAccounts, the
+// call public RPCs throttle, and the keeper needs it too) only every 5 s.
+async function watchServer(presale, timeoutMs) {
+  const t0 = Date.now();
+  let settled = null;
+  let last = null;
+  for (let i = 0; ; i++) {
+    const p = await readPresale(presale).catch(() => null);
+    if (!settled && p?.state === STATE.SETTLED) settled = p;
+    if (i % 5 === 0 || !p) {
+      const v = await api("GET", `/api/presale/${presale.toBase58()}`);
+      const state = v.json?.state ?? `HTTP ${v.status}`;
+      if (state !== last) log(`  … the server shows ${state}`);
+      last = state;
+      if (state === "CLOSED") return { settled, view: v.json };
+    }
+    if (Date.now() - t0 > timeoutMs) throw new Error(`the server didn't finish the presale: last state ${last}`);
+    await sleep(1000);
   }
 }
 
@@ -251,9 +405,17 @@ function newBot(mint) {
   });
 }
 
-function newRun(name) {
+/** A run folder and its mint: made here, or with --server issued by the server to
+ *  `creator` (only its public key comes back). */
+async function newRun(name, creator) {
   const runDir = `${dir}/run-${Date.now()}-${name}`;
   fs.mkdirSync(runDir);
+  if (useServer) {
+    const r = await api("POST", "/api/mint", mintRequest(creator, `Mooner Canary ${name}`));
+    if (r.status !== 201) throw new Error(`POST /api/mint: ${r.status} ${JSON.stringify(r.json)}`);
+    step(`the server issued the mint (CA) ${r.json.mint} to the creator`);
+    return { mint: { publicKey: new PublicKey(r.json.mint) }, runDir };
+  }
   const mint = Keypair.generate();
   fs.writeFileSync(`${runDir}/mint-keypair.json`, JSON.stringify([...mint.secretKey]), { mode: 0o600 });
   return { mint, runDir };
@@ -298,10 +460,14 @@ const HAPPY = ["creator", "a", "b", "c", "d"];
 // ---- happy path ----
 
 async function happy() {
-  log(`\n== happy path`);
-  const { mint, runDir } = newRun("happy");
+  log(`\n== happy path${useServer ? " (through the server)" : ""}`);
   const feeDest = keyAt("fee-dest").publicKey;
   const [creator, A, B, C, Dw] = HAPPY.map(keyAt);
+  if (useServer) {
+    const r = await api("POST", "/api/mint", mintRequest(A, "Not On The List"));
+    check("a wallet not on the openers list gets no mint", r.status === 403, `${r.status} ${r.json?.error}`);
+  }
+  const { mint, runDir } = await newRun("happy", creator);
   const deposits = new Map([[creator, SOL(0.05)], [A, SOL(0.05)], [B, SOL(0.03)], [C, SOL(0.04)], [Dw, SOL(0.1)]]);
   for (const [k, dep] of deposits) await topUp(k.publicKey, dep + SOL(k === creator ? 0.03 : 0.02));
   const before = {};
@@ -309,7 +475,7 @@ async function happy() {
   log(`  mint (CA) ${mint.publicKey.toBase58()}`);
 
   const presale = await open(creator, mint, feeDest, SOL(0.05), SOL(0.05));
-  saveRun(runDir, { path: "happy", presale: presale.toBase58(), before });
+  saveRun(runDir, { path: "happy", mint: mint.publicKey.toBase58(), presale: presale.toBase58(), before });
   const sA = Keypair.generate(); // unfunded session key
   await join(A, presale, sA.publicKey, SOL(0.05), "A");
   await join(B, presale, B.publicKey, SOL(0.03), "B");
@@ -340,22 +506,35 @@ async function happy() {
   const p = await readPresale(presale);
   check("the presale locked FULL at exactly the target", p.state === STATE.FULL && p.raised === N.TARGET, `${STATE_NAME[p.state]}, raised ${fmt(p.raised)}`);
   check("4 committed seats (B left)", p.seatsCommitted === 4n, `${p.seatsCommitted}`);
+  if (useServer) {
+    const v = (await api("GET", `/api/presale/${presale.toBase58()}`)).json;
+    const commits = v.seats.map((x) => BigInt(x.commit)).sort((a, b) => (a < b ? -1 : 1)).map(fmt).join(", ");
+    check("the server shows it FULL with the four seats", v.state === "FULL" && BigInt(v.raised) === N.TARGET && v.seats.length === 4, `${v.state}, seats ${commits}`);
+  }
   await finishHappy(mint, presale, before);
 }
 
 /** The bot's half of the happy path: home, settle, launch, claim, close; then the checks. */
 async function finishHappy(mint, presale, before) {
   const feeDest = keyAt("fee-dest").publicKey;
-  const bot = newBot(mint);
   let settled = null;
   let launch = null;
-  const origLaunch = bot.launch.bind(bot);
-  bot.launch = async (...a) => (launch = await origLaunch(...a));
   const t0 = Date.now();
-  await runBot(bot, presale, async (r) => {
-    if (!settled && r.did.includes("launch")) settled = await readPresale(presale);
-  }, 10 * 60_000);
-  step(`bot finished in ${((Date.now() - t0) / 1000).toFixed(0)} s`, launch?.sig, { launch: launch && { released: String(launch.released), cost: String(launch.cost), tokens: String(launch.tokens), units: launch.units } });
+  if (useServer) {
+    const r = await watchServer(presale, 10 * 60_000);
+    settled = r.settled;
+    const l = r.view.launch;
+    launch = l && { sig: l.sig, released: BigInt(l.released), cost: BigInt(l.cost), tokens: BigInt(l.tokens), units: l.units };
+    check("the server shows it CLOSED, with the launch on record", r.view.state === "CLOSED" && Boolean(l?.sig), l?.sig);
+  } else {
+    const bot = newBot(mint);
+    const origLaunch = bot.launch.bind(bot);
+    bot.launch = async (...a) => (launch = await origLaunch(...a));
+    await runBot(bot, presale, async (r) => {
+      if (!settled && r.did.includes("launch")) settled = await readPresale(presale);
+    }, 10 * 60_000);
+  }
+  step(`${useServer ? "the server's keeper" : "bot"} finished in ${((Date.now() - t0) / 1000).toFixed(0)} s`, launch?.sig, { launch: launch && { released: String(launch.released), cost: String(launch.cost), tokens: String(launch.tokens), units: launch.units } });
   if (!settled) {
     // e.g. the bot came back after full_ts + GRACE: the program refuses the launch, the
     // bot fails the presale and refunds every seat
@@ -395,9 +574,9 @@ async function finishHappy(mint, presale, before) {
 // ---- expiry path ----
 
 async function expiry() {
-  log(`\n== expiry path (${N.DURATION} s timer)`);
-  const { mint } = newRun("expiry");
+  log(`\n== expiry path (${N.DURATION} s timer)${useServer ? " (through the server)" : ""}`);
   const [E, F, G] = ["e", "f", "g"].map(keyAt);
+  const { mint } = await newRun("expiry", E);
   const deposits = new Map([[E, SOL(0.05)], [F, SOL(0.02)], [G, SOL(0.02)]]);
   for (const [k, dep] of deposits) await topUp(k.publicKey, dep + SOL(k === E ? 0.03 : 0.02));
   const before = new Map();
@@ -409,8 +588,9 @@ async function expiry() {
   await ledger(F, [I.setCommit(pid, { signer: F.publicKey, seat: seatOf(presale, F), presale, amount: SOL(0.02) })], "F commits 0.02");
 
   const t0 = Date.now();
-  await runBot(newBot(mint), presale, null, (N.DURATION + 10 * 60) * 1000);
-  step(`bot expired, refunded and closed ${((Date.now() - t0) / 1000).toFixed(0)} s after the joins`);
+  if (useServer) await watchServer(presale, (N.DURATION + 10 * 60) * 1000);
+  else await runBot(newBot(mint), presale, null, (N.DURATION + 10 * 60) * 1000);
+  step(`${useServer ? "the server's keeper" : "bot"} expired, refunded and closed ${((Date.now() - t0) / 1000).toFixed(0)} s after the joins`);
 
   const left = await l1.getMultipleAccountsInfo([presale, ...[...deposits.keys()].map((k) => seatOf(presale, k))]);
   check("presale and every seat are closed", left.every((a) => !a), `${left.filter(Boolean).length} still open`);
@@ -439,6 +619,7 @@ async function sweep() {
 
 try {
   await setup();
+  if (useServer) await startServer();
   if (args.resume) {
     const { mint, run } = findRun(args.resume);
     log(`\n== happy path, resumed at the bot (mint ${args.resume})`);
@@ -453,6 +634,8 @@ try {
   if (e.logs?.length) console.error(e.logs.join("\n"));
   process.exitCode = 1;
 } finally {
+  await stopServer();
+  report.server = useServer;
   report.finishedAt = new Date().toISOString();
   const out = `${dir}/report-${Date.now()}.json`;
   fs.writeFileSync(out, JSON.stringify(report, null, 2));

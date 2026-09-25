@@ -12,7 +12,7 @@
 //   home EXPIRED / FAILED                  -> settle_seat (refund) every seat, then close
 // It closes a presale only once no seat of it is left, home or in the ER.
 
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   DELEGATION_PROGRAM, ER_VALIDATORS, IX_SYSVAR, LAUNCH_COST_CAP, LAUNCH_TX_FEE, SYSTEM, TOKEN, TOKEN22, TX_FEE, WSOL, numbers,
 } from "./consts.js";
@@ -68,6 +68,17 @@ export function launchIxs({ pid, bot, pot, presale, p, dbcConfig, meta, released
     D.transferPoolCreator({ config: dbcConfig, mint: p.mint, creator: bot, newCreator: p.feeDest }),
   );
   return ixs;
+}
+
+/** Wire size of a launch tx carrying `meta` ({ name, symbol, uri }): only the metadata
+ *  and the number of keys change it, so throwaway keys stand in for the real ones. */
+export function launchTxSize({ pid, dbcConfig, alt, meta }) {
+  const bot = Keypair.generate().publicKey;
+  const mint = Keypair.generate().publicKey;
+  const p = { mint, feeDest: Keypair.generate().publicKey };
+  const ixs = launchIxs({ pid, bot, pot: Keypair.generate().publicKey, presale: presalePda(pid, mint), p, dbcConfig, meta, released: 1n, minTokens: 1n, cuLimit: 1, cuPrice: 1 });
+  const msg = new TransactionMessage({ payerKey: bot, recentBlockhash: PublicKey.default.toBase58(), instructions: ixs }).compileToV0Message([alt]);
+  return new VersionedTransaction(msg).serialize().length;
 }
 
 export class Bot {
@@ -290,15 +301,10 @@ export class Bot {
     const pid = this.pid;
     const me = this.bot.publicKey;
 
-    // seats that joined after the ER locked the presale are still in the ER. Without an
-    // endpoint for its validator only this step waits; the lanes below still run.
-    if (p.state !== STATE.OPEN && !p.validator.equals(PublicKey.default)) {
-      if (this.hasEr(p.validator)) did.push(...(await this.commitSeatsHome(presale, p.validator)));
-      else if (!this.warned.has(`${presale}`)) {
-        this.warned.add(`${presale}`);
-        this.say(presale, `no ER endpoint for ${p.validator.toBase58()}: late seats stay in the ER`);
-      }
-    }
+    // seats that joined after the ER locked the presale are still in the ER. A full
+    // presale does this only when committed seats are missing: the listing can take long
+    // on a busy RPC, and the launch has a deadline.
+    if (p.state !== STATE.OPEN && p.state !== STATE.FULL) did.push(...(await this.seatsStillInEr(presale, p)));
 
     switch (p.state) {
       case STATE.OPEN: {
@@ -312,15 +318,23 @@ export class Bot {
           if (await this.crank([I.fail(pid, { presale })], "fail", presale)) did.push("fail");
           return { state, did };
         }
-        const open = (await this.homeSeats(presale)).filter((s) => !s.settled);
-        if (open.length) {
-          did.push(...(await this.settleSeats(presale, open)));
-          return { state, did };
+        // the presale's own counters say when every seat is settled: then the launch
+        // goes out with no listing in front of it
+        let now = p;
+        if (now.seatsSettled < now.seatsCommitted) {
+          const open = (await this.homeSeats(presale)).filter((s) => !s.settled);
+          if (open.length) {
+            did.push(...(await this.settleSeats(presale, open)));
+            now = decodePresale((await this.l1.getAccountInfo(presale)).data);
+            if (now.seatsSettled < now.seatsCommitted) return { state, did, wait: "settles landing" };
+          } else {
+            did.push(...(await this.seatsStillInEr(presale, p))); // committed seats that didn't come home
+            return { state, did, wait: `${now.seatsCommitted - now.seatsSettled} committed seat(s) not home` };
+          }
         }
-        if (p.seatsSettled === p.seatsCommitted) {
-          await this.launch(presale, p);
-          did.push("launch");
-        }
+        if (now.state !== STATE.FULL || this.now() >= now.fullTs + this.n.GRACE) return { state, did }; // the next tick fails it
+        await this.launch(presale, now);
+        did.push("launch");
         return { state, did };
       }
       case STATE.SETTLED: {
@@ -348,6 +362,18 @@ export class Bot {
       default:
         return { state, did };
     }
+  }
+
+  /** Brings home the seats of `presale` still in the ER. Without an endpoint for its
+   *  validator only this step waits; the lanes still run. */
+  async seatsStillInEr(presale, p) {
+    if (p.validator.equals(PublicKey.default)) return [];
+    if (this.hasEr(p.validator)) return this.commitSeatsHome(presale, p.validator);
+    if (!this.warned.has(`${presale}`)) {
+      this.warned.add(`${presale}`);
+      this.say(presale, `no ER endpoint for ${p.validator.toBase58()}: late seats stay in the ER`);
+    }
+    return [];
   }
 
   /** Closes `presale` once no seat of it is left anywhere (a late seat still holds its

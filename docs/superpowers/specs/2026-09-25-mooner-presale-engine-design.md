@@ -271,9 +271,54 @@ If any check fails, the whole tx reverts and the pot stays intact. After GRACE, 
 
 - **engine/** (Node ESM, @solana/web3.js 1, the MagicBlock SDK): PDAs, instruction builders, account decoders.
   - A **bot** loop, following MagicPad's keeper lanes: expire, commit home, settle seats, launch, claim, fail, close.
-  - A **co-signer** stub, which signs open and join for an allowlist. It signs only `open + delegate(presale) + delegate(creator seat)` and `join + delegate(seat)`, with compute-budget instructions allowed and nothing else (see Flows).
-  - A **devnet canary** that runs the whole happy path and the expiry path against the MagicBlock devnet ER and DBC on devnet.
+  - A **co-signer**. It signs only `open + delegate(presale) + delegate(creator seat)` and `join + delegate(seat)`, with compute-budget instructions allowed and nothing else (see Flows). Opens are limited to an openers list; anyone can join.
+  - A **devnet canary** that runs the whole happy path and the expiry path against the MagicBlock devnet ER and DBC on devnet. With `--server` it goes through the real server.
 - The DBC launch-ix builders are ported from `launch-test/launch.py` and `dbc_layout.py`.
+
+### The server (`engine/server/`, closed beta)
+
+One Node process, `npm run server` in engine/. It runs the gate, the mint issuer and the keeper. Beta decisions (the user's): anyone joins, only wallets on the list open; images and metadata go to IPFS through Pinata; it runs on the user's Mac first, and is built to move to a host later.
+
+- **Before serving**, it checks the chain:
+  - the program is deployed;
+  - the Config's gate, bot and dbc_config match the key files;
+  - the launch lookup table holds every launch key;
+  - each ER endpoint's `getIdentity` is its validator (an unreachable one is left out; a wrong one stops the start);
+  - Pinata accepts the JWT (required on mainnet);
+  - the bot's `getProgramAccounts` scan works on this RPC.
+
+  `--check` runs these checks and exits.
+- **Mint keys** (`POST /api/mint`). A wallet on the openers list signs a text message (`signMessage`) with:
+  - the name and symbol;
+  - the sha256 of the image;
+  - the sha256 of `[description, twitter, telegram, website]`;
+  - the time, within 5 minutes.
+
+  A signature works once. The server checks the image type from its bytes (PNG, JPEG, GIF, WebP; 2 MB at most). It pins the image, then the metadata JSON, and waits until the JSON loads over HTTP. It checks that the launch tx with this name, symbol and link fits 1232 bytes. Then it makes a mint keypair and stores it tied to that wallet, so the CA is known before the presale exists.
+
+  Limits: 5 an hour per wallet, 20 an hour per IP, and at most 3 unopened tokens per wallet. Before refusing on that last limit, the server checks the chain for opens it missed.
+- **Co-sign** (`POST /api/cosign`). The user signs first. The server:
+  1. checks the shape (above) and the openers list for opens;
+  2. signs with the gate, and for an open with the mint key, only if it was issued to that wallet;
+  3. simulates with signature checks;
+  4. sends and waits up to 45 s. The reply is 200 when confirmed, 202 when still pending.
+
+  Limits: 30 a minute per IP, 10 per wallet.
+- **Reads**:
+  - `/api/presales` and `/api/presale/:key` show presales as users see them: the ER copy while delegated, with seats from the ER and home. A closed presale comes from the server's record.
+  - `/api/info` gives the keys, the ER URLs (clients send ledger txs straight to the ER) and the numbers.
+  - Also `/api/token/:mint`, `/api/wallet/:wallet/tokens` and `/api/health`.
+  - Callers share one read for a moment: the list for 3 s, one presale for 2 s. RPCs rate-limit `getProgramAccounts`, and the keeper needs it too. A failed read isn't kept.
+- **Keeper**: the bot's loop over every presale.
+  - It scans (`getProgramAccounts`) every 10 s (`MOONER_SCAN_MS`), beside the ticks and never in front of them, and ticks the presales it knows every pass. An open the co-sign call confirms is handed to it straight away, so a new presale doesn't wait for the next scan. A presale is dropped once its tick finds it closed.
+  - A presale whose tick fails backs off (up to a minute) while the others go on. A failed or stuck scan doesn't stop the ticks. A tick over 10 s is logged.
+  - The bot's FULL lane launches as soon as the presale's own counters say every committed seat is settled, with no listing in front of it. If it settles seats itself, it reads the presale again and launches in the same tick. It looks for committed seats still in the ER only when the counters say some are missing. Late seats (joined after the lock) come home in the lanes after the launch.
+  - Launches are recorded, and opens that confirmed after the co-sign call stopped waiting are picked up from the scan.
+  - Why: two devnet runs through the server failed their presales instead of launching (the bot then refunded every seat, as designed). Public devnet answers `getProgramAccounts` with 429 after about ten calls in a burst. The RPC wrapper retries a 429 up to 30 times, so one listing can hold a tick for up to 77 s without an error.
+    - Run 1: the keeper scanned every pass while the canary read the API every second. It committed the full presale home 35 s after it filled, and the 60 s canary grace ran out.
+    - Run 2 (with the scan timer and the read cache): the commit went out within seconds, and the settle landed 24 s after the presale came home. Then 38 s passed with every seat settled, no send and no error, and the presale failed. In that build three `getProgramAccounts` calls ran in front of the launch: the keeper's scan, the late-seat listing and the home-seat listing. That build didn't time its ticks, so which one held it isn't recorded.
+- **State**: `<dir>/server.db` (SQLite, 0600) holds the mint secrets, the token metadata and the launch records. Everything else is read from the chain. Keys, the record and the openers list live in the gitignored `engine/.mainnet/`.
+- It binds to 127.0.0.1. To reach it from outside, run it behind a proxy or tunnel and set `MOONER_TRUST_PROXY=1`, so rate limits use the proxy's X-Forwarded-For entry.
 
 ## Testing
 

@@ -17,10 +17,11 @@ const refuse = (why) => {
   throw new Refused(why);
 };
 
-/** Checks an unsigned-by-us entry tx. `validators`: the ER validators the bot has
- *  endpoints for (`bot.validators`); a presale on any other would stall. Returns
+/** Checks an unsigned-by-us entry tx. `openers`: the wallets that may open a presale
+ *  (null: anyone); joins are open to every wallet. `validators`: the ER validators the
+ *  bot has endpoints for (`bot.validators`); a presale on any other would stall. Returns
  *  { kind: "open"|"join", user, presale, mint, validator }. Throws Refused. */
-export function checkEntryTx(tx, { pid, gate, allow = null, validators }) {
+export function checkEntryTx(tx, { pid, gate, openers = null, validators }) {
   if (!validators?.length) throw new Error("checkEntryTx needs the bot's ER validators");
   const msg = tx.message;
   if (msg.addressTableLookups?.length) refuse("lookup tables are not allowed in entry txs");
@@ -56,7 +57,7 @@ export function checkEntryTx(tx, { pid, gate, allow = null, validators }) {
   const entry = entries[0];
   const user = entry.accs[0];
   if (!user.equals(payer)) refuse("the user pays the fees");
-  if (allow && !allow.has(user.toBase58())) refuse("wallet not on the beta list");
+  if (entry.tag === IX.OPEN_PRESALE && openers && !openers.has(user.toBase58())) refuse("wallet not on the openers list");
 
   const ds = delegates.map((d, order) => {
     if (d.data.length !== 2 || d.accs.length < 9) refuse("bad delegate");
@@ -101,11 +102,11 @@ export function checkEntryTx(tx, { pid, gate, allow = null, validators }) {
 /**
  * Checks and co-signs a serialized entry tx (base64). For an open, `mintSigner(mint,
  * user)` must return the server's mint Keypair for that CA, and only if it was issued to
- * `user`. Returns the tx, base64.
+ * `user`. Returns { tx (base64), signed (the VersionedTransaction), ...checkEntryTx }.
  */
-export function cosign(b64, { pid, gateKey, allow, validators, mintSigner }) {
+export function cosign(b64, { pid, gateKey, openers, validators, mintSigner }) {
   const tx = VersionedTransaction.deserialize(Buffer.from(b64, "base64"));
-  const info = checkEntryTx(tx, { pid, gate: gateKey.publicKey, allow, validators });
+  const info = checkEntryTx(tx, { pid, gate: gateKey.publicKey, openers, validators });
   const signers = [gateKey];
   if (info.kind === "open") {
     const mk = mintSigner?.(info.mint, info.user);
@@ -113,6 +114,6 @@ export function cosign(b64, { pid, gateKey, allow, validators, mintSigner }) {
     signers.push(mk);
   }
   tx.sign(signers);
-  return { tx: Buffer.from(tx.serialize()).toString("base64"), ...info };
+  return { tx: Buffer.from(tx.serialize()).toString("base64"), signed: tx, ...info };
 }
 

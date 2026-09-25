@@ -2,12 +2,14 @@
   "name": "mooner-engine",
   "private": true,
   "type": "module",
-  "description": "Mooner presale engine: builders, decoders, the keeper bot, the gate co-signer and the devnet canary",
+  "description": "Mooner presale engine: builders, decoders, the keeper bot, the gate server and the devnet canary",
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "local": "node scripts/canary.js --cluster local",
-    "canary": "node scripts/canary.js --cluster devnet"
+    "canary": "node scripts/canary.js --cluster devnet",
+    "server": "node --disable-warning=ExperimentalWarning server/main.js",
+    "server:check": "node --disable-warning=ExperimentalWarning server/main.js --check"
   },
   "dependencies": {
     "@solana/web3.js": "1.99.0"

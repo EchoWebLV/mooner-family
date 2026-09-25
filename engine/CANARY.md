@@ -24,9 +24,76 @@ npm run canary
 
 - `--path happy|expiry|all` picks a path. `--resume <mint>` picks up a stopped happy run at
   the bot's half.
+- `--server` (devnet only) runs the paths through the real server (`server/main.js`) instead
+  of the canary's own bot. The server issues the mint, co-signs the opens and joins, and its
+  keeper runs the presale to the end. The canary starts it on a free port with a fresh
+  database and an openers list of the creator and E, then checks that a wallet not on the
+  list gets no mint. It reads the result from the server's API. The server's log goes to
+  `.canary/devnet/server-<time>.log`. Tokens get a placeholder link: nothing is pinned.
+- On devnet's free faucet the payer runs short with `--path all --server`. Run
+  `--path happy` and `--path expiry` one after the other: each run sweeps the test wallets
+  back to the payer.
 - On devnet it deploys the canary build if it is missing. The payer is
   `launch-test/er-speed/devnet-payer-keypair.json`.
 - Keys, run state and JSON reports go to `engine/.canary/<cluster>/`, which is gitignored.
+
+## Devnet through the server, 2026-09-25: 18/18 checks passed
+
+Same program, gate and bot as below. The presales ran through `server/main.js` (`--server`):
+the server issued each mint, co-signed each open and join, and its keeper ran each presale to
+the end. The canary only played the users.
+
+### Happy path (13/13)
+
+- Mint (CA): `B2naUeynQVrHHyhEDKpKcxrmQaadxTK4cUxeXaW8M4Ai`, issued by the server before the open
+- Presale: `8GecJ3sojuUeoN7iqpthkA5honscBWe6P8p5oQq2a2xk`
+- Pool: `6oD2cBJMs8mBZJcuRWTGKJTeLHSQKaMnakCnga7qXtYJ`
+- Launch: `5iUf7rSpSbUxGD9oScPRXVxUFtGEp93XR5qayKkt6ktBsVAnhKbmFjqo4mKAP4jyHG7YNHQjUpdtTpvB5QHTecJR`
+  (released 0.1838988 SOL, cost 0.00999584 SOL, 6,463,279,851,771 tokens, 220,275 CU)
+
+What it showed:
+- A wallet not on the openers list got a 403 from `/api/mint`.
+- The open and the four joins went through `/api/cosign`. The keeper was ticking the presale
+  1 s after the open's block time. (A 10 s scan was also due then, so this run doesn't show
+  which one handed it over; the server tests cover `watch()`.)
+- `/api/presale/:key` showed FULL with the four seats, then SETTLED, then CLOSED with the
+  launch on record.
+- Block times (UTC): presale home 18:30:55, settle 18:31:13, launch 18:31:16, then the claims
+  and the close. The settle and the launch went out in the same keeper tick.
+- Every check of the direct runs held: the claimed tokens add up to what the pot bought, the
+  pro-rata split, `min_tokens`, the pool's creator is fee_dest, and everything closed.
+
+### Expiry path (5/5)
+
+- Mint (CA): `HHE4L4h5YbrvEv2pQ8oSr8uPens24ZyTNhNJedsTXQKy`
+- The keeper expired the presale in the ER when its 120 s timer ran out. Then it committed
+  the 3 seats home, refunded them and closed the presale. E, F and G lost only fees (0.000618,
+  0.000313 and 0.000313 SOL).
+
+### Two runs before that failed their presales (refunded, as designed)
+
+Public devnet answers `getProgramAccounts` with 429 after about ten calls in a burst. The RPC
+wrapper retries a 429 up to 30 times, so one listing can hold a tick for up to 77 s with no
+error. The canary grace is 60 s.
+
+- **Run 1.** The keeper scanned every pass, and the canary read the API every second. The
+  keeper committed the full presale home 35 s after it filled; the grace ran out before the
+  launch.
+  - Fix: the keeper scans every 10 s, and the API hands it each open. API reads are shared
+    for 2–3 s.
+- **Run 2.** The presale came home at 18:22:50 and the settle landed at 18:23:14. Then 38 s
+  passed with no send and no error, and the fail landed at 18:23:52. In that build three
+  listings ran in front of the launch: the scan, the late-seat listing and the home-seat
+  listing. The build didn't time its ticks, so which one held it isn't recorded.
+  - Fix: the bot's FULL lane launches as soon as the presale's counters say every seat is
+    settled, with no listing first. After a settle, it reads the presale again and launches in
+    the same tick.
+  - Fix: the keeper's scan runs beside the ticks, never in front of them. Ticks over 10 s are
+    logged.
+  - Fix: the canary reads the API every 5 s.
+
+On mainnet the grace is 900 s and the server should use a paid RPC. These fixes keep the
+launch off the throttled call either way.
 
 ## Devnet, 2026-09-25, after the security fixes: 13/13 checks passed
 
