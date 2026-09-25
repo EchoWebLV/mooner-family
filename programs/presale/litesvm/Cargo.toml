@@ -16,7 +16,8 @@ solana-account = "3.4.0"
 solana-address = { version = "2.6", features = ["decode", "curve25519"] }
 solana-instruction = "=3.2.0"
 solana-keypair = "3.1"
-solana-message = "3.1"
+solana-message = { version = "3.1", features = ["bincode"] }
+solana-rent = "3.1"
 solana-signature = "3.3"
 solana-signer = "3.0"
 # "3.1" not "3.2": litesvm enables solana-system-interface's `bincode` feature, and in

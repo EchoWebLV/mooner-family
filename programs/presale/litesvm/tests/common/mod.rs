@@ -248,6 +248,12 @@ pub fn send(
     svm.send_transaction(tx)
 }
 
+/// Wire size of a legacy tx (litesvm doesn't enforce the 1232-byte packet limit).
+pub fn tx_size(payer: &Address, ixs: &[Instruction]) -> usize {
+    let msg = Message::new(ixs, Some(payer));
+    1 + 64 * msg.header.num_required_signatures as usize + msg.serialize().len()
+}
+
 /// The tx failed with our custom error `code`.
 pub fn assert_err<T: std::fmt::Debug>(res: Result<T, FailedTransactionMetadata>, code: u32, what: &str) {
     let err = res.expect_err(&format!("{what}: expected failure"));
@@ -567,6 +573,9 @@ pub fn ix_sync_native(account: &Address) -> Instruction {
 }
 pub fn ix_close_account(account: &Address, dest: &Address, owner: &Address) -> Instruction {
     Instruction { program_id: token_id(), accounts: vec![w(*account), w(*dest), rs(*owner)], data: vec![9] }
+}
+pub fn ix_memo(text: &str) -> Instruction {
+    Instruction { program_id: addr("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), accounts: vec![], data: text.as_bytes().to_vec() }
 }
 pub fn ix_transfer(from: &Address, to: &Address, lamports: u64) -> Instruction {
     let mut d = 2u32.to_le_bytes().to_vec();
