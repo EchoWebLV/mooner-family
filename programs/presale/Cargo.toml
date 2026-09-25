@@ -1,0 +1,34 @@
+[package]
+name = "mooner-presale"
+version = "0.1.0"
+edition = "2021"
+description = "Mooner presale engine: seats escrow SOL on Solana, the ledger moves in a MagicBlock ER, one pooled Meteora DBC buy at launch"
+
+# Standalone crate. Dependency versions match launch-test/er-speed, which ran
+# delegate / commit / undelegate on the MagicBlock devnet ER with cargo-build-sbf 4.1.0.
+[workspace]
+
+[lib]
+name = "mooner_presale"
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+custom-heap = []
+custom-panic = []
+# Small numbers for the devnet canary only (see consts.rs). Never deploy to mainnet with it.
+canary = []
+
+[dependencies]
+borsh = "1.6.1"
+solana-program = "4.0.0"
+solana-system-interface = { version = "3.0.0", features = ["bincode"] }
+ephemeral-rollups-sdk = { version = "0.16.2" }
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
