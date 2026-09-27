@@ -133,7 +133,7 @@ pub fn dbc_id() -> Address {
     addr("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN")
 }
 pub fn dbc_config() -> Address {
-    addr("HnKg7Vb2aHPhX8LVy4gMXZ6dACGPHUPFkQeX82FB8LmF")
+    addr("j7j5CfUSa9DGZCzKKxKBbCYvySiM14Hbr8V6uKbA6Be")
 }
 pub fn dlp_id() -> Address {
     addr("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh")

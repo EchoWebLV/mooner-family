@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 RPC="${RPC:-https://api.mainnet-beta.solana.com}"
 DBC=dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
-DBC_CONFIG=HnKg7Vb2aHPhX8LVy4gMXZ6dACGPHUPFkQeX82FB8LmF # Mooner's DBC config
+DBC_CONFIG=j7j5CfUSa9DGZCzKKxKBbCYvySiM14Hbr8V6uKbA6Be # Mooner's DBC config
 WSOL=So11111111111111111111111111111111111111112
 
 solana program dump -u "$RPC" "$DBC" dbc.so

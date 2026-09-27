@@ -121,6 +121,44 @@ fn a_buy_after_the_pool_tx_misses_the_floor() {
 }
 
 #[test]
+fn the_snipe_tax_falls_each_second_on_buys_and_sells() {
+    // Mooner's config on the real DBC binary: the fee a normal swap pays 0-4 s after the
+    // pool's creation (engine/src/dbc.js feeNumeratorAt). DBC's scheduler ignores the
+    // direction, so sells pay it too; that's why the keeper holds the claims past it.
+    const WANT: [u64; 5] = [989_539_134, 213_938_360, 46_253_473, 10_000_000, 10_000_000];
+    let mut e = Env::new(false);
+    let cfg = dbc_config();
+    let t0 = now(&e.svm);
+    for (dt, want) in WANT.iter().enumerate() {
+        let (u, mint) = (e.user(5), Keypair::new());
+        let (m, up) = (mint.pubkey(), u.pubkey());
+        warp_to(&mut e.svm, t0 + 100 * dt as i64);
+        let created = now(&e.svm);
+        ok(send(&mut e.svm, &u, &[&mint], &[dbc_init_pool(&cfg, &up, &m, &up)]), "pool alone");
+        warp_to(&mut e.svm, created + dt as i64);
+        let (w, t) = (ata(&up, &wsol(), &token_id()), ata(&up, &m, &token22_id()));
+        let buy = [
+            ix_create_ata(&up, &up, &wsol(), &token_id()),
+            ix_create_ata(&up, &up, &m, &token22_id()),
+            ix_transfer(&up, &w, SOL),
+            ix_sync_native(&w),
+            dbc_swap2(&cfg, &m, &up, &w, &t, SOL, 1),
+        ];
+        ok(send(&mut e.svm, &u, &[], &buy), "buy");
+        let fees = |p: &Pool| p.protocol_quote_fee + p.partner_quote_fee + p.creator_quote_fee;
+        let buy_fee = fees(&read_pool(&e.svm, &m));
+        let (tokens, w0) = (token_balance(&e.svm, &t), token_balance(&e.svm, &w));
+        ok(send(&mut e.svm, &u, &[], &[dbc_swap2(&cfg, &m, &up, &t, &w, tokens, 1)]), "sell");
+        let sell_fee = fees(&read_pool(&e.svm, &m)) - buy_fee;
+        let gross = sell_fee + token_balance(&e.svm, &w) - w0;
+        println!("{dt} s: buy fee {buy_fee} of {SOL}, sell fee {sell_fee} of {gross}");
+        let near = |fee: u64, of: u64| fee.abs_diff((of as u128 * *want as u128 / 1_000_000_000) as u64) <= 2;
+        assert!(near(buy_fee, SOL), "{dt} s: buy fee {buy_fee}, want {want}/1e9 of {SOL}");
+        assert!(near(sell_fee, gross), "{dt} s: sell fee {sell_fee}, want {want}/1e9 of {gross}");
+    }
+}
+
+#[test]
 fn release_needs_the_pool_created_in_the_same_tx() {
     let mut e = Env::new(false);
     let o = ready(&mut e);
