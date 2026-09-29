@@ -22,11 +22,20 @@ for (const spec of specs) {
 }
 
 /** Remove small disconnected fragments from adjacent generated sheet cells. */
-function componentMask(picture, bounds, exclusions) {
+function componentMask(picture, bounds, exclusions, polygon = []) {
   const [left, top, right, bottom] = bounds
   const mask = new Uint8Array(picture.width * picture.height)
   const components = []
-  const isExcluded = (x, y) => exclusions.some(([l, t, r, b]) => x >= l && x < r && y >= t && y < b)
+  const isExcluded = (x, y) => {
+    if (exclusions.some(([l, t, r, b]) => x >= l && x < r && y >= t && y < b)) return true
+    if (!polygon.length) return false
+    let inside = false
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [xi, yi] = polygon[i], [xj, yj] = polygon[j]
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
+    }
+    return !inside
+  }
 
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
@@ -69,6 +78,31 @@ const atlas = new PNG({
 })
 const manifest = {}
 
+// Neutral outer socket pixels belong to the moon, while the pupil and sclera
+// inside the paired anatomical eye ellipses retain their authored colors.
+function skinRimRuns(atlasX, atlasY, width, height, id) {
+  const selected = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = ((atlasY + y) * atlas.width + atlasX + x) * 4
+    const channels = atlas.data.subarray(i, i + 3)
+    const low = Math.min(...channels), high = Math.max(...channels)
+    const u = x / width, v = y / height
+    const nearEye = ((u - 0.29) / 0.29) ** 2 + ((v - 0.45) / 0.49) ** 2
+    const farEye = ((u - 0.80) / 0.205) ** 2 + ((v - 0.665) / 0.335) ** 2
+    const isOuterSocket = nearEye > 0.48 && farEye > 0.48
+    const isLid = ['eyes/sleepy', 'eyes/angry'].includes(id) && high < 232
+    if (atlas.data[i + 3] > 8 && low > 65 && high - low < 22 && (isOuterSocket || isLid)) selected[y * width + x] = 1
+  }
+  const runs = []
+  for (let i = 0; i < selected.length; i++) {
+    if (!selected[i]) continue
+    const start = i
+    while (selected[i + 1]) i++
+    runs.push([start, i - start + 1])
+  }
+  return runs
+}
+
 for (const [index, spec] of specs.entries()) {
   if (manifest[spec.id]) throw new Error('Duplicate sprite: ' + spec.id)
   const picture = sources.get(spec.file)
@@ -79,7 +113,8 @@ for (const [index, spec] of specs.entries()) {
   if (left < 0 || top < 0 || right > picture.width || bottom > picture.height) {
     throw new Error('Source rectangle outside picture: ' + spec.id)
   }
-  const allowed = componentMask(picture, bounds, exclusions)
+  const polygon = (spec.includePolygon || []).map(point => point.map(value => Math.round(value * sourceScale)))
+  const allowed = componentMask(picture, bounds, exclusions, polygon)
   let minX = right, minY = bottom, maxX = left, maxY = top
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
@@ -119,6 +154,7 @@ for (const [index, spec] of specs.entries()) {
     source: [atlasX, atlasY, width, height],
     dest: [destinationX, destinationY, width, height],
     crop: [minX, minY, sourceWidth, sourceHeight],
+    ...(spec.skinRim ? { skinMask: skinRimRuns(atlasX, atlasY, width, height, spec.id) } : {}),
   }
 }
 

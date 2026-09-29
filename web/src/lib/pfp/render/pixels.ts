@@ -11,12 +11,13 @@ export interface PixelPicture {
 
 export const CHARACTER_FRAMES = {
   bare: { scale: 1, x: 0, y: 0 },
-  outfit: { scale: 0.8, x: 26, y: 0 },
-  neckwear: { scale: 0.85, x: 19, y: 0 },
+  outfit: { scale: 0.84, x: 20, y: 0 },
+  neckwear: { scale: 1, x: 0, y: 0 },
 } as const
 
 const NATIVE_SIZE = 256
 const MATERIAL_STOPS = [0, 100, 157, 203, 238, 255]
+const skinMasks = new Map<string, Uint8Array>()
 const parseColor = (hex: string) => [
   parseInt(hex.slice(1, 3), 16),
   parseInt(hex.slice(3, 5), 16),
@@ -47,7 +48,13 @@ export function renderPixels(raw: Pfp, size = NATIVE_SIZE, atlas: SpriteAtlas): 
     if (!entry) throw new Error('Missing character sprite: ' + id)
     const [sourceX, sourceY, width, height] = entry.source
     const [destinationX, destinationY] = entry.dest
-    const isCharacter = !['outfit/', 'neck/', 'bg/', 'aura/'].some(prefix => id.startsWith(prefix))
+    let skinMask = skinMasks.get(id)
+    if (!skinMask && 'skinMask' in entry) {
+      skinMask = new Uint8Array(width * height)
+      for (const [start, length] of entry.skinMask) skinMask.fill(1, start, start + length)
+      skinMasks.set(id, skinMask)
+    }
+    const isCharacter = id !== 'suit-collar-front' && !['outfit/', 'bg/', 'aura/'].some(prefix => id.startsWith(prefix))
     const hasOutfit = pfp.outfit !== 'none'
     const hasNeckwear = pfp.neck !== 'none'
     const frame = isCharacter ? (hasOutfit ? CHARACTER_FRAMES.outfit : hasNeckwear ? CHARACTER_FRAMES.neckwear : CHARACTER_FRAMES.bare) : CHARACTER_FRAMES.bare
@@ -69,7 +76,7 @@ export function renderPixels(raw: Pfp, size = NATIVE_SIZE, atlas: SpriteAtlas): 
         let red = atlas.data[index]
         let green = atlas.data[index + 1]
         let blue = atlas.data[index + 2]
-        if (tint && pfp.skin !== 'moon') {
+        if ((tint || skinMask?.[sourceRow * width + sourceColumn]) && pfp.skin !== 'moon') {
           const luminance = Math.round(red * 0.2126 + green * 0.7152 + blue * 0.0722)
           let band = 0
           while (band < 4 && luminance > MATERIAL_STOPS[band + 1]) band++
@@ -91,19 +98,22 @@ export function renderPixels(raw: Pfp, size = NATIVE_SIZE, atlas: SpriteAtlas): 
   if (pfp.aura === 'ring') sprite('aura/ring', false, 'back')
   if (pfp.head === 'headphones') sprite('head/headphones')
 
+  if (pfp.outfit !== 'none') sprite('outfit/' + pfp.outfit)
+  if (['none', 'halo', 'headphones'].includes(pfp.head)) { sprite('spikes', true); sprite('spike-right', true) }
+  if (pfp.head === 'horns') { sprite('head/horns'); sprite('horn-right') }
   const materialId = 'skin/' + pfp.skin
   sprite(materialId in SPRITE_MANIFEST ? materialId : 'base', !(materialId in SPRITE_MANIFEST))
-  if (pfp.outfit !== 'none') sprite('outfit/' + pfp.outfit)
-  if (['none', 'halo', 'headphones'].includes(pfp.head)) sprite('spikes', true)
+  if (pfp.outfit === 'suit') sprite('suit-collar-front')
   if (pfp.head !== 'party') sprite('antenna')
   // Opaque lenses cover sockets completely; the monocle retains the chosen eyes.
   if (pfp.face === 'none' || pfp.face === 'monocle') sprite('eyes/' + pfp.eyes)
   if (pfp.neck !== 'none') sprite('neck/' + pfp.neck)
+  if (pfp.neck === 'chain' || pfp.neck === 'icechain') sprite(pfp.neck + '-pendant')
   sprite('mouth/' + pfp.mouth)
   if (pfp.head === 'headphones') {
     sprite('headphones-left')
     sprite('headphones-right')
-  } else if (pfp.head !== 'none') {
+  } else if (pfp.head !== 'none' && pfp.head !== 'horns') {
     sprite('head/' + pfp.head)
   }
   if (pfp.face !== 'none') sprite('face/' + pfp.face)

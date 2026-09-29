@@ -4,7 +4,7 @@ import type { Pfp } from '../types'
 import { pfpKey } from './traits'
 
 /** Bump when the renderer's output changes, so stored pictures are drawn again. */
-const RENDER_VERSION = 13
+const RENDER_VERSION = 14
 const CACHE = `mooner-pfp-v${RENDER_VERSION}`
 
 /** Pixel sizes pictures are drawn at. */

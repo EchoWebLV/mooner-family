@@ -31,7 +31,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/ice",
@@ -48,7 +49,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/pink",
@@ -65,7 +67,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/gold",
@@ -82,7 +85,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/heart",
@@ -99,7 +103,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/diamond",
@@ -116,7 +121,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/cosmic",
@@ -133,7 +139,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/laser",
@@ -150,7 +157,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/wink",
@@ -167,7 +175,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/sleepy",
@@ -184,7 +193,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/angry",
@@ -201,7 +211,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/wide",
@@ -218,7 +229,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/money",
@@ -235,7 +247,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/cross",
@@ -252,7 +265,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/spiral",
@@ -269,7 +283,8 @@
       153,
       110
     ],
-    "align": "bottom"
+    "align": "bottom",
+    "skinRim": true
   },
   {
     "id": "eyes/happy",
@@ -285,7 +300,8 @@
       105,
       153,
       110
-    ]
+    ],
+    "skinRim": true
   },
   {
     "id": "mouth/tongue",
@@ -305,19 +321,20 @@
   },
   {
     "id": "mouth/smile",
-    "file": "mouths",
+    "file": "fitted-mouths",
     "crop": [
-      640,
       0,
-      1280,
-      282
+      0,
+      640,
+      640
     ],
     "dest": [
-      89,
-      173,
-      127,
-      68
-    ]
+      92,
+      179,
+      117,
+      37
+    ],
+    "stretch": true
   },
   {
     "id": "mouth/grin",
@@ -337,35 +354,37 @@
   },
   {
     "id": "mouth/smirk",
-    "file": "mouths",
+    "file": "fitted-mouths",
     "crop": [
       640,
-      282,
+      0,
       1280,
-      500
+      640
     ],
     "dest": [
-      111,
-      183,
-      106,
-      47
-    ]
+      103,
+      178,
+      107,
+      35
+    ],
+    "stretch": true
   },
   {
     "id": "mouth/open",
-    "file": "mouths",
+    "file": "fitted-mouths",
     "crop": [
       0,
-      500,
       640,
-      750
+      640,
+      1280
     ],
     "dest": [
-      121,
-      175,
-      68,
-      77
-    ]
+      136,
+      173,
+      44,
+      45
+    ],
+    "stretch": true
   },
   {
     "id": "mouth/grimace",
@@ -377,27 +396,29 @@
       750
     ],
     "dest": [
-      84,
-      176,
-      126,
-      59
-    ]
+      86,
+      172,
+      112,
+      45
+    ],
+    "stretch": true
   },
   {
     "id": "mouth/bubblegum",
-    "file": "mouths",
+    "file": "fitted-mouths",
     "crop": [
-      0,
-      750,
       640,
-      990
+      640,
+      1280,
+      1280
     ],
     "dest": [
-      106,
-      174,
-      111,
-      82
-    ]
+      86,
+      168,
+      151,
+      85
+    ],
+    "stretch": true
   },
   {
     "id": "mouth/fangs",
@@ -465,27 +486,29 @@
       477
     ],
     "dest": [
-      15,
+      12,
       3,
-      175,
-      117
-    ]
+      222,
+      119
+    ],
+    "stretch": true
   },
   {
     "id": "head/party",
-    "file": "headgear",
+    "file": "fitted-headwear",
     "crop": [
-      460,
       0,
-      825,
-      477
+      0,
+      640,
+      640
     ],
     "dest": [
-      38,
+      32,
       0,
-      104,
-      118
-    ]
+      118,
+      111
+    ],
+    "stretch": true
   },
   {
     "id": "head/cap",
@@ -497,11 +520,12 @@
       477
     ],
     "dest": [
-      22,
-      4,
-      192,
-      121
-    ]
+      20,
+      5,
+      220,
+      114
+    ],
+    "stretch": true
   },
   {
     "id": "head/headphones",
@@ -513,11 +537,12 @@
       851
     ],
     "dest": [
-      -6,
-      32,
-      261,
-      209
-    ]
+      3,
+      33,
+      243,
+      194
+    ],
+    "stretch": true
   },
   {
     "id": "head/horns",
@@ -525,15 +550,16 @@
     "crop": [
       460,
       477,
-      825,
+      675,
       851
     ],
     "dest": [
-      45,
+      44,
       5,
-      151,
-      112
-    ]
+      74,
+      102
+    ],
+    "stretch": true
   },
   {
     "id": "head/halo",
@@ -545,43 +571,46 @@
       830
     ],
     "dest": [
-      62,
-      3,
-      119,
-      69
-    ]
+      77,
+      0,
+      115,
+      56
+    ],
+    "stretch": true
   },
   {
     "id": "head/crown",
-    "file": "headgear",
+    "file": "fitted-headwear",
     "crop": [
+      640,
       0,
-      860,
-      466,
-      1280
+      1280,
+      640
     ],
     "dest": [
-      20,
-      0,
-      179,
-      115
-    ]
+      26,
+      3,
+      202,
+      103
+    ],
+    "stretch": true
   },
   {
     "id": "spikes",
     "file": "headgear",
     "crop": [
-      480,
+      490,
       885,
-      830,
+      690,
       1240
     ],
     "dest": [
-      38,
-      7,
-      103,
-      81
-    ]
+      39,
+      6,
+      62,
+      86
+    ],
+    "stretch": true
   },
   {
     "id": "antenna",
@@ -689,11 +718,12 @@
       420
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      187,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "outfit/turtleneck",
@@ -705,11 +735,12 @@
       420
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      187,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "outfit/hoodie",
@@ -721,11 +752,12 @@
       820
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      187,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "outfit/tux",
@@ -737,11 +769,12 @@
       820
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      187,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "outfit/suit",
@@ -753,11 +786,12 @@
       1280
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      174,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "outfit/royal",
@@ -769,11 +803,12 @@
       1280
     ],
     "dest": [
-      12,
-      176,
-      232,
-      152
-    ]
+      23,
+      187,
+      210,
+      138
+    ],
+    "stretch": true
   },
   {
     "id": "neck/scarf",
@@ -785,12 +820,13 @@
       420
     ],
     "dest": [
-      49,
-      182,
-      153,
-      76
+      61,
+      217,
+      141,
+      91
     ],
-    "centerX": true
+    "centerX": true,
+    "stretch": true
   },
   {
     "id": "neck/bowtie",
@@ -802,12 +838,13 @@
       420
     ],
     "dest": [
-      98,
-      206,
-      70,
-      39
+      86,
+      221,
+      111,
+      33
     ],
-    "centerX": true
+    "centerX": true,
+    "stretch": true
   },
   {
     "id": "neck/chain",
@@ -816,13 +853,13 @@
       0,
       420,
       640,
-      825
+      710
     ],
     "dest": [
-      55,
-      177,
-      151,
-      78
+      48,
+      184,
+      160,
+      48
     ],
     "centerX": true,
     "exclude": [
@@ -831,20 +868,9 @@
         420,
         480,
         451
-      ],
-      [
-        0,
-        790,
-        220,
-        825
-      ],
-      [
-        430,
-        790,
-        640,
-        825
       ]
-    ]
+    ],
+    "stretch": true
   },
   {
     "id": "neck/bandana",
@@ -856,37 +882,39 @@
       825
     ],
     "dest": [
-      55,
-      183,
-      148,
-      73
+      61,
+      217,
+      141,
+      82
     ],
-    "centerX": true
+    "centerX": true,
+    "stretch": true
   },
   {
     "id": "neck/icechain",
     "file": "neckwear",
     "crop": [
       0,
-      825,
+      780,
       640,
-      1280
+      1030
     ],
     "dest": [
-      57,
-      178,
-      151,
-      78
+      48,
+      183,
+      160,
+      47
     ],
     "centerX": true,
     "exclude": [
       [
-        200,
-        825,
-        430,
-        850
+        190,
+        780,
+        440,
+        853
       ]
-    ]
+    ],
+    "stretch": true
   },
   {
     "id": "headphones-left",
@@ -898,11 +926,12 @@
       852
     ],
     "dest": [
-      3,
-      128,
-      58,
-      96
-    ]
+      5,
+      125,
+      52,
+      79
+    ],
+    "stretch": true
   },
   {
     "id": "headphones-right",
@@ -914,11 +943,12 @@
       852
     ],
     "dest": [
-      215,
-      130,
-      40,
-      91
-    ]
+      211,
+      127,
+      37,
+      73
+    ],
+    "stretch": true
   },
   {
     "id": "skin/holo",
@@ -1320,6 +1350,137 @@
       102,
       256,
       130
+    ],
+    "stretch": true
+  },
+  {
+    "id": "horn-right",
+    "file": "headgear",
+    "crop": [
+      680,
+      570,
+      825,
+      830
+    ],
+    "dest": [
+      146,
+      12,
+      49,
+      66
+    ],
+    "stretch": true
+  },
+  {
+    "id": "spike-right",
+    "file": "headgear",
+    "crop": [
+      690,
+      945,
+      830,
+      1150
+    ],
+    "dest": [
+      106,
+      17,
+      46,
+      57
+    ],
+    "stretch": true
+  },
+  {
+    "id": "suit-collar-front",
+    "file": "clothing",
+    "crop": [
+      180,
+      845,
+      515,
+      1000
+    ],
+    "dest": [
+      83,
+      186,
+      109,
+      45
+    ],
+    "stretch": true,
+    "includePolygon": [
+      [
+        190,
+        854
+      ],
+      [
+        231,
+        881
+      ],
+      [
+        330,
+        913
+      ],
+      [
+        435,
+        921
+      ],
+      [
+        499,
+        900
+      ],
+      [
+        507,
+        921
+      ],
+      [
+        499,
+        956
+      ],
+      [
+        440,
+        985
+      ],
+      [
+        319,
+        979
+      ],
+      [
+        242,
+        950
+      ],
+      [
+        188,
+        901
+      ]
+    ]
+  },
+  {
+    "id": "icechain-pendant",
+    "file": "neckwear",
+    "crop": [
+      180,
+      1020,
+      460,
+      1220
+    ],
+    "dest": [
+      112,
+      226,
+      35,
+      28
+    ],
+    "stretch": true
+  },
+  {
+    "id": "chain-pendant",
+    "file": "neckwear",
+    "crop": [
+      235,
+      690,
+      416,
+      820
+    ],
+    "dest": [
+      114,
+      226,
+      28,
+      28
     ],
     "stretch": true
   }

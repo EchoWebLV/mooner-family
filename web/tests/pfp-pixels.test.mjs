@@ -134,3 +134,78 @@ test('head framing keeps complete upper silhouettes inside the export', () => {
     }
   }
 })
+
+test('wearing neck accessories preserves the skull and facial registration', () => {
+  const bare = render(DEFAULT_PFP)
+  for (const neck of TRAITS.neck) {
+    const picture = render({ ...DEFAULT_PFP, neck: neck.id })
+    assert.equal(region(picture, 0, 0, 256, 182), region(bare, 0, 0, 256, 182), neck.id)
+  }
+})
+
+test('both bowtie wings remain visibly red around the tongue with and without a hoodie', () => {
+  for (const outfit of ['none', 'hoodie']) {
+    const bare = render({ ...DEFAULT_PFP, outfit })
+    const tied = render({ ...DEFAULT_PFP, outfit, neck: 'bowtie' })
+    const wings = [0, 0]
+    for (let y = 180; y < 256; y++) for (let x = 0; x < 256; x++) {
+      const i = (y * 256 + x) * 4
+      const [r, g, b] = tied.data.subarray(i, i + 3)
+      if (r > 90 && r > g * 1.5 && r > b * 1.3 && r !== bare.data[i]) {
+        if (x < 130) wings[0]++
+        if (x > 150) wings[1]++
+      }
+    }
+    assert.ok(wings.every(count => count > 250), `${outfit}: visible wing areas ${wings}`)
+  }
+})
+
+test('spacesuit front collar overlaps the chin without covering the face', () => {
+  const withoutFront = { ...atlas, data: new Uint8Array(atlas.data) }
+  const [sx, sy, width, height] = SPRITE_MANIFEST['suit-collar-front'].source
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    withoutFront.data[((sy + y) * atlas.width + sx + x) * 4 + 3] = 0
+  }
+  const pfp = { ...DEFAULT_PFP, outfit: 'suit', mouth: 'open' }
+  const seated = render(pfp)
+  const noFront = renderPixels(pfp, 256, withoutFront)
+  assert.equal(region(seated, 0, 0, 256, 180), region(noFront, 0, 0, 256, 180))
+  let overlap = 0
+  for (let y = 200; y < 209; y++) for (let x = 90; x < 175; x++) {
+    const i = (y * 256 + x) * 4
+    if (seated.data[i] !== noFront.data[i]) overlap++
+  }
+  assert.ok(overlap > 100, `front collar must overlap the lower skull; found ${overlap} pixels`)
+})
+
+test('skin-colored socket rims preserve the independently located white star pupil', () => {
+  const entry = SPRITE_MANIFEST['eyes/star']
+  const [sx, sy] = entry.source
+  const [dx, dy] = entry.dest
+  for (const skin of ['obsidian', 'rose']) {
+    const picture = render({ ...DEFAULT_PFP, skin })
+    let whitePupilPixels = 0, changedRimPixels = 0
+    // This inner rectangle contains the black-enclosed star, independently of
+    // the generated tint mask. Most source pixels have alpha254, not alpha255.
+    for (let y = 25; y < 65; y++) for (let x = 26; x < 60; x++) {
+      const i = ((sy + y) * atlas.width + sx + x) * 4
+      if (atlas.data[i + 3] < 246 || atlas.data[i] < 230 || atlas.data[i + 1] < 230 || atlas.data[i + 2] < 230) continue
+      const actual = ((dy + y) * 256 + dx + x) * 4
+      for (let channel = 0; channel < 3; channel++) {
+        assert.ok(Math.abs(picture.data[actual + channel] - atlas.data[i + channel]) <= 10, `${skin}: pupil must remain white after skin tint`)
+      }
+      whitePupilPixels++
+    }
+    // The upper/left outer socket lies outside the star and above the mouth.
+    for (let y = 0; y < 75; y++) for (let x = 0; x < 85; x++) {
+      const distance = ((x - 43.5) / 43.5) ** 2 + ((y - 49.5) / 53.9) ** 2
+      if (distance < 0.72 || distance > 1.15) continue
+      const i = ((sy + y) * atlas.width + sx + x) * 4
+      if (atlas.data[i + 3] < 246 || atlas.data[i] < 230 || atlas.data[i + 1] < 230 || atlas.data[i + 2] < 230) continue
+      const actual = ((dy + y) * 256 + dx + x) * 4
+      if ([0, 1, 2].some(channel => Math.abs(picture.data[actual + channel] - atlas.data[i + channel]) > 20)) changedRimPixels++
+    }
+    assert.ok(whitePupilPixels > 400, `${skin}: found ${whitePupilPixels} white star pixels`)
+    assert.ok(changedRimPixels > 100, `${skin}: found ${changedRimPixels} skin-colored rim pixels`)
+  }
+})
