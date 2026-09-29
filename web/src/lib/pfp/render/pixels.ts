@@ -1,137 +1,123 @@
-import type { Pfp } from '../../types';
-import { sanitizePfp } from '../traits';
-import { Raster } from './raster';
-import { drawMouth } from './expressions';
-import { drawMoon } from './character';
-import { drawClothes, drawNeck, drawHat, drawHeadphones, drawEyewear } from './pixel-gear';
+import type { Pfp } from '../../types'
+import { sanitizePfp } from '../traits'
+import { palette } from './palette'
+import { SPRITE_MANIFEST, type SpriteAtlas, type SpriteId } from './sprites'
+
 export interface PixelPicture {
-  width: number;
-  height: number;
-  data: Uint8ClampedArray;
+  width: number
+  height: number
+  data: Uint8ClampedArray
 }
-const BACKGROUNDS: Record<string, string[]> = {
-  midnight: ['#141523', '#202238'],
-  space: ['#080d1c', '#172447'],
-  dusk: ['#332743', '#654466'],
-  ocean: ['#123541', '#205d6c'],
-  sunset: ['#60374a', '#b5655d'],
-  forest: ['#193b34', '#2f6150'],
-  ember: ['#3e222c', '#833c36'],
-  candy: ['#51344f', '#965e87'],
-  aurora: ['#102a39', '#286367'],
-  neon: ['#26194b', '#4d3078'],
-  vault: ['#352f25', '#686041'],
-  galaxy: ['#271b3d', '#563569']
-};
-function drawBackground(r: Raster, p: Pfp) {
-  const c = BACKGROUNDS[p.bg];
-  if (p.bg === 'midnight') {
-    r.rect(0, 0, 128, 128, '#090c12');
-    return;
+
+export const CHARACTER_FRAMES = {
+  bare: { scale: 1, x: 0, y: 0 },
+  outfit: { scale: 0.8, x: 26, y: 0 },
+  neckwear: { scale: 0.85, x: 19, y: 0 },
+} as const
+
+const NATIVE_SIZE = 256
+const MATERIAL_STOPS = [0, 100, 157, 203, 238, 255]
+const parseColor = (hex: string) => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+]
+
+/** Compose independent illustrated layers on a single 256px grid. */
+export function renderPixels(raw: Pfp, size = NATIVE_SIZE, atlas: SpriteAtlas): PixelPicture {
+  if (![128, 256, 512].includes(size)) throw new Error('Picture size must be 128, 256 or 512')
+  if (!atlas) throw new Error('Character sprite atlas is required')
+
+  const pfp = sanitizePfp(raw)
+  const data = new Uint8ClampedArray(NATIVE_SIZE * NATIVE_SIZE * 4)
+  for (let index = 3; index < data.length; index += 4) data[index] = 255
+  const colors = palette(pfp.skin).map(parseColor)
+
+  function blend(x: number, y: number, red: number, green: number, blue: number, alpha: number) {
+    if (x < 0 || y < 0 || x >= NATIVE_SIZE || y >= NATIVE_SIZE || alpha === 0) return
+    const index = (y * NATIVE_SIZE + x) * 4
+    const opacity = alpha / 255
+    data[index] = Math.round(red * opacity + data[index] * (1 - opacity))
+    data[index + 1] = Math.round(green * opacity + data[index + 1] * (1 - opacity))
+    data[index + 2] = Math.round(blue * opacity + data[index + 2] * (1 - opacity))
   }
-  r.rect(0, 0, 128, 128, c[0]);
-  r.ellipse(64, 66, 72, 65, c[1]);
-  r.ellipse(64, 62, 62, 56, c[0]);
-  if (p.bg === 'sunset') {
-    r.rect(0, 89, 128, 12, '#925261');
-    r.rect(0, 101, 128, 27, '#bf7765');
-  }
-  if (p.bg === 'ocean' || p.bg === 'forest') {
-    for (let i = 0; i < 6; i++) {
-      r.poly([[i * 27 - 15, 128], [i * 27, 93 + i % 2 * 8], [i * 27 + 23, 128]], c[1]);
-    }
-  }
-  if (p.bg === 'aurora') {
-    r.poly([[0, 38], [30, 9], [57, 7], [35, 22], [0, 64]], '#348976');
-    r.poly([[77, 0], [111, 0], [128, 26], [128, 42], [100, 12]], '#5f658d');
-  }
-  if (p.bg === 'neon') {
-    for (let y = 96; y < 128; y += 8) {
-      r.line(0, y, 127, y, '#634582');
-    }
-    for (let x = -64; x < 200; x += 32) {
-      r.line(64, 87, x, 127, '#634582');
-    }
-    r.rect(6, 12, 2, 56, '#a953af');
-    r.rect(120, 48, 2, 44, '#47b8c4');
-  }
-  if (p.bg === 'vault') {
-    for (let x = 8; x < 128; x += 22) {
-      r.line(x, 0, x, 127, '#494230');
-    }
-    r.rect(7, 7, 114, 2, '#827b4e');
-    r.rect(7, 119, 114, 2, '#827b4e');
-  }
-  if (p.bg === 'galaxy') {
-    r.poly([[0, 90], [0, 63], [86, 0], [122, 0]], '#462957');
-    r.poly([[0, 79], [0, 73], [99, 0], [112, 0]], '#70446d');
-  }
-  if (p.bg === 'space' || p.bg === 'galaxy' || p.bg === 'midnight') {
-    for (const [x, y] of [[12, 17], [31, 9], [120, 32], [9, 89], [114, 112], [20, 118], [84, 7], [10, 46], [119, 91]]) {
-      r.pixel(x, y, '#6c7a9d');
-      if (p.bg !== 'midnight') {
-        r.pixel(x + 1, y, '#6c7a9d');
+
+  function sprite(id: string, tint = false, phase?: 'back' | 'front') {
+    const entry = SPRITE_MANIFEST[id as SpriteId]
+    if (!entry) throw new Error('Missing character sprite: ' + id)
+    const [sourceX, sourceY, width, height] = entry.source
+    const [destinationX, destinationY] = entry.dest
+    const isCharacter = !['outfit/', 'neck/', 'bg/', 'aura/'].some(prefix => id.startsWith(prefix))
+    const hasOutfit = pfp.outfit !== 'none'
+    const hasNeckwear = pfp.neck !== 'none'
+    const frame = isCharacter ? (hasOutfit ? CHARACTER_FRAMES.outfit : hasNeckwear ? CHARACTER_FRAMES.neckwear : CHARACTER_FRAMES.bare) : CHARACTER_FRAMES.bare
+    const { scale, x: offsetX, y: offsetY } = frame
+    const outputWidth = Math.round(width * scale)
+    const outputHeight = Math.round(height * scale)
+    const left = Math.round(destinationX * scale + offsetX)
+    const top = Math.round(destinationY * scale + offsetY)
+
+    // Inverse nearest-neighbor sampling visits each destination pixel once.
+    for (let y = 0; y < outputHeight; y++) {
+      const sourceRow = Math.min(height - 1, Math.floor((y + 0.5) * height / outputHeight))
+      for (let x = 0; x < outputWidth; x++) {
+        const sourceColumn = Math.min(width - 1, Math.floor((x + 0.5) * width / outputWidth))
+        // The illustrated orbit tilts from bottom left to top right.
+        const frontOfOrbit = sourceRow / height + sourceColumn / width >= 1
+        if (phase === 'back' && frontOfOrbit || phase === 'front' && !frontOfOrbit) continue
+        const index = ((sourceY + sourceRow) * atlas.width + sourceX + sourceColumn) * 4
+        let red = atlas.data[index]
+        let green = atlas.data[index + 1]
+        let blue = atlas.data[index + 2]
+        if (tint && pfp.skin !== 'moon') {
+          const luminance = Math.round(red * 0.2126 + green * 0.7152 + blue * 0.0722)
+          let band = 0
+          while (band < 4 && luminance > MATERIAL_STOPS[band + 1]) band++
+          const fraction = Math.max(0, Math.min(1,
+            (luminance - MATERIAL_STOPS[band]) / (MATERIAL_STOPS[band + 1] - MATERIAL_STOPS[band]),
+          ))
+          const mapped = colors[band].map((channel, component) =>
+            Math.round(channel + (colors[band + 1][component] - channel) * fraction),
+          )
+          ;[red, green, blue] = mapped
+        }
+        blend(left + x, top + y, red, green, blue, atlas.data[index + 3])
       }
     }
-    if (p.bg !== 'midnight') {
-      r.star(15, 28, 3, '#adb9d2');
-    }
   }
-}
-/** The art is always authored at 128 pixels; larger outputs repeat pixels without interpolation. */
-export function renderPixels(raw: Pfp, size = 128): PixelPicture {
-  if (![128, 256, 512].includes(size)) {
-    throw new Error('Picture size must be 128, 256 or 512');
+
+  sprite('bg/' + pfp.bg)
+  if (pfp.aura === 'glow' || pfp.aura === 'sparkles') sprite('aura/' + pfp.aura)
+  if (pfp.aura === 'ring') sprite('aura/ring', false, 'back')
+  if (pfp.head === 'headphones') sprite('head/headphones')
+
+  const materialId = 'skin/' + pfp.skin
+  sprite(materialId in SPRITE_MANIFEST ? materialId : 'base', !(materialId in SPRITE_MANIFEST))
+  if (pfp.outfit !== 'none') sprite('outfit/' + pfp.outfit)
+  if (['none', 'halo', 'headphones'].includes(pfp.head)) sprite('spikes', true)
+  if (pfp.head !== 'party') sprite('antenna')
+  // Opaque lenses cover sockets completely; the monocle retains the chosen eyes.
+  if (pfp.face === 'none' || pfp.face === 'monocle') sprite('eyes/' + pfp.eyes)
+  if (pfp.neck !== 'none') sprite('neck/' + pfp.neck)
+  sprite('mouth/' + pfp.mouth)
+  if (pfp.head === 'headphones') {
+    sprite('headphones-left')
+    sprite('headphones-right')
+  } else if (pfp.head !== 'none') {
+    sprite('head/' + pfp.head)
   }
-  const p = sanitizePfp(raw),
-    r = new Raster();
-  drawBackground(r, p);
-  if (p.aura === 'glow') {
-    r.ellipse(63, 67, 53, 49, '#343a5a');
-    r.ellipse(63, 67, 50, 47, '#586684');
-    r.ellipse(63, 67, 48, 45, '#92a7b7');
-  }
-  if (p.aura === 'ring') {
-    r.poly([[7, 86], [10, 77], [25, 67], [103, 47], [119, 48], [123, 54], [117, 63], [112, 61], [119, 53], [104, 51], [28, 71], [13, 79], [11, 85]], '#a995d1');
-    r.line(13, 77, 23, 71, '#ece0ff', 2);
-  }
-  drawClothes(r, p);
-  drawNeck(r, p);
-  drawMoon(r, p);
-  drawMouth(r, p);
-  if (p.head === 'headphones') {
-    drawHeadphones(r);
-  } else drawHat(r, p);
-  drawEyewear(r, p);
-  if (p.aura === 'sparkles') {
-    for (const [x, y, s] of [[12, 42, 5], [115, 96, 6], [33, 13, 4], [16, 110, 3], [118, 43, 3]]) {
-      r.star(x, y, s, '#d7b7ff');
-      r.star(x, y, s - 2, '#ffffff');
-    }
-  }
-  if (p.aura === 'ring') {
-    r.poly([[8, 84], [15, 88], [32, 88], [62, 83], [95, 71], [117, 59], [121, 54], [119, 64], [97, 77], [65, 88], [35, 94], [15, 94], [7, 90]], '#8e76b8');
-    r.poly([[10, 85], [16, 89], [32, 89], [63, 84], [97, 72], [117, 61], [116, 65], [97, 75], [64, 87], [34, 92], [15, 92]], '#e6d3f5');
-    r.line(17, 92, 30, 92, '#ffffff');
-  }
-  if (size === 128) {
-    return {
-      width: 128,
-      height: 128,
-      data: r.data
-    };
-  }
-  const data = new Uint8ClampedArray(size * size * 4),
-    scale = size / 128;
+  if (pfp.face !== 'none') sprite('face/' + pfp.face)
+  if (pfp.aura === 'ring') sprite('aura/ring', false, 'front')
+
+  if (size === NATIVE_SIZE) return { width: size, height: size, data }
+  const output = new Uint8ClampedArray(size * size * 4)
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const from = (Math.floor(y / scale) * 128 + Math.floor(x / scale)) * 4;
-      data.set(r.data.subarray(from, from + 4), (y * size + x) * 4);
+      const sourceX = Math.floor((x + 0.5) * NATIVE_SIZE / size)
+      const sourceY = Math.floor((y + 0.5) * NATIVE_SIZE / size)
+      const sourceIndex = (sourceY * NATIVE_SIZE + sourceX) * 4
+      output.set(data.subarray(sourceIndex, sourceIndex + 4), (y * size + x) * 4)
     }
   }
-  return {
-    width: size,
-    height: size,
-    data
-  };
+  return { width: size, height: size, data: output }
 }

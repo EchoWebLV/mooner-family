@@ -1,0 +1,1326 @@
+[
+  {
+    "id": "base",
+    "file": "base",
+    "crop": [
+      0,
+      0,
+      1280,
+      1280
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "eyes/star",
+    "file": "eyes",
+    "crop": [
+      0,
+      0,
+      320,
+      345
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/ice",
+    "file": "eyes",
+    "crop": [
+      320,
+      0,
+      640,
+      345
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/pink",
+    "file": "eyes",
+    "crop": [
+      640,
+      0,
+      960,
+      345
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/gold",
+    "file": "eyes",
+    "crop": [
+      960,
+      0,
+      1280,
+      345
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/heart",
+    "file": "eyes",
+    "crop": [
+      0,
+      345,
+      320,
+      615
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/diamond",
+    "file": "eyes",
+    "crop": [
+      320,
+      345,
+      640,
+      615
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/cosmic",
+    "file": "eyes",
+    "crop": [
+      640,
+      345,
+      960,
+      615
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/laser",
+    "file": "eyes",
+    "crop": [
+      960,
+      345,
+      1280,
+      615
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/wink",
+    "file": "eyes",
+    "crop": [
+      0,
+      615,
+      320,
+      905
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/sleepy",
+    "file": "eyes",
+    "crop": [
+      320,
+      615,
+      640,
+      905
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/angry",
+    "file": "eyes",
+    "crop": [
+      640,
+      615,
+      960,
+      905
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/wide",
+    "file": "eyes",
+    "crop": [
+      960,
+      615,
+      1280,
+      905
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/money",
+    "file": "eyes",
+    "crop": [
+      0,
+      905,
+      320,
+      1280
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/cross",
+    "file": "eyes",
+    "crop": [
+      320,
+      905,
+      640,
+      1280
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/spiral",
+    "file": "eyes",
+    "crop": [
+      640,
+      905,
+      960,
+      1280
+    ],
+    "dest": [
+      78,
+      87,
+      153,
+      110
+    ],
+    "align": "bottom"
+  },
+  {
+    "id": "eyes/happy",
+    "file": "eyes",
+    "crop": [
+      960,
+      905,
+      1280,
+      1280
+    ],
+    "dest": [
+      78,
+      105,
+      153,
+      110
+    ]
+  },
+  {
+    "id": "mouth/tongue",
+    "file": "mouths",
+    "crop": [
+      0,
+      0,
+      640,
+      282
+    ],
+    "dest": [
+      88,
+      168,
+      126,
+      88
+    ]
+  },
+  {
+    "id": "mouth/smile",
+    "file": "mouths",
+    "crop": [
+      640,
+      0,
+      1280,
+      282
+    ],
+    "dest": [
+      89,
+      173,
+      127,
+      68
+    ]
+  },
+  {
+    "id": "mouth/grin",
+    "file": "mouths",
+    "crop": [
+      0,
+      282,
+      640,
+      500
+    ],
+    "dest": [
+      83,
+      164,
+      137,
+      83
+    ]
+  },
+  {
+    "id": "mouth/smirk",
+    "file": "mouths",
+    "crop": [
+      640,
+      282,
+      1280,
+      500
+    ],
+    "dest": [
+      111,
+      183,
+      106,
+      47
+    ]
+  },
+  {
+    "id": "mouth/open",
+    "file": "mouths",
+    "crop": [
+      0,
+      500,
+      640,
+      750
+    ],
+    "dest": [
+      121,
+      175,
+      68,
+      77
+    ]
+  },
+  {
+    "id": "mouth/grimace",
+    "file": "mouths",
+    "crop": [
+      640,
+      500,
+      1280,
+      750
+    ],
+    "dest": [
+      84,
+      176,
+      126,
+      59
+    ]
+  },
+  {
+    "id": "mouth/bubblegum",
+    "file": "mouths",
+    "crop": [
+      0,
+      750,
+      640,
+      990
+    ],
+    "dest": [
+      106,
+      174,
+      111,
+      82
+    ]
+  },
+  {
+    "id": "mouth/fangs",
+    "file": "mouths",
+    "crop": [
+      640,
+      750,
+      1280,
+      990
+    ],
+    "dest": [
+      88,
+      168,
+      126,
+      88
+    ]
+  },
+  {
+    "id": "mouth/gold",
+    "file": "mouths",
+    "crop": [
+      0,
+      990,
+      640,
+      1280
+    ],
+    "dest": [
+      83,
+      168,
+      137,
+      80
+    ]
+  },
+  {
+    "id": "mouth/drool",
+    "file": "mouths",
+    "crop": [
+      640,
+      990,
+      1280,
+      1280
+    ],
+    "dest": [
+      88,
+      169,
+      126,
+      85
+    ],
+    "exclude": [
+      [
+        845,
+        990,
+        1030,
+        1026
+      ]
+    ]
+  },
+  {
+    "id": "head/beanie",
+    "file": "headgear",
+    "crop": [
+      0,
+      0,
+      460,
+      477
+    ],
+    "dest": [
+      15,
+      3,
+      175,
+      117
+    ]
+  },
+  {
+    "id": "head/party",
+    "file": "headgear",
+    "crop": [
+      460,
+      0,
+      825,
+      477
+    ],
+    "dest": [
+      38,
+      0,
+      104,
+      118
+    ]
+  },
+  {
+    "id": "head/cap",
+    "file": "headgear",
+    "crop": [
+      825,
+      0,
+      1280,
+      477
+    ],
+    "dest": [
+      22,
+      4,
+      192,
+      121
+    ]
+  },
+  {
+    "id": "head/headphones",
+    "file": "headgear",
+    "crop": [
+      0,
+      477,
+      460,
+      851
+    ],
+    "dest": [
+      -6,
+      32,
+      261,
+      209
+    ]
+  },
+  {
+    "id": "head/horns",
+    "file": "headgear",
+    "crop": [
+      460,
+      477,
+      825,
+      851
+    ],
+    "dest": [
+      45,
+      5,
+      151,
+      112
+    ]
+  },
+  {
+    "id": "head/halo",
+    "file": "headgear",
+    "crop": [
+      845,
+      525,
+      1280,
+      830
+    ],
+    "dest": [
+      62,
+      3,
+      119,
+      69
+    ]
+  },
+  {
+    "id": "head/crown",
+    "file": "headgear",
+    "crop": [
+      0,
+      860,
+      466,
+      1280
+    ],
+    "dest": [
+      20,
+      0,
+      179,
+      115
+    ]
+  },
+  {
+    "id": "spikes",
+    "file": "headgear",
+    "crop": [
+      480,
+      885,
+      830,
+      1240
+    ],
+    "dest": [
+      38,
+      7,
+      103,
+      81
+    ]
+  },
+  {
+    "id": "antenna",
+    "file": "headgear",
+    "crop": [
+      825,
+      851,
+      1280,
+      1280
+    ],
+    "dest": [
+      184,
+      1,
+      59,
+      62
+    ]
+  },
+  {
+    "id": "face/shades",
+    "file": "eyewear",
+    "crop": [
+      0,
+      0,
+      640,
+      426
+    ],
+    "dest": [
+      49,
+      103,
+      199,
+      102
+    ]
+  },
+  {
+    "id": "face/retro",
+    "file": "eyewear",
+    "crop": [
+      640,
+      0,
+      1280,
+      426
+    ],
+    "dest": [
+      49,
+      103,
+      199,
+      102
+    ]
+  },
+  {
+    "id": "face/hearts",
+    "file": "eyewear",
+    "crop": [
+      0,
+      426,
+      640,
+      852
+    ],
+    "dest": [
+      49,
+      103,
+      199,
+      102
+    ]
+  },
+  {
+    "id": "face/monocle",
+    "file": "eyewear",
+    "crop": [
+      780,
+      450,
+      1210,
+      845
+    ],
+    "dest": [
+      161,
+      111,
+      68,
+      89
+    ]
+  },
+  {
+    "id": "face/visor",
+    "file": "eyewear",
+    "crop": [
+      0,
+      852,
+      640,
+      1278
+    ],
+    "dest": [
+      49,
+      103,
+      199,
+      102
+    ]
+  },
+  {
+    "id": "outfit/tee",
+    "file": "clothing",
+    "crop": [
+      0,
+      0,
+      640,
+      420
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "outfit/turtleneck",
+    "file": "clothing",
+    "crop": [
+      640,
+      0,
+      1280,
+      420
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "outfit/hoodie",
+    "file": "clothing",
+    "crop": [
+      0,
+      420,
+      640,
+      820
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "outfit/tux",
+    "file": "clothing",
+    "crop": [
+      640,
+      420,
+      1280,
+      820
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "outfit/suit",
+    "file": "clothing",
+    "crop": [
+      0,
+      820,
+      640,
+      1280
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "outfit/royal",
+    "file": "clothing",
+    "crop": [
+      640,
+      820,
+      1280,
+      1280
+    ],
+    "dest": [
+      12,
+      176,
+      232,
+      152
+    ]
+  },
+  {
+    "id": "neck/scarf",
+    "file": "neckwear",
+    "crop": [
+      0,
+      0,
+      640,
+      420
+    ],
+    "dest": [
+      49,
+      182,
+      153,
+      76
+    ],
+    "centerX": true
+  },
+  {
+    "id": "neck/bowtie",
+    "file": "neckwear",
+    "crop": [
+      640,
+      0,
+      1280,
+      420
+    ],
+    "dest": [
+      98,
+      206,
+      70,
+      39
+    ],
+    "centerX": true
+  },
+  {
+    "id": "neck/chain",
+    "file": "neckwear",
+    "crop": [
+      0,
+      420,
+      640,
+      825
+    ],
+    "dest": [
+      55,
+      177,
+      151,
+      78
+    ],
+    "centerX": true,
+    "exclude": [
+      [
+        160,
+        420,
+        480,
+        451
+      ],
+      [
+        0,
+        790,
+        220,
+        825
+      ],
+      [
+        430,
+        790,
+        640,
+        825
+      ]
+    ]
+  },
+  {
+    "id": "neck/bandana",
+    "file": "neckwear",
+    "crop": [
+      640,
+      420,
+      1280,
+      825
+    ],
+    "dest": [
+      55,
+      183,
+      148,
+      73
+    ],
+    "centerX": true
+  },
+  {
+    "id": "neck/icechain",
+    "file": "neckwear",
+    "crop": [
+      0,
+      825,
+      640,
+      1280
+    ],
+    "dest": [
+      57,
+      178,
+      151,
+      78
+    ],
+    "centerX": true,
+    "exclude": [
+      [
+        200,
+        825,
+        430,
+        850
+      ]
+    ]
+  },
+  {
+    "id": "headphones-left",
+    "file": "headgear",
+    "crop": [
+      15,
+      620,
+      210,
+      852
+    ],
+    "dest": [
+      3,
+      128,
+      58,
+      96
+    ]
+  },
+  {
+    "id": "headphones-right",
+    "file": "headgear",
+    "crop": [
+      260,
+      620,
+      445,
+      852
+    ],
+    "dest": [
+      215,
+      130,
+      40,
+      91
+    ]
+  },
+  {
+    "id": "skin/holo",
+    "file": "materials",
+    "crop": [
+      0,
+      0,
+      320,
+      320
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/jelly",
+    "file": "materials",
+    "crop": [
+      320,
+      0,
+      640,
+      320
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/obsidian",
+    "file": "materials",
+    "crop": [
+      640,
+      0,
+      960,
+      320
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/chrome",
+    "file": "materials",
+    "crop": [
+      960,
+      0,
+      1280,
+      320
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/gold",
+    "file": "materials",
+    "crop": [
+      0,
+      320,
+      320,
+      640
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/diamond",
+    "file": "materials",
+    "crop": [
+      320,
+      320,
+      640,
+      640
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/lava",
+    "file": "materials",
+    "crop": [
+      640,
+      320,
+      960,
+      640
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "skin/clay",
+    "file": "materials",
+    "crop": [
+      960,
+      320,
+      1280,
+      640
+    ],
+    "dest": [
+      16,
+      43,
+      224,
+      204
+    ],
+    "stretch": true
+  },
+  {
+    "id": "bg/midnight",
+    "file": "backgrounds",
+    "crop": [
+      2,
+      2,
+      318,
+      391
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/space",
+    "file": "backgrounds",
+    "crop": [
+      322,
+      2,
+      638,
+      391
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/dusk",
+    "file": "backgrounds",
+    "crop": [
+      642,
+      2,
+      958,
+      391
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/ocean",
+    "file": "backgrounds",
+    "crop": [
+      962,
+      2,
+      1278,
+      391
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/sunset",
+    "file": "backgrounds",
+    "crop": [
+      2,
+      395,
+      318,
+      795
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/forest",
+    "file": "backgrounds",
+    "crop": [
+      322,
+      395,
+      638,
+      795
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/ember",
+    "file": "backgrounds",
+    "crop": [
+      642,
+      395,
+      958,
+      795
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/candy",
+    "file": "backgrounds",
+    "crop": [
+      962,
+      395,
+      1278,
+      795
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/aurora",
+    "file": "backgrounds",
+    "crop": [
+      2,
+      799,
+      318,
+      1278
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/neon",
+    "file": "backgrounds",
+    "crop": [
+      322,
+      799,
+      638,
+      1278
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/vault",
+    "file": "backgrounds",
+    "crop": [
+      642,
+      799,
+      958,
+      1278
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "bg/galaxy",
+    "file": "backgrounds",
+    "crop": [
+      962,
+      799,
+      1278,
+      1278
+    ],
+    "dest": [
+      0,
+      0,
+      256,
+      256
+    ],
+    "stretch": true,
+    "opaque": true
+  },
+  {
+    "id": "aura/glow",
+    "file": "auras",
+    "crop": [
+      0.0,
+      0,
+      426.6666666666667,
+      426.6666666666667
+    ],
+    "dest": [
+      0,
+      19,
+      256,
+      237
+    ],
+    "stretch": true
+  },
+  {
+    "id": "aura/sparkles",
+    "file": "auras",
+    "crop": [
+      426.6666666666667,
+      0,
+      853.3333333333334,
+      426.6666666666667
+    ],
+    "dest": [
+      0,
+      19,
+      256,
+      237
+    ],
+    "stretch": true
+  },
+  {
+    "id": "aura/ring",
+    "file": "auras",
+    "crop": [
+      853.3333333333334,
+      0,
+      1280.0,
+      426.6666666666667
+    ],
+    "dest": [
+      0,
+      102,
+      256,
+      130
+    ],
+    "stretch": true
+  }
+]

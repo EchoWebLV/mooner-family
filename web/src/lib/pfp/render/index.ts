@@ -1,10 +1,11 @@
 // Lossless PNG adapter for the shared, integer-grid pixel artist.
 import type { Pfp } from '../../types'
 import { renderPixels } from './pixels'
+import { loadSprites } from './load-sprites'
 export { renderPixels } from './pixels'
-/** Renders at an exact integer multiple of the 128 × 128 art grid. */
+/** Encodes illustrated 256px art at a supported nearest-neighbor output size. */
 export async function renderPfp(pfp: Pfp, px: number): Promise<Blob> {
-  const picture = renderPixels(pfp, px)
+  const picture = renderPixels(pfp, px, await loadSprites())
   const canvas = document.createElement('canvas')
   canvas.width = picture.width
   canvas.height = picture.height
