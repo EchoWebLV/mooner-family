@@ -1,10 +1,10 @@
 // Mooner pictures for the page: one queue in front of the renderer, memory and Cache Storage in front of the queue.
-// The pixel renderer is only fetched when the first picture is asked for.
+// The 3D studio renderer is only fetched when the first picture is asked for.
 import type { Pfp } from '../types'
 import { pfpKey } from './traits'
 
 /** Bump when the renderer's output changes, so stored pictures are drawn again. */
-const RENDER_VERSION = 14
+const RENDER_VERSION = 17
 const CACHE = `mooner-pfp-v${RENDER_VERSION}`
 
 /** Pixel sizes pictures are drawn at. */

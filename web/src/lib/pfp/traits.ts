@@ -1,4 +1,4 @@
-// Mooner PFPs: every player is a pixel-art moon built from one trait per slot. Common traits are free; the rest unlock
+// Mooner PFPs: every player is a sculpted 3D moon built from one trait per slot. Common traits are free; the rest unlock
 // with titles, one level per rarity step (Uncommon = level II … Legendary = level V), the same ladder as the badges.
 // Pure data and rules; ./render draws the pictures.
 import { roman } from '../format'

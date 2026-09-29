@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mooner 3D review</title>
+  <style>
+    body { margin: 24px; background: #101016; color: #fff; font: 14px system-ui; }
+    #grid { display: grid; grid-template-columns: repeat(4, 256px); gap: 12px; }
+    figure { margin: 0; }
+    img { width: 256px; height: 256px; border-radius: 20px; }
+    figcaption { padding: 8px; }
+    button, #download { display: inline-block; margin: 16px 12px 16px 0; padding: 12px; }
+    a { color: #b5baff; }
+    nav { margin: 12px 0 24px; }
+    nav a { margin-right: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Mooner 3D studio</h1>
+  <div id="status">Preparing the gallery…</div>
+  <a id="download" download="mooner-3d-polished.png">Contact sheet prepares after rendering</a>
+  <button id="export-checks" disabled>Run export checks</button>
+  <div id="export-status" aria-live="polite"></div>
+  <nav id="trait-links"></nav>
+  <div id="grid"></div>
+  <script type="module">
+    import { makeStage, buildScene, disposeScene } from '/src/lib/pfp/render/scene.ts';
+    import { renderPfp } from '/src/lib/pfp/render/index.ts';
+    import { TRAITS } from '/src/lib/pfp/traits.ts';
+
+    const base = { skin: 'moon', eyes: 'star', mouth: 'tongue', head: 'none', face: 'none', outfit: 'none', neck: 'none', aura: 'none', bg: 'midnight' };
+    let cases = [
+      ['Moon', {}],
+      ['Lime', { skin: 'lime', mouth: 'grin', bg: 'forest' }],
+      ['Wink', { skin: 'rose', eyes: 'wink', mouth: 'bubblegum', bg: 'candy' }],
+      ['Shades', { skin: 'sky', face: 'shades', bg: 'ocean' }],
+      ['Cozy', { eyes: 'sleepy', head: 'beanie', outfit: 'hoodie', neck: 'scarf', bg: 'dusk' }],
+      ['Royal', { skin: 'gold', eyes: 'money', head: 'crown', outfit: 'royal', mouth: 'gold', bg: 'vault' }],
+      ['Lava', { skin: 'lava', eyes: 'angry', head: 'horns', bg: 'ember' }],
+      ['Space', { skin: 'diamond', eyes: 'wide', mouth: 'open', head: 'headphones', outfit: 'suit', bg: 'space' }],
+      ['Party', { skin: 'mint', eyes: 'happy', mouth: 'smile', head: 'party', aura: 'sparkles', bg: 'candy' }],
+      ['Cosmic', { skin: 'obsidian', eyes: 'cosmic', aura: 'ring', bg: 'galaxy' }],
+      ['Retro', { skin: 'chrome', face: 'retro', outfit: 'tux', neck: 'bowtie', mouth: 'grin', bg: 'neon' }],
+      ['Angel', { skin: 'holo', eyes: 'diamond', head: 'halo', neck: 'icechain', mouth: 'smirk', bg: 'galaxy' }],
+    ];
+    const params = new URLSearchParams(location.search);
+    const polished = params.has('polished');
+    const slot = params.get('slot');
+    for (const id of ['skin', 'eyes', 'mouth', 'head', 'face', 'outfit', 'neck', 'aura', 'bg']) {
+      const link = document.createElement('a');
+      link.href = '?polished&slot=' + id;
+      link.textContent = id;
+      document.querySelector('#trait-links').append(link);
+    }
+    if (slot && TRAITS[slot]) cases = TRAITS[slot].map(trait => [trait.name, { [slot]: trait.id }]);
+    const stage = polished ? null : makeStage(512);
+    const pictures = [];
+    for (const [name, overrides] of cases) {
+      const pfp = { ...base, ...overrides };
+      let blob;
+      if (polished) blob = await renderPfp(pfp, 256);
+      else {
+        const { scene, cam } = buildScene(stage, pfp);
+        stage.renderer.render(scene, cam);
+        blob = await new Promise(resolve => stage.renderer.domElement.toBlob(resolve, 'image/png'));
+        disposeScene(scene);
+      }
+      const img = new Image();
+      img.src = URL.createObjectURL(blob);
+      await img.decode();
+      pictures.push(img);
+      const figure = document.createElement('figure');
+      figure.append(img);
+      const label = document.createElement('figcaption');
+      label.textContent = name;
+      figure.append(label);
+      document.querySelector('#grid').append(figure);
+      document.querySelector('#status').textContent = `${polished ? 'Polished' : 'Direct studio'}: ${pictures.length}/${cases.length}`;
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    if (stage) { stage.environmentTarget.dispose(); stage.renderer.dispose(); }
+    window.reviewReady = true;
+    const sheet = document.createElement('canvas');
+    sheet.width = 1024;
+    sheet.height = Math.ceil(pictures.length / 4) * 256;
+    const sheetContext = sheet.getContext('2d');
+    pictures.forEach((img, i) => sheetContext.drawImage(img, (i % 4) * 256, Math.floor(i / 4) * 256, 256, 256));
+    const download = document.querySelector('#download');
+    download.href = sheet.toDataURL('image/png');
+    download.download = 'mooner-3d-polished' + (slot ? '-' + slot : '') + '.png';
+    download.textContent = 'Download contact sheet';
+    const sheetImage = new Image();
+    sheetImage.id = 'contact-sheet';
+    sheetImage.src = download.href;
+    sheetImage.hidden = true;
+    document.body.append(sheetImage);
+
+    const exportButton = document.querySelector('#export-checks');
+    exportButton.disabled = false;
+    exportButton.onclick = async () => {
+      exportButton.disabled = true;
+      const status = document.querySelector('#export-status');
+      status.textContent = 'Checking simultaneous 128, 256 and 512 pixel exports…';
+      try {
+        const requests = [128, 256, 512].map((px, i) => ({ px, pfp: { ...base, skin: ['lime', 'rose', 'chrome'][i] } }));
+        const blobs = await Promise.all(requests.map(({ pfp, px }) => renderPfp(pfp, px)));
+        const bitmaps = await Promise.all(blobs.map(blob => createImageBitmap(blob)));
+        for (let i = 0; i < requests.length; i++) {
+          if (blobs[i].type !== 'image/png' || bitmaps[i].width !== requests[i].px || bitmaps[i].height !== requests[i].px) throw new Error('Incorrect PNG export dimensions');
+        }
+        const repeated = await renderPfp(requests[1].pfp, 256);
+        const first = new Uint8Array(await blobs[1].arrayBuffer());
+        const second = new Uint8Array(await repeated.arrayBuffer());
+        if (first.length !== second.length || first.some((value, i) => value !== second[i])) throw new Error('Concurrent requests changed the selected portrait');
+        bitmaps.forEach(bitmap => bitmap.close());
+        let rejected = false;
+        try { await renderPfp(base, 257); } catch { rejected = true; }
+        if (!rejected) throw new Error('Unsupported export size was accepted');
+        status.textContent = 'PASS: PNG 128×128, 256×256, 512×512; concurrent requests preserve choices; repeat export is identical; unsupported sizes reject.';
+      } catch (error) { status.textContent = 'FAIL: ' + error.message; }
+      finally { exportButton.disabled = false; }
+    };
+  </script>
+</body>
+</html>

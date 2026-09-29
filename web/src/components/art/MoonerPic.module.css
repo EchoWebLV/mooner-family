@@ -14,7 +14,7 @@
 }
 
 .pic img {
-  image-rendering: pixelated;
+  image-rendering: auto;
   display: block;
   width: 100%;
   height: 100%;
