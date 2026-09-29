@@ -1,0 +1,34 @@
+.pic {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+  vertical-align: middle;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+
+/* Square tiles for the customizer and gallery. */
+.square {
+  border-radius: 14%;
+}
+
+.pic img {
+  image-rendering: pixelated;
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: fade-in 0.25s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pic img {
+    animation: none;
+  }
+}
