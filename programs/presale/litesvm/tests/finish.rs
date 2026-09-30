@@ -10,18 +10,11 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_signer::Signer;
 
-/// Creator 1, eight at 1, X 0.5 (deposit 1), Y 0.5 (deposit 0.8): FULL at uneven commits,
-/// every seat settled, launched. Returns (buyer, commit), creator first.
+/// FULL at uneven commits (Env::open_full_uneven), every seat settled, launched.
+/// Returns (buyer, commit), creator first.
 fn launched(e: &mut Env) -> (Opened, Vec<(Keypair, u64)>) {
-    let o = e.open(MAX_SEAT, MAX_SEAT);
-    let mut buyers = vec![(o.creator.insecure_clone(), MAX_SEAT)];
-    let rest = [(MAX_SEAT, MAX_SEAT); 8].into_iter().chain([(MAX_SEAT, 500_000_000), (800_000_000, 500_000_000)]);
-    for (deposit, commit) in rest {
-        let u = e.user(2);
-        e.join(&u, &o.presale, deposit);
-        e.commit(&u, &o.presale, commit);
-        buyers.push((u, commit));
-    }
+    let (o, buyers) = e.open_full_uneven();
+    assert!(buyers.len() >= 4, "four seats for the tests below");
     let keys: Vec<Keypair> = buyers.iter().map(|(k, _)| k.insecure_clone()).collect();
     e.settle_all(&o.presale, &keys);
     e.launch(&o);
@@ -63,7 +56,7 @@ fn claims_are_pro_rata_and_the_last_takes_the_remainder() {
         let got = token_balance(&e.svm, &user_ata(&o, u));
         let floor = (total as u128 * *commit as u128 / TARGET as u128) as u64;
         if i + 1 < n {
-            assert_eq!(got, floor, "buyer {i}: commit / 10 SOL of the tokens");
+            assert_eq!(got, floor, "buyer {i}: commit / TARGET of the tokens");
         } else {
             assert!(got >= floor, "the last claim takes the rounding remainder");
         }
@@ -248,10 +241,10 @@ fn close_after_every_claim_burns_strays_and_pays_the_creator() {
 #[test]
 fn close_after_expiry_waits_for_every_refund() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, 600_000_000);
+    let o = e.open(MAX_SEAT, 200_000_000);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
-    e.commit(&user, &o.presale, 600_000_000);
+    e.commit(&user, &o.presale, 200_000_000);
     let deadline = read_presale(&e.svm, &o.presale).deadline_ts;
     warp_to(&mut e.svm, deadline);
     let (bot, c, m) = (e.bot.insecure_clone(), o.creator.insecure_clone(), o.mint.pubkey());
@@ -275,8 +268,9 @@ fn fail_then_refund_everyone_then_close() {
     let (o, buyers) = e.open_full();
     let bot = e.bot.insecure_clone();
     let (m, c) = (o.mint.pubkey(), o.creator.pubkey());
-    let seven: Vec<Keypair> = buyers[..7].iter().map(|k| k.insecure_clone()).collect();
-    e.settle_all(&o.presale, &seven);
+    // all but three settled before the launch failed (7 of 10 in a 10 SOL pool)
+    let some: Vec<Keypair> = buyers[..buyers.len() - 3].iter().map(|k| k.insecure_clone()).collect();
+    e.settle_all(&o.presale, &some);
     let full_ts = read_presale(&e.svm, &o.presale).full_ts;
     warp_to(&mut e.svm, full_ts + GRACE);
     ok(send(&mut e.svm, &bot, &[], &[ix_fail(&o.presale)]), "fail");
@@ -298,7 +292,7 @@ fn fail_then_refund_everyone_then_close() {
 fn fail_only_a_full_presale_at_home() {
     let mut e = Env::new(false);
     let bot = e.bot.insecure_clone();
-    let open = e.open(MAX_SEAT, MAX_SEAT);
+    let open = e.open(MAX_SEAT, MIN_SEAT);
     assert_err(send(&mut e.svm, &bot, &[], &[ix_fail(&open.presale)]), E_BAD_STATE, "fail an OPEN presale");
     let close = ix_close_presale(&open.presale, &open.creator.pubkey(), &open.mint.pubkey());
     assert_err(send(&mut e.svm, &bot, &[], &[close]), E_BAD_STATE, "close an OPEN presale");

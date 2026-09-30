@@ -16,7 +16,7 @@ fn seat(o: &Opened, u: &Keypair) -> Address {
 #[test]
 fn wallet_and_session_key_can_commit_a_stranger_cannot() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     let session = funded(&mut e.svm, SOL);
     let ix = ix_join(&user.pubkey(), e.gate(), &o.presale, &session.pubkey(), MAX_SEAT);
@@ -35,67 +35,74 @@ fn wallet_and_session_key_can_commit_a_stranger_cannot() {
 #[test]
 fn sizes_and_deposit_bound_the_commit() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
-    e.join(&user, &o.presale, 500_000_000);
+    e.join(&user, &o.presale, 300_000_000);
     assert_err(e.try_commit(&user, &o.presale, 105_000_000), E_BAD_SEAT_SIZE, "off grid");
     assert_err(e.try_commit(&user, &o.presale, 90_000_000), E_BAD_SEAT_SIZE, "under 0.1");
-    assert_err(e.try_commit(&user, &o.presale, 600_000_000), E_OVER_DEPOSIT, "above the deposit");
-    e.commit(&user, &o.presale, 500_000_000);
+    assert_err(e.try_commit(&user, &o.presale, MAX_SEAT + STEP), E_BAD_SEAT_SIZE, "over the max");
+    assert_err(e.try_commit(&user, &o.presale, 400_000_000), E_OVER_DEPOSIT, "above the deposit");
+    e.commit(&user, &o.presale, 300_000_000);
 }
 
 #[test]
 fn the_creator_cannot_lower_or_withdraw() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, 500_000_000);
+    let o = e.open(MAX_SEAT, 200_000_000);
     let c = o.creator.insecure_clone();
-    assert_err(e.try_commit(&c, &o.presale, 400_000_000), E_CREATOR_CANNOT_LOWER, "lower");
+    assert_err(e.try_commit(&c, &o.presale, 100_000_000), E_CREATOR_CANNOT_LOWER, "lower");
     assert_err(e.try_commit(&c, &o.presale, 0), E_CREATOR_CANNOT_LOWER, "withdraw");
-    e.commit(&c, &o.presale, 800_000_000);
-    assert_eq!(read_presale(&e.svm, &o.presale).raised, 800_000_000);
+    e.commit(&c, &o.presale, 300_000_000);
+    assert_eq!(read_presale(&e.svm, &o.presale).raised, 300_000_000);
 }
 
 #[test]
 fn withdraw_and_recommit_move_the_counters() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
-    e.commit(&user, &o.presale, 700_000_000);
+    e.commit(&user, &o.presale, 300_000_000);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.raised, p.seats_committed), (1_700_000_000, 2));
+    assert_eq!((p.raised, p.seats_committed), (MIN_SEAT + 300_000_000, 2));
     e.commit(&user, &o.presale, 0);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.raised, p.seats_committed), (MAX_SEAT, 1));
-    e.commit(&user, &o.presale, 400_000_000);
+    assert_eq!((p.raised, p.seats_committed), (MIN_SEAT, 1));
+    e.commit(&user, &o.presale, 200_000_000);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.raised, p.seats_committed), (1_400_000_000, 2));
+    assert_eq!((p.raised, p.seats_committed), (MIN_SEAT + 200_000_000, 2));
     // x -> y keeps the count
-    e.commit(&user, &o.presale, 900_000_000);
+    e.commit(&user, &o.presale, 350_000_000);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.raised, p.seats_committed), (1_900_000_000, 2));
+    assert_eq!((p.raised, p.seats_committed), (MIN_SEAT + 350_000_000, 2));
 }
 
 #[test]
 fn the_last_commit_is_cut_to_the_room_and_locks_full() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
-    // 8 more at 1 SOL and one at 0.7 -> 9.7 SOL
-    for amount in [MAX_SEAT; 8].into_iter().chain([700_000_000]) {
+    // 0.3 SOL short of the target, then a max commit that doesn't fit
+    const LEFT: u64 = 300_000_000;
+    assert!(LEFT < MAX_SEAT, "premise: the last commit is cut");
+    let o = e.open(FULL_SEAT, FULL_SEAT);
+    let (mut raised, mut seats) = (FULL_SEAT, 1);
+    // 10 SOL pool: eight more at 1 and one at 0.7. 0.5 SOL pool: one more at 0.1.
+    while raised < TARGET - LEFT {
+        let amount = FULL_SEAT.min(TARGET - LEFT - raised);
         let u = e.user(2);
         e.join(&u, &o.presale, MAX_SEAT);
         e.commit(&u, &o.presale, amount);
+        (raised, seats) = (raised + amount, seats + 1);
     }
-    assert_eq!(read_presale(&e.svm, &o.presale).raised, 9_700_000_000);
+    assert_eq!(read_presale(&e.svm, &o.presale).raised, TARGET - LEFT);
     let last = e.user(2);
     e.join(&last, &o.presale, MAX_SEAT);
     let later = now(&e.svm) + 60;
     warp_to(&mut e.svm, later);
     let t = now(&e.svm);
     e.commit(&last, &o.presale, MAX_SEAT);
-    assert_eq!(read_seat(&e.svm, &seat(&o, &last)).commit, 300_000_000, "cut to the 0.3 left");
+    assert_eq!(read_seat(&e.svm, &seat(&o, &last)).commit, LEFT, "cut to the 0.3 left");
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.state, p.raised, p.full_ts, p.seats_committed), (FULL, TARGET, t, 11));
+    assert_eq!((p.state, p.raised, p.full_ts, p.seats_committed), (FULL, TARGET, t, seats + 1));
 
     // FULL is locked: no raise, no withdraw, no new seat commits
     assert_err(e.try_commit(&last, &o.presale, 200_000_000), E_BAD_STATE, "withdraw after full");
@@ -106,7 +113,7 @@ fn the_last_commit_is_cut_to_the_room_and_locks_full() {
 #[test]
 fn no_commit_after_the_deadline() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
     let deadline = read_presale(&e.svm, &o.presale).deadline_ts;
@@ -117,8 +124,8 @@ fn no_commit_after_the_deadline() {
 #[test]
 fn a_seat_only_commits_to_its_own_presale() {
     let mut e = Env::new(false);
-    let a = e.open(MAX_SEAT, MAX_SEAT);
-    let b = e.open(MAX_SEAT, MAX_SEAT);
+    let a = e.open(MAX_SEAT, MIN_SEAT);
+    let b = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &a.presale, MAX_SEAT);
     let ix = ix_set_commit(&user.pubkey(), &seat(&a, &user), &b.presale, MAX_SEAT);
@@ -128,7 +135,7 @@ fn a_seat_only_commits_to_its_own_presale() {
 #[test]
 fn only_the_wallet_rotates_the_session_key() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     let old = funded(&mut e.svm, SOL);
     let ix = ix_join(&user.pubkey(), e.gate(), &o.presale, &old.pubkey(), MAX_SEAT);
@@ -142,15 +149,15 @@ fn only_the_wallet_rotates_the_session_key() {
     assert_err(send(&mut e.svm, &user, &[], &[ix]), E_ZERO_KEY, "zero key");
     ok(send(&mut e.svm, &user, &[], &[ix_rotate_key(&user.pubkey(), &s, &new.pubkey())]), "rotate");
 
-    let ix = ix_set_commit(&old.pubkey(), &s, &o.presale, MAX_SEAT);
+    let ix = ix_set_commit(&old.pubkey(), &s, &o.presale, MIN_SEAT);
     assert_err(send(&mut e.svm, &old, &[], &[ix]), E_NOT_AUTHORIZED, "old key");
-    ok(send(&mut e.svm, &new, &[], &[ix_set_commit(&new.pubkey(), &s, &o.presale, MAX_SEAT)]), "new key");
+    ok(send(&mut e.svm, &new, &[], &[ix_set_commit(&new.pubkey(), &s, &o.presale, MIN_SEAT)]), "new key");
 }
 
 #[test]
 fn expire_only_after_the_deadline_and_once() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let bot = e.bot.insecure_clone();
     assert_err(send(&mut e.svm, &bot, &[], &[ix_expire(&o.presale)]), E_BEFORE_DEADLINE, "early");
     let deadline = read_presale(&e.svm, &o.presale).deadline_ts;
@@ -173,10 +180,10 @@ fn a_full_presale_never_expires() {
 #[test]
 fn leave_needs_a_zero_commit() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
-    e.commit(&user, &o.presale, 500_000_000);
+    e.commit(&user, &o.presale, 200_000_000);
     let ix = ix_leave(&user.pubkey(), &seat(&o, &user));
     assert_err(send(&mut e.svm, &user, &[], &[ix]), E_COMMIT_NOT_ZERO, "leave with a commit");
     let c = o.creator.insecure_clone();
@@ -190,7 +197,7 @@ fn leave_needs_a_zero_commit() {
 #[test]
 fn commit_home_waits_for_the_presale_to_close() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
     let bot = e.bot.insecure_clone();
@@ -200,7 +207,7 @@ fn commit_home_waits_for_the_presale_to_close() {
     assert_err(send(&mut e.svm, &bot, &[], &[ix_commit_seats(&bot.pubkey(), &o.presale, &[])]), E_BAD_DATA, "no seats");
 
     // once closed, a seat of another presale is refused
-    let other = e.open(MAX_SEAT, MAX_SEAT);
+    let other = e.open(MAX_SEAT, MIN_SEAT);
     let deadline = read_presale(&e.svm, &o.presale).deadline_ts;
     warp_to(&mut e.svm, deadline);
     ok(send(&mut e.svm, &bot, &[], &[ix_expire(&o.presale)]), "expire");

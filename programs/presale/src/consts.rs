@@ -5,9 +5,10 @@ use solana_program::{pubkey, pubkey::Pubkey};
 // ---- presale numbers (spec "Numbers") ----
 #[cfg(not(feature = "canary"))]
 mod numbers {
-    pub const TARGET: u64 = 10_000_000_000; // 10 SOL, exact fill
+    // 0.5 SOL for testing since 2026-09-30; was 10 SOL (TARGET) and 1 SOL (MAX_SEAT)
+    pub const TARGET: u64 = 500_000_000; // 0.5 SOL, exact fill
     pub const MIN_SEAT: u64 = 100_000_000; // 0.1 SOL
-    pub const MAX_SEAT: u64 = 1_000_000_000; // 1 SOL
+    pub const MAX_SEAT: u64 = 500_000_000; // 0.5 SOL
     pub const STEP: u64 = 10_000_000; // 0.01 SOL
     pub const DURATION: i64 = 3_600; // 1 hour
     pub const GRACE: i64 = 900; // FULL -> FAILED if no launch by then

@@ -8,7 +8,7 @@ pub enum Error {
     BadState = 0,          // the presale is in the wrong state for this instruction
     PastDeadline = 1,      // the presale's hour is over
     BeforeDeadline = 2,    // expire before the hour is over
-    BadSeatSize = 3,       // not 0.1-1 SOL in 0.01 steps
+    BadSeatSize = 3,       // not MIN_SEAT to MAX_SEAT in STEP steps
     OverDeposit = 4,       // commit above the seat's escrowed deposit
     CreatorCannotLower = 5,
     NoRoom = 6,            // the pool has no room left

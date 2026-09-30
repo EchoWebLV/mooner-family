@@ -72,20 +72,20 @@ fn armed_gate_must_cosign_open() {
     let mint = Keypair::new();
     let fee_dest = Address::new_unique();
     // gate account present but not signing
-    let ix = ix_open_presale(&creator.pubkey(), (e.gate.pubkey(), false), &mint.pubkey(), &fee_dest, &creator.pubkey(), MAX_SEAT, MAX_SEAT);
+    let ix = ix_open_presale(&creator.pubkey(), (e.gate.pubkey(), false), &mint.pubkey(), &fee_dest, &creator.pubkey(), MAX_SEAT, MIN_SEAT);
     assert_err(send(&mut e.svm, &creator, &[&mint], &[ix]), E_GATE_REQUIRED, "open without the gate");
     // a forged gate signs
     let forged = Keypair::new();
-    let ix = ix_open_presale(&creator.pubkey(), (forged.pubkey(), true), &mint.pubkey(), &fee_dest, &creator.pubkey(), MAX_SEAT, MAX_SEAT);
+    let ix = ix_open_presale(&creator.pubkey(), (forged.pubkey(), true), &mint.pubkey(), &fee_dest, &creator.pubkey(), MAX_SEAT, MIN_SEAT);
     assert_err(send(&mut e.svm, &creator, &[&mint, &forged], &[ix]), E_GATE_REQUIRED, "open with a forged gate");
     // the real gate signs
-    ok(e.try_open(&creator, &mint, MAX_SEAT, MAX_SEAT), "open with the gate");
+    ok(e.try_open(&creator, &mint, MAX_SEAT, MIN_SEAT), "open with the gate");
 }
 
 #[test]
 fn armed_gate_must_cosign_join() {
     let mut e = Env::new(true);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     let ix = ix_join(&user.pubkey(), (e.gate.pubkey(), false), &o.presale, &user.pubkey(), MAX_SEAT);
     assert_err(send(&mut e.svm, &user, &[], &[ix]), E_GATE_REQUIRED, "join without the gate");
@@ -95,7 +95,7 @@ fn armed_gate_must_cosign_join() {
 #[test]
 fn zero_gate_is_an_open_door() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
     assert_eq!(read_seat(&e.svm, &seat_pda(&o.presale, &user.pubkey())).deposit, MAX_SEAT);

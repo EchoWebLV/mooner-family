@@ -28,7 +28,7 @@ fn expire(e: &mut Env, o: &Opened) {
 #[test]
 fn a_seat_with_no_commit_is_refunded_and_closed() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, 500_000_000);
     let s = seat(&o, &user);
@@ -47,7 +47,7 @@ fn a_seat_with_no_commit_is_refunded_and_closed() {
 #[test]
 fn self_crank_pays_no_fee() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, 500_000_000);
     let seat_lamports = lamports(&e.svm, &seat(&o, &user));
@@ -56,23 +56,15 @@ fn self_crank_pays_no_fee() {
     assert_eq!(lamports(&e.svm, &user.pubkey()), user0 + seat_lamports - fee);
 }
 
-/// Creator 1/1, eight at 1/1, X deposits 1 commits 0.5, Y deposits 0.8 commits 0.5 -> FULL.
+/// FULL at uneven commits (Env::open_full_uneven): X and Y, last, committed less than
+/// they deposited. Returns every seat but the creator's (X and Y last), then X and Y.
 fn full_with_excess(e: &mut Env) -> (Opened, Vec<Keypair>, Keypair, Keypair) {
-    let o = e.open(MAX_SEAT, MAX_SEAT);
-    let mut ones = vec![];
-    for _ in 0..8 {
-        let u = e.user(2);
-        e.join(&u, &o.presale, MAX_SEAT);
-        e.commit(&u, &o.presale, MAX_SEAT);
-        ones.push(u);
-    }
-    let (x, y) = (e.user(2), e.user(2));
-    e.join(&x, &o.presale, MAX_SEAT);
-    e.commit(&x, &o.presale, 500_000_000);
-    e.join(&y, &o.presale, 800_000_000);
-    e.commit(&y, &o.presale, 500_000_000);
-    assert_eq!(read_presale(&e.svm, &o.presale).state, FULL);
-    (o, ones, x, y)
+    let (o, buyers) = e.open_full_uneven();
+    let others: Vec<Keypair> = buyers[1..].iter().map(|(k, _)| k.insecure_clone()).collect();
+    let n = others.len();
+    assert!(n >= 3, "three seats besides the creator's");
+    let (x, y) = (others[n - 2].insecure_clone(), others[n - 1].insecure_clone());
+    (o, others, x, y)
 }
 
 #[test]
@@ -81,18 +73,19 @@ fn full_moves_only_the_commit_in() {
     let (o, _, x, y) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
     let (x0, p0, b0) = (lamports(&e.svm, &x.pubkey()), lamports(&e.svm, &o.presale), lamports(&e.svm, &bot.pubkey()));
+    let (sx, sy) = (read_seat(&e.svm, &seat(&o, &x)), read_seat(&e.svm, &seat(&o, &y)));
+    assert!(sx.deposit > sx.commit && sy.deposit > sy.commit, "premise: both deposited more than they committed");
     let fee = settle(&mut e, &bot, &o, &[&x]);
     assert_eq!(lamports(&e.svm, &x.pubkey()), x0, "X is paid nothing yet, and no fee");
-    assert_eq!(lamports(&e.svm, &o.presale), p0 + 500_000_000 - TX_FEE, "the pot pays the crank");
+    assert_eq!(lamports(&e.svm, &o.presale), p0 + sx.commit - TX_FEE, "the pot pays the crank");
     assert_eq!(lamports(&e.svm, &bot.pubkey()), b0 + TX_FEE - fee);
-    let sx = read_seat(&e.svm, &seat(&o, &x));
-    assert_eq!(sx.flags & F_SETTLED, F_SETTLED);
-    assert_eq!(lamports(&e.svm, &seat(&o, &x)), rent(&e.svm, SEAT_LEN) + 500_000_000, "the 0.5 excess waits in the seat");
+    assert_eq!(read_seat(&e.svm, &seat(&o, &x)).flags & F_SETTLED, F_SETTLED);
+    assert_eq!(lamports(&e.svm, &seat(&o, &x)), rent(&e.svm, SEAT_LEN) + sx.deposit - sx.commit, "the excess waits in the seat");
 
     settle(&mut e, &bot, &o, &[&y]);
-    assert_eq!(lamports(&e.svm, &seat(&o, &y)), rent(&e.svm, SEAT_LEN) + 300_000_000);
+    assert_eq!(lamports(&e.svm, &seat(&o, &y)), rent(&e.svm, SEAT_LEN) + sy.deposit - sy.commit);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!((p.seats_settled, p.settled_sum, p.fees_paid), (2, 1_000_000_000, 2 * TX_FEE));
+    assert_eq!((p.seats_settled, p.settled_sum, p.fees_paid), (2, sx.commit + sy.commit, 2 * TX_FEE));
 }
 
 #[test]
@@ -100,16 +93,16 @@ fn an_emptied_wallet_cannot_veto_the_launch() {
     // 1 lamport over the commit, then the wallet is emptied: paying that lamport out at
     // settle would fail Solana's rent check and block every launch
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(FULL_SEAT, FULL_SEAT);
     let mut buyers = vec![o.creator.insecure_clone()];
-    for i in 0..9 {
+    for i in 1..FULL_SEATS {
         let u = e.user(2);
-        e.join(&u, &o.presale, MAX_SEAT);
-        if i == 0 {
+        e.join(&u, &o.presale, FULL_SEAT);
+        if i == 1 {
             let s = seat(&o, &u);
             ok(send(&mut e.svm, &u, &[], &[ix_transfer(&u.pubkey(), &s, 1)]), "a lamport into the seat");
         }
-        e.commit(&u, &o.presale, MAX_SEAT);
+        e.commit(&u, &o.presale, FULL_SEAT);
         buyers.push(u);
     }
     let griefer = buyers[1].insecure_clone();
@@ -132,10 +125,10 @@ fn an_emptied_wallet_cannot_veto_the_launch() {
 #[test]
 fn same_tag_ixs_split_one_tx_allowance() {
     let mut e = Env::new(false);
-    let (o, ones, _, _) = full_with_excess(&mut e);
+    let (o, others, _, _) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
     let b0 = lamports(&e.svm, &bot.pubkey());
-    let fee = settle(&mut e, &bot, &o, &[&ones[0], &ones[1], &ones[2]]);
+    let fee = settle(&mut e, &bot, &o, &[&others[0], &others[1], &others[2]]);
     let share = TX_FEE / 3;
     assert_eq!(lamports(&e.svm, &bot.pubkey()), b0 + 3 * share - fee);
     assert_eq!(read_presale(&e.svm, &o.presale).fees_paid, 3 * share);
@@ -144,9 +137,9 @@ fn same_tag_ixs_split_one_tx_allowance() {
 #[test]
 fn a_seat_settles_once_and_only_to_its_user() {
     let mut e = Env::new(false);
-    let (o, ones, _, _) = full_with_excess(&mut e);
+    let (o, others, _, _) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
-    let u = &ones[0];
+    let u = &others[0];
     let ix = ix_settle_seat(&bot.pubkey(), &seat(&o, u), &bot.pubkey(), &o.presale);
     assert_err(send(&mut e.svm, &bot, &[], &[ix]), E_BAD_ACCOUNT, "refund sent to the cranker");
     settle(&mut e, &bot, &o, &[u]);
@@ -157,10 +150,10 @@ fn a_seat_settles_once_and_only_to_its_user() {
 #[test]
 fn a_committed_seat_cannot_leave_an_open_presale() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, MAX_SEAT);
+    let o = e.open(MAX_SEAT, MIN_SEAT);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
-    e.commit(&user, &o.presale, 500_000_000);
+    e.commit(&user, &o.presale, 200_000_000);
     let ix = ix_settle_seat(&user.pubkey(), &seat(&o, &user), &user.pubkey(), &o.presale);
     assert_err(send(&mut e.svm, &user, &[], &[ix]), E_BAD_STATE, "settle while OPEN");
 }
@@ -168,10 +161,10 @@ fn a_committed_seat_cannot_leave_an_open_presale() {
 #[test]
 fn expired_refunds_every_deposit_in_full() {
     let mut e = Env::new(false);
-    let o = e.open(MAX_SEAT, 600_000_000);
+    let o = e.open(MAX_SEAT, 200_000_000);
     let user = e.user(2);
     e.join(&user, &o.presale, MAX_SEAT);
-    e.commit(&user, &o.presale, 600_000_000);
+    e.commit(&user, &o.presale, 200_000_000);
     expire(&mut e, &o);
     let bot = e.bot.insecure_clone();
     let c = o.creator.insecure_clone();
@@ -190,12 +183,15 @@ fn expired_refunds_every_deposit_in_full() {
 fn failed_refunds_settled_and_unsettled_seats() {
     let mut e = Env::new(false);
     let (o, buyers) = e.open_full();
+    let n = buyers.len();
+    // all but three settled before the launch failed (7 of 10 in a 10 SOL pool)
+    let k = n as u64 - 3;
     let bot = e.bot.insecure_clone();
-    let settled: Vec<&Keypair> = buyers[..7].iter().collect();
+    let settled: Vec<&Keypair> = buyers[..k as usize].iter().collect();
     settle(&mut e, &bot, &o, &settled);
     let p = read_presale(&e.svm, &o.presale);
-    let share = TX_FEE / 7;
-    assert_eq!((p.settled_sum, p.fees_paid), (7 * MAX_SEAT, 7 * share));
+    let share = TX_FEE / k;
+    assert_eq!((p.settled_sum, p.fees_paid), (k * FULL_SEAT, k * share));
 
     // no launch within GRACE
     let bot2 = e.bot.insecure_clone();
@@ -208,30 +204,30 @@ fn failed_refunds_settled_and_unsettled_seats() {
     let u = &buyers[0];
     let (u0, s0) = (lamports(&e.svm, &u.pubkey()), lamports(&e.svm, &seat(&o, u)));
     settle(&mut e, &bot, &o, &[u]);
-    let owed = MAX_SEAT - (7 * share * MAX_SEAT).div_ceil(7 * MAX_SEAT);
+    let owed = FULL_SEAT - (k * share * FULL_SEAT).div_ceil(k * FULL_SEAT);
     assert_eq!(lamports(&e.svm, &u.pubkey()), u0 + s0 + owed - TX_FEE);
 
     // an unsettled seat never left its escrow
-    let v = &buyers[9];
+    let v = &buyers[n - 1];
     let (v0, t0) = (lamports(&e.svm, &v.pubkey()), lamports(&e.svm, &seat(&o, v)));
     settle(&mut e, &bot, &o, &[v]);
     assert_eq!(lamports(&e.svm, &v.pubkey()), v0 + t0 - TX_FEE);
 
     // everyone else, then the presale holds only its rent and rounding dust
-    let rest: Vec<&Keypair> = buyers[1..9].iter().collect();
+    let rest: Vec<&Keypair> = buyers[1..n - 1].iter().collect();
     settle(&mut e, &bot, &o, &rest);
     let p = read_presale(&e.svm, &o.presale);
-    assert_eq!(p.seats_refunded, 10);
+    assert_eq!(p.seats_refunded, n as u64);
     let left = lamports(&e.svm, &o.presale) - rent(&e.svm, PRESALE_LEN);
-    assert!(left < 10, "dust {left}");
+    assert!(left < n as u64, "dust {left}");
 }
 
 #[test]
 fn the_home_guard_blocks_delegated_accounts() {
     let mut e = Env::new(false);
-    let (o, ones, _, _) = full_with_excess(&mut e);
+    let (o, others, _, _) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
-    let (a, b) = (&ones[0], &ones[1]);
+    let (a, b) = (&others[0], &others[1]);
 
     // inside the ER a delegated seat looks program-owned, but its record exists on Solana
     fake_record(&mut e.svm, &seat(&o, a));
@@ -250,7 +246,7 @@ fn the_home_guard_blocks_delegated_accounts() {
     ok(send(&mut e.svm, &bot, &[], &[ix]), "home again");
 
     // a delegated seat
-    let c = &ones[2];
+    let c = &others[2];
     fake_delegate(&mut e.svm, &seat(&o, c));
     let ix = ix_settle_seat(&bot.pubkey(), &seat(&o, c), &c.pubkey(), &o.presale);
     assert_err(send(&mut e.svm, &bot, &[], &[ix]), E_NOT_HOME, "delegated seat");
@@ -259,9 +255,9 @@ fn the_home_guard_blocks_delegated_accounts() {
 #[test]
 fn a_fake_record_address_is_refused() {
     let mut e = Env::new(false);
-    let (o, ones, _, _) = full_with_excess(&mut e);
+    let (o, others, _, _) = full_with_excess(&mut e);
     let bot = e.bot.insecure_clone();
-    let u = &ones[0];
+    let u = &others[0];
     let mut ix = ix_settle_seat(&bot.pubkey(), &seat(&o, u), &u.pubkey(), &o.presale);
     ix.accounts[2].pubkey = Address::new_unique(); // an empty account that isn't the record
     assert_err(send(&mut e.svm, &bot, &[], &[ix]), E_BAD_ACCOUNT, "fake seat record");

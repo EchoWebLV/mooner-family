@@ -91,16 +91,45 @@ impl Env {
         ok(self.try_commit(user, presale, amount), "set_commit");
     }
 
-    /// Opens with the creator at 1 SOL and fills with 9 more 1-SOL buyers -> FULL.
-    /// Returns the opened presale and every buyer, creator first.
+    /// Opens with the creator at FULL_SEAT and fills with more FULL_SEAT buyers -> FULL
+    /// (FULL_SEATS seats in all). Returns the opened presale and every buyer, creator first.
     pub fn open_full(&mut self) -> (Opened, Vec<Keypair>) {
-        let o = self.open(MAX_SEAT, MAX_SEAT);
+        let o = self.open(FULL_SEAT, FULL_SEAT);
         let mut buyers = vec![o.creator.insecure_clone()];
-        for _ in 0..9 {
+        for _ in 1..FULL_SEATS {
             let u = self.user(2);
-            self.join(&u, &o.presale, MAX_SEAT);
-            self.commit(&u, &o.presale, MAX_SEAT);
+            self.join(&u, &o.presale, FULL_SEAT);
+            self.commit(&u, &o.presale, FULL_SEAT);
             buyers.push(u);
+        }
+        assert_eq!(read_presale(&self.svm, &o.presale).state, FULL);
+        (o, buyers)
+    }
+
+    /// FULL at uneven commits: the creator and plain buyers at FULL_SEAT, then X and Y
+    /// split the last seats between them, each committing less than it deposited (X
+    /// deposits MAX_SEAT, Y somewhere between). 10 SOL pool: creator 1, eight at 1, X 0.5
+    /// of 1, Y 0.5 of 0.8. 0.5 SOL pool: creator 0.1, one at 0.1, X 0.15 of 0.5, Y 0.15 of
+    /// 0.36. Returns (buyer, commit), creator first, X and Y last.
+    pub fn open_full_uneven(&mut self) -> (Opened, Vec<(Keypair, u64)>) {
+        // X and Y each take half of the last k standard seats: the fewest k that gives a
+        // valid commit other than FULL_SEAT
+        let k = (1..FULL_SEATS as u64)
+            .find(|k| {
+                let half = k * FULL_SEAT / 2;
+                (k * FULL_SEAT).is_multiple_of(2 * STEP) && half >= MIN_SEAT && half <= MAX_SEAT && half != FULL_SEAT
+            })
+            .expect("an uneven split of the last seats");
+        let half = k * FULL_SEAT / 2;
+        let y_deposit = half + (MAX_SEAT - half) * 3 / 5 / STEP * STEP;
+        let o = self.open(FULL_SEAT, FULL_SEAT);
+        let mut buyers = vec![(o.creator.insecure_clone(), FULL_SEAT)];
+        let plain = std::iter::repeat_n((FULL_SEAT, FULL_SEAT), FULL_SEATS - 1 - k as usize);
+        for (deposit, commit) in plain.chain([(MAX_SEAT, half), (y_deposit, half)]) {
+            let u = self.user(2);
+            self.join(&u, &o.presale, deposit);
+            self.commit(&u, &o.presale, commit);
+            buyers.push((u, commit));
         }
         assert_eq!(read_presale(&self.svm, &o.presale).state, FULL);
         (o, buyers)

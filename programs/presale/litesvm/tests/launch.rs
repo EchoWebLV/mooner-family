@@ -76,8 +76,18 @@ fn the_launch_tx_buys_at_the_floor_and_settles() {
     let size = tx_size(&bot, &e.launch_ixs(&o, 1));
     assert!(size <= PACKET, "launch tx is {size} bytes");
 
+    let sizes = e.launch_sizes(&o);
+    let cost = LAUNCH_TX_FEE + sizes.iter().map(|l| rent(&e.svm, *l)).sum::<u64>();
+    let p0 = read_presale(&e.svm, &o.presale);
     let meta = e.launch(&o);
     println!("launch tx: {size} bytes, {} CU, fee {}", meta.compute_units_consumed, meta.fee);
+    println!(
+        "pot {} SOL, {} seats: sizes {sizes:?}, cost {cost}, reserve {}, settle fees {}, released {released}",
+        TARGET as f64 / SOL as f64,
+        p0.seats_committed,
+        p0.seats_committed * (rent(&e.svm, vault_len) + TX_FEE),
+        p0.fees_paid
+    );
 
     let p = read_presale(&e.svm, &o.presale);
     assert_eq!((p.state, p.released, p.pot), (SETTLED, released, bot));
@@ -91,7 +101,9 @@ fn the_launch_tx_buys_at_the_floor_and_settles() {
     let fee = released - pool.quote_reserve;
     assert_eq!(fee, released.div_ceil(100), "the pot's buy paid the 1% floor");
     assert_eq!(pool.protocol_quote_fee + pool.partner_quote_fee + pool.creator_quote_fee, fee);
-    assert_eq!(pool.partner_quote_fee, pool.creator_quote_fee, "Mooner and fee_dest split the trading fee");
+    // half each; DBC rounds the creator's half down, so an odd fee leaves Mooner 1 lamport more
+    let (partner, creator) = (pool.partner_quote_fee, pool.creator_quote_fee);
+    assert!(partner == creator || partner == creator + 1, "Mooner and fee_dest split the trading fee: {partner} vs {creator}");
 
     assert_eq!(lamports(&e.svm, &bot), b0 + LAUNCH_TX_FEE - meta.fee, "the bot is paid back its costs, no more");
     let reserve = p.seats_committed * (rent(&e.svm, vault_len) + TX_FEE);
@@ -205,7 +217,7 @@ fn only_the_bot_releases() {
 fn release_waits_for_every_seat() {
     let mut e = Env::new(false);
     let (o, buyers) = e.open_full();
-    e.settle_all(&o.presale, &buyers[..9]);
+    e.settle_all(&o.presale, &buyers[..buyers.len() - 1]);
     let ixs = e.launch_ixs(&o, 1);
     assert_err(try_launch(&mut e, &o, &ixs, &[]), E_NOT_ALL_SETTLED, "one seat still in the ER");
 }

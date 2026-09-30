@@ -207,7 +207,7 @@ pub fn fee_share(same_tag: u64) -> u64 {
 
 // ---- pure money math ----
 
-/// 0.1-1 SOL in 0.01 steps.
+/// MIN_SEAT to MAX_SEAT in STEP steps.
 pub fn valid_seat(amount: u64) -> bool {
     (MIN_SEAT..=MAX_SEAT).contains(&amount) && amount.is_multiple_of(STEP)
 }
@@ -251,22 +251,22 @@ mod tests {
     #[test]
     fn seat_sizes() {
         assert!(valid_seat(100_000_000));
-        assert!(valid_seat(1_000_000_000));
-        assert!(valid_seat(550_000_000));
+        assert!(valid_seat(500_000_000));
+        assert!(valid_seat(270_000_000));
         assert!(!valid_seat(90_000_000));
-        assert!(!valid_seat(1_010_000_000));
+        assert!(!valid_seat(510_000_000));
         assert!(!valid_seat(105_000_000));
         assert!(!valid_seat(0));
     }
 
     #[test]
     fn room_cut() {
-        // 9.7 SOL in by others: a 1 SOL commit is cut to 0.3
-        assert_eq!(cut_to_room(1_000_000_000, 0, 9_700_000_000), Some(300_000_000));
+        // 0.2 SOL in by others: a 0.5 SOL commit is cut to the 0.3 left
+        assert_eq!(cut_to_room(500_000_000, 0, 200_000_000), Some(300_000_000));
         // lowering is never cut
-        assert_eq!(cut_to_room(200_000_000, 500_000_000, 9_500_000_000), Some(200_000_000));
+        assert_eq!(cut_to_room(200_000_000, 300_000_000, 400_000_000), Some(200_000_000));
         // fits
-        assert_eq!(cut_to_room(500_000_000, 0, 1_000_000_000), Some(500_000_000));
+        assert_eq!(cut_to_room(300_000_000, 0, 200_000_000), Some(300_000_000));
         // no room to raise
         assert_eq!(cut_to_room(500_000_000, 0, TARGET), None);
     }
@@ -292,7 +292,8 @@ mod tests {
 
     #[test]
     fn token_shares_sum_to_total() {
-        let commits = [1_000_000_000u64, 3_000_000_000, 6_000_000_000];
+        let commits = [100_000_000u64, 150_000_000, 250_000_000]; // sum to TARGET
+        assert_eq!(commits.iter().sum::<u64>(), TARGET);
         let total = 123_456_789_012u64;
         let mut claimed = 0;
         for (i, c) in commits.iter().enumerate() {

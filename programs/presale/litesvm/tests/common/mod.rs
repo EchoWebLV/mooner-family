@@ -27,15 +27,26 @@ pub const DBC_SO: &str = "fixtures/dbc.so";
 pub const SOL: u64 = 1_000_000_000;
 
 // ---- program numbers (mirror consts.rs, mainnet build) ----
-pub const TARGET: u64 = 10_000_000_000;
+// 0.5 SOL for testing since 2026-09-30; was 10 SOL (TARGET) and 1 SOL (MAX_SEAT)
+pub const TARGET: u64 = 500_000_000;
 pub const MIN_SEAT: u64 = 100_000_000;
-pub const MAX_SEAT: u64 = 1_000_000_000;
+pub const MAX_SEAT: u64 = 500_000_000;
 pub const STEP: u64 = 10_000_000;
 pub const DURATION: i64 = 3_600;
 pub const GRACE: i64 = 900;
 pub const TX_FEE: u64 = 10_000;
 pub const LAUNCH_TX_FEE: u64 = 100_000;
 pub const LAUNCH_COST_CAP: u64 = 50_000_000;
+
+/// The seat size of the standard full presale (Env::open_full): a tenth of the pool, within
+/// the seat limits. 10 SOL pool: ten seats of 1 SOL. 0.5 SOL pool: five seats of 0.1 SOL.
+pub const FULL_SEAT: u64 = {
+    let s = TARGET / 10 / STEP * STEP;
+    if s < MIN_SEAT { MIN_SEAT } else if s > MAX_SEAT { MAX_SEAT } else { s }
+};
+const _: () = assert!(TARGET % FULL_SEAT == 0, "the standard seats must fill the pool exactly");
+/// Seats in the standard full presale, the creator's included.
+pub const FULL_SEATS: usize = (TARGET / FULL_SEAT) as usize;
 
 // ---- tags ----
 pub const IX_INIT_CONFIG: u8 = 0;
