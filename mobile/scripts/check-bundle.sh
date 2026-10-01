@@ -1,7 +1,9 @@
 #!/bin/sh
-# Bundles the app for Android and checks it holds exactly one @solana/web3.js and nothing
-# from engine/node_modules (see metro.config.js). Module resolution is the same as in the
-# release build; minification and the Hermes compile are not (--dev --no-bytecode).
+# Bundles the app for Android and checks it holds exactly one @solana/web3.js, nothing
+# from engine/node_modules, and this checkout's own screens: app/ files under this mobile/,
+# never another checkout's from a cache they shared (see metro.config.js). Module resolution
+# is the same as in the release build; minification and the Hermes compile are not
+# (--dev --no-bytecode).
 set -e
 cd "$(dirname "$0")/.."
 rm -rf dist
@@ -15,5 +17,9 @@ echo "web3.js copies: $copies; files from engine/node_modules: $stray"
 ROOT=$(pwd -P)
 mine=$(grep -oF "\"$ROOT/app/" "$B" | wc -l | tr -d ' ')
 echo "app/ entries from this checkout: $mine"
-grep -qF "\"$ROOT/app/presale/[key].js\"" "$B" || { echo "no app/presale/[key].js from $ROOT in the bundle: another checkout's cached screens (see metro.config.js)"; exit 1; }
+grep -qF "\"$ROOT/app/presale/[key].js\"" "$B" || {
+  echo "no app/presale/[key].js from $ROOT in the bundle: another checkout's cached screens (see metro.config.js); a .metro-cache copied along with mobile/ does this too"
+  echo "clear it with: npx expo export --platform android --clear (or rm -rf .metro-cache)"
+  exit 1
+}
 [ "$copies" = 1 ] && [ "$stray" = 0 ] && [ "$mine" != 0 ]

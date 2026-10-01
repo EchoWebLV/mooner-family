@@ -8,8 +8,13 @@ const { getDefaultConfig } = require("expo/metro-config");
 
 const config = getDefaultConfig(__dirname);
 // Expo's default store (a FileStore in $TMPDIR/metro-cache) is shared by every checkout
-// of this repo; the same class rooted here keeps each checkout's cache its own
-config.cacheStores = [new (config.cacheStores[0].constructor)({ root: path.join(__dirname, ".metro-cache") })];
+// of this repo; the same class rooted here keeps each checkout's cache its own.
+// .metro-cache never shrinks (clear it as scripts/check-bundle.sh says), and copying mobile/ copies it.
+const stores = config.cacheStores;
+if (!(Array.isArray(stores) && stores.length === 1 && stores[0]?.constructor?.name === "FileStore")) {
+  throw new Error("metro.config.js: Expo's default cacheStores is no longer one FileStore, so the per-checkout .metro-cache can't be set up; update metro.config.js");
+}
+config.cacheStores = [new stores[0].constructor({ root: path.join(__dirname, ".metro-cache") })];
 const engine = path.resolve(__dirname, "../engine");
 const fromApp = path.join(__dirname, "index.js");
 
