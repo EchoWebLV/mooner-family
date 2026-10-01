@@ -1,12 +1,13 @@
 // Mooner pictures on the phone. The web app draws them with three.js; the phone runs that
 // same renderer in a hidden WebView on the app server's pfp.html (web/src/pfp-page.ts) and
-// keeps each picture as a PNG in the app's cache folder (cache.js). The WebView is mounted
-// only while a picture is missing from the folder. Until a picture is there, or when the page
-// can't draw (a 404 before the page is deployed), faces show the fallback.
+// keeps each picture as a PNG in the app's cache folder, under pfp-v<renderer version>/
+// (cache.js). The WebView is mounted only while a picture is missing, and once a run to hear
+// the renderer version. Until a picture is there, or when the page can't draw (a 404 before
+// the page is deployed), faces show the fallback.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { PixelRatio, View } from "react-native";
 import { WebView } from "react-native-webview";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { useStore } from "zustand";
 import { store } from "../app";
 import { BASE } from "../config";
@@ -15,36 +16,39 @@ import { makePfpCache, pfpKey } from "./cache";
 const PAGE = `${BASE}/pfp.html`;
 /** Pixel sizes the page draws at. */
 const SIZES = [128, 256, 512];
-/** Where the renderer version of the kept pictures is noted (not a picture name: forget()
- *  never deletes it). */
-const VERSION_FILE = "pfp-version";
+/** How long after the app starts the page is loaded to hear its renderer version, when no
+ *  picture was missing. */
+const CHECK_MS = 30_000;
 
-const inCache = (name) => new File(Paths.cache, name);
-
-function savedVersion() {
-  try {
-    const file = inCache(VERSION_FILE);
-    return (file.exists && file.textSync().trim()) || null;
-  } catch {
-    return null;
-  }
-}
+// paths in the cache folder, as cache.js gives them: "pfp-v17/pfp-….png", "pfp-v17", ""
+const fileAt = (path) => new File(Paths.cache, ...path.split("/"));
+const folderAt = (path) => (path ? new Directory(Paths.cache, ...path.split("/")) : Paths.cache);
+const nameOf = (uri) => uri.replace(/\/$/, "").split("/").pop();
 
 const pictures = makePfpCache({
   origin: BASE,
-  version: savedVersion(),
-  saveVersion: (v) => inCache(VERSION_FILE).write(v),
   files: {
-    uri: (name) => inCache(name).uri,
-    exists: (name) => inCache(name).exists,
-    write: (name, base64) => inCache(name).write(base64, { encoding: "base64" }),
-    rename(from, to) {
-      const old = inCache(to);
-      if (old.exists) old.delete();
-      inCache(from).rename(to);
+    uri: (path) => fileAt(path).uri,
+    exists: (path) => fileAt(path).exists,
+    list(path) {
+      const folder = folderAt(path);
+      return folder.exists ? folder.list().map((entry) => nameOf(entry.uri)) : [];
     },
-    remove(name) {
-      const file = inCache(name);
+    write(path, base64) {
+      const [folder] = path.split("/");
+      if (path.includes("/")) folderAt(folder).create({ intermediates: true, idempotent: true });
+      fileAt(path).write(base64, { encoding: "base64" });
+    },
+    rename(from, to) {
+      const old = fileAt(to);
+      if (old.exists) old.delete();
+      fileAt(from).rename(nameOf(to));
+    },
+    remove(path) {
+      if (!path) return; // never the cache folder itself
+      const folder = folderAt(path);
+      if (folder.exists) return folder.delete(); // deletes what is in it too
+      const file = fileAt(path);
       if (file.exists) file.delete();
     },
   },
@@ -62,6 +66,11 @@ export function PfpRenderer() {
     pictures.open((text) => ref.current?.postMessage(text));
     return () => pictures.close();
   }, [show, mount]);
+
+  useEffect(() => {
+    const t = setTimeout(pictures.check, CHECK_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   if (!show) return null;
   return (

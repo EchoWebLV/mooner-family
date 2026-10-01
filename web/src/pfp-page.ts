@@ -3,8 +3,8 @@
 // pictures again when it changes); the app posts { id, wallet, pfp | null, px }, the page
 // answers { id, png } (a data URL) or { id, error }. A wallet with no saved picture gets its
 // default (handlePfp), as on the web. renderPfp draws one picture at a time (its own
-// queue), so asks may overlap.
-import { renderPfp } from './lib/pfp/render'
+// queue), so asks may overlap. The renderer (three.js) is fetched with the first ask: a page
+// loaded only to say its version doesn't load it.
 import { handlePfp, sanitizePfp } from './lib/pfp/traits'
 import { RENDER_VERSION } from './lib/pfp/version'
 
@@ -12,6 +12,8 @@ type Ask = { id: string; wallet: string; pfp: unknown; px: number }
 type RNWindow = Window & { ReactNativeWebView?: { postMessage(s: string): void } }
 
 const reply = (msg: object) => (window as RNWindow).ReactNativeWebView?.postMessage(JSON.stringify(msg))
+
+let renderer: Promise<typeof import('./lib/pfp/render')> | undefined
 
 const toDataUrl = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
@@ -24,6 +26,12 @@ const toDataUrl = (blob: Blob) =>
 async function draw(ask: Ask) {
   try {
     const pfp = ask.pfp ? sanitizePfp(ask.pfp) : handlePfp(ask.wallet)
+    // a chunk that didn't load is fetched again on the next ask
+    renderer ??= import('./lib/pfp/render').catch((e) => {
+      renderer = undefined
+      throw e
+    })
+    const { renderPfp } = await renderer
     reply({ id: ask.id, png: await toDataUrl(await renderPfp(pfp, ask.px)) })
   } catch (e) {
     reply({ id: ask.id, error: e instanceof Error ? e.message : String(e) })

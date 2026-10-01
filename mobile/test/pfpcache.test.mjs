@@ -1,4 +1,5 @@
-// Mooner pictures: cache file names, and the queue in front of the page that draws them.
+// Mooner pictures: cache file names, the folders they are kept in, and the queue in front of
+// the page that draws them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makePfpCache, pfpKey } from "../src/pfp/cache.js";
@@ -8,6 +9,8 @@ const V = "W2222222222222222222222222222222222222222222";
 const PFP = { skin: "moon", eyes: "stars", mouth: "grin", head: "none", face: "none", outfit: "tee", neck: "none", aura: "none", bg: "night" };
 const PNG = "data:image/png;base64,";
 const ORIGIN = "https://app.mooner.family";
+/** Where picture `name` drawn by renderer `v` is kept in the cache folder. */
+const at = (name, v = "17") => `pfp-v${v}/${name}`;
 
 test("the same picture gets the same name, a short png file name", () => {
   const name = pfpKey(W, PFP, 128, "17");
@@ -37,33 +40,42 @@ test("no saved picture (the default) has one stable name, apart from any traits"
 });
 
 /**
- * A cache over a fake folder and page. `sent` holds what was posted, `answer(msg)` replies
- * from the page's origin, `got` collects the uris handed out. Writes throw while `full.on`.
- * console.warn is caught in `warned`.
+ * A cache over a fake cache folder and page. `disk` maps file paths to contents, `dirs` holds
+ * the folders; the folder of renderer `version` is there at the start (null: none). `sent`
+ * holds what was posted, `answer(msg)` replies from the page's origin, `got` collects the uris
+ * handed out. Writes throw while `full.on`. console.warn is caught in `warned`.
  */
 function rig(t, { onDisk = [], version = "17", ...opts } = {}) {
   const warned = [];
   t.mock.method(console, "warn", (...args) => warned.push(args.join(" ")));
-  const disk = new Map(onDisk.map((n) => [n, "x"]));
+  const disk = new Map(onDisk.map((p) => [p, "x"]));
+  const dirs = new Set([...(version ? [`pfp-v${version}`] : []), ...onDisk.filter((p) => p.includes("/")).map((p) => p.split("/")[0])]);
   const full = { on: false };
   const ops = [];
   const files = {
-    uri: (name) => `file:///cache/${name}`,
-    exists: (name) => disk.has(name),
-    write(name, base64) {
+    uri: (path) => `file:///cache/${path}`,
+    exists: (path) => disk.has(path),
+    list: (path) =>
+      path
+        ? [...disk.keys()].filter((p) => p.startsWith(`${path}/`)).map((p) => p.slice(path.length + 1))
+        : [...dirs, ...[...disk.keys()].filter((p) => !p.includes("/"))],
+    write(path, base64) {
       if (full.on) throw new Error("disk full");
-      ops.push(`write ${name}`);
-      disk.set(name, base64);
+      ops.push(`write ${path}`);
+      if (path.includes("/")) dirs.add(path.split("/")[0]);
+      disk.set(path, base64);
     },
     rename(from, to) {
       ops.push(`rename ${from} ${to}`);
       disk.set(to, disk.get(from));
       disk.delete(from);
     },
-    remove: (name) => void disk.delete(name),
+    remove(path) {
+      dirs.delete(path);
+      for (const p of disk.keys()) if (p === path || p.startsWith(`${path}/`)) disk.delete(p);
+    },
   };
-  const saved = [];
-  const cache = makePfpCache({ files, origin: ORIGIN, version, saveVersion: (v) => saved.push(v), readyMs: 1_000, drawMs: 2_000, idleMs: 60_000, ...opts });
+  const cache = makePfpCache({ files, origin: ORIGIN, readyMs: 1_000, drawMs: 2_000, idleMs: 60_000, ...opts });
   const sent = [];
   const got = [];
   let changes = 0;
@@ -71,8 +83,8 @@ function rig(t, { onDisk = [], version = "17", ...opts } = {}) {
   const open = () => cache.open((text) => sent.push(JSON.parse(text)));
   const answer = (msg, from = `${ORIGIN}/pfp.html`) => cache.message(JSON.stringify(msg), from);
   const want = (wallet, pfp, px) => cache.want(wallet, pfp, px, (uri) => got.push(uri));
-  const uri = (wallet, pfp, px, v = cache.version()) => `file:///cache/${pfpKey(wallet, pfp, px, v)}`;
-  return { cache, disk, full, ops, saved, sent, got, warned, open, answer, want, uri, changes: () => changes };
+  const uri = (wallet, pfp, px, v = cache.version()) => `file:///cache/${at(pfpKey(wallet, pfp, px, v), v)}`;
+  return { cache, disk, dirs, full, ops, sent, got, warned, open, answer, want, uri, changes: () => changes };
 }
 
 test("messages count only from the page's origin or its URL", (t) => {
@@ -92,7 +104,7 @@ test("messages count only from the page's origin or its URL", (t) => {
 });
 
 test("a picture on disk is handed out at once, and no page is wanted", (t) => {
-  const r = rig(t, { onDisk: [pfpKey(W, PFP, 128, "17")] });
+  const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
   assert.equal(r.cache.cached(pfpKey(W, PFP, 128, "17")), r.uri(W, PFP, 128));
   r.want(W, PFP, 128);
   assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
@@ -112,14 +124,14 @@ test("a missing picture wants the page; asks wait for ready, go one at a time, a
   r.answer({ ready: true, version: "17" });
   assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: PFP, px: 128 }]);
   r.answer({ id: "1", png: `${PNG}AAAA` });
-  const name = pfpKey(W, PFP, 128, "17");
-  assert.deepEqual(r.ops, [`write ${name}.part`, `rename ${name}.part ${name}`]);
-  assert.equal(r.disk.get(name), "AAAA");
+  const path = at(pfpKey(W, PFP, 128, "17"));
+  assert.deepEqual(r.ops, [`write ${path}.part`, `rename ${path}.part ${path}`]);
+  assert.equal(r.disk.get(path), "AAAA");
   assert.deepEqual(r.got, [r.uri(W, PFP, 128), r.uri(W, PFP, 128)]);
   assert.deepEqual(r.sent[1], { id: "2", wallet: W, pfp: null, px: 256 });
   r.answer({ id: "2", png: `${PNG}BBBB` });
   assert.equal(r.got[2], r.uri(W, null, 256));
-  assert.deepEqual(r.saved, [], "the same version isn't saved again");
+  assert.equal(r.changes(), 1, "the same version: no rename");
 });
 
 test("a picture the page couldn't draw is logged, tried once this run, and the next one is drawn", (t) => {
@@ -155,7 +167,7 @@ test("a picture nobody waits for any more is dropped unless it is being drawn", 
   const offLate = r.want(V, PFP, 256);
   offLate(); // queued, nobody waits: dropped
   r.answer({ id: "1", png: `${PNG}AAAA` });
-  assert.equal(r.disk.has(pfpKey(W, null, 128, "17")), true);
+  assert.equal(r.disk.has(at(pfpKey(W, null, 128, "17"))), true);
   assert.deepEqual(r.sent.map((m) => [m.wallet, m.px]), [[W, 128], [V, 128]]);
   r.answer({ id: "2", png: `${PNG}BBBB` });
   assert.deepEqual(r.sent.map((m) => [m.wallet, m.pfp && "saved"]), [[W, null], [V, null], [W, "saved"]]);
@@ -185,25 +197,48 @@ test("the page is let go after a minute with nothing to draw", (t) => {
   assert.deepEqual(r.sent.at(-1), { id: "3", wallet: W, pfp: null, px: 512 });
 });
 
-test("a new renderer version is saved, renames waiting pictures and forgets the old ones", (t) => {
+test("a new renderer version renames waiting pictures and deletes the old version's folder", (t) => {
   const old = pfpKey(W, PFP, 128, "16");
-  const r = rig(t, { onDisk: [old, pfpKey(V, null, 128, "17")], version: "16" });
-  assert.equal(r.cache.cached(old), `file:///cache/${old}`);
+  const r = rig(t, { onDisk: [at(old, "16")], version: "16" });
+  assert.equal(r.cache.version(), "16", "the folder on disk gives the version");
+  assert.equal(r.cache.cached(old), `file:///cache/${at(old, "16")}`);
   r.want(W, null, 128);
-  r.want(V, null, 128); // drawn by 17 already (the saved version was lost)
   r.open();
   r.answer({ ready: true, version: 17 });
-  assert.deepEqual(r.saved, ["17"]);
   assert.equal(r.cache.version(), "17");
   assert.equal(r.changes(), 2, "wanted, then the version");
-  assert.deepEqual(r.got, [r.uri(V, null, 128, "17")]);
+  assert.deepEqual([...r.dirs], [], "the 16 folder is gone");
+  assert.equal(r.disk.size, 0);
   assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: null, px: 128 }]);
   r.answer({ id: "1", png: `${PNG}AAAA` });
-  assert.equal(r.disk.has(pfpKey(W, null, 128, "17")), true);
-  assert.equal(r.got[1], r.uri(W, null, 128, "17"));
-  r.want(W, PFP, 128); // its 16 picture is old now: drawn again
+  assert.equal(r.disk.has(at(pfpKey(W, null, 128, "17"))), true);
+  assert.deepEqual(r.got, [r.uri(W, null, 128, "17")]);
+  r.want(W, PFP, 128); // its 16 picture is gone: drawn again
   assert.equal(r.sent.at(-1).wallet, W);
   assert.equal(r.sent.length, 2);
+});
+
+test("with several version folders the version is heard from the page; one already drawn is used", (t) => {
+  const done = at(pfpKey(V, null, 128, "17"));
+  const r = rig(t, { onDisk: [at(pfpKey(V, null, 128, "16"), "16"), done], version: null });
+  assert.equal(r.cache.version(), null);
+  assert.equal(r.cache.cached(pfpKey(V, null, 128, "17")), null, "nothing is read before the version is known");
+  r.want(V, null, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.got, [`file:///cache/${done}`]);
+  assert.deepEqual(r.sent, []);
+  assert.deepEqual([...r.dirs], ["pfp-v17"]);
+});
+
+test("a page that says no version counts as version 0", (t) => {
+  const r = rig(t, { version: null });
+  r.want(W, null, 128);
+  r.open();
+  r.answer({ ready: true });
+  assert.equal(r.cache.version(), "0");
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.deepEqual(r.got, [`file:///cache/${at(pfpKey(W, null, 128, "0"), "0")}`]);
 });
 
 test("a page that never says ready is down: logged, the WebView let go, later asks ignored", (t) => {
@@ -217,6 +252,8 @@ test("a page that never says ready is down: logged, the WebView let go, later as
   assert.equal(r.cache.wanted(), false);
   assert.deepEqual(r.warned, ["pfp page down: the picture page didn't load"]);
   r.want(W, null, 128);
+  r.cache.check();
+  assert.equal(r.cache.wanted(), false, "no version check once down");
   r.cache.open(() => assert.fail("no page once down"));
   r.answer({ ready: true, version: "17" });
   assert.deepEqual(r.sent, []);
@@ -295,15 +332,88 @@ test("a write that fails fails that picture only", (t) => {
   assert.deepEqual(r.got, [r.uri(W, null, 128)]);
 });
 
-test("a picture that wouldn't load is deleted and drawn again next time", (t) => {
+test("a picture that wouldn't load is deleted from this version's folder and drawn again", (t) => {
   const name = pfpKey(W, PFP, 128, "17");
-  const r = rig(t, { onDisk: [name, "pfp-version"] });
+  const r = rig(t, { onDisk: [at(name), name, "pfp-version"] });
   r.want(W, PFP, 128);
   r.cache.forget(name);
-  r.cache.forget("pfp-version"); // not a picture: kept
-  assert.deepEqual([...r.disk.keys()], ["pfp-version"]);
+  r.cache.forget("pfp-version"); // not a picture
+  r.cache.forget("../pfp-version");
+  assert.deepEqual([...r.disk.keys()], [name, "pfp-version"], "only the one in pfp-v17");
   r.want(W, PFP, 128);
   r.open();
   r.answer({ ready: true, version: "17" });
   assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: PFP, px: 128 }]);
+});
+
+test("the first page of a run clears out other versions, the first build's loose files and half-written pictures", (t) => {
+  const kept = at(pfpKey(W, PFP, 128, "17"));
+  const loose = pfpKey(V, null, 128, "17");
+  const others = ["expo-image/x.png", "ImagePicker/a.jpg", "pfp-notes.txt"];
+  const r = rig(t, { onDisk: [kept, `${kept.slice(0, -4)}0.png.part`, loose, `${loose}.part`, "pfp-version", ...others] });
+  r.want(V, null, 256);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual([...r.disk.keys()].sort(), [kept, ...others].sort());
+  assert.deepEqual([...r.dirs].sort(), ["pfp-v17", "expo-image", "ImagePicker"].sort());
+  assert.equal(r.changes(), 1, "the same version: nothing renamed");
+});
+
+test("a phone with every picture on disk loads the page once, only to hear the version", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
+  r.want(W, PFP, 128);
+  assert.equal(r.cache.wanted(), false);
+  r.cache.check();
+  assert.equal(r.cache.wanted(), true);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent, [], "nothing to draw");
+  assert.equal(r.cache.version(), "17");
+  t.mock.timers.tick(59_999);
+  assert.equal(r.cache.wanted(), true);
+  t.mock.timers.tick(1);
+  assert.equal(r.cache.wanted(), false, "let go after idleMs");
+  r.cache.close();
+  r.cache.check();
+  assert.equal(r.cache.wanted(), false, "once a run");
+  assert.equal(r.changes(), 2);
+});
+
+test("a new version heard by the check renames every picture, so faces get them drawn again", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
+  let seen = null;
+  r.cache.subscribe(() => (seen = r.cache.version()));
+  r.want(W, PFP, 128);
+  r.cache.check();
+  r.open();
+  r.answer({ ready: true, version: "18" });
+  assert.equal(seen, "18", "faces hear the new version");
+  assert.deepEqual([...r.dirs], [], "the 17 folder is gone");
+  assert.equal(r.cache.cached(pfpKey(W, PFP, 128, "18")), null);
+  r.want(W, PFP, 128); // the face, asking under the new name
+  assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: PFP, px: 128 }]);
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.equal(r.got.at(-1), r.uri(W, PFP, 128, "18"));
+  assert.equal(r.got.at(-1), `file:///cache/pfp-v18/${pfpKey(W, PFP, 128, "18")}`);
+  t.mock.timers.tick(60_000);
+  assert.equal(r.cache.wanted(), false);
+  r.cache.close();
+  r.cache.check();
+  assert.equal(r.cache.wanted(), false);
+});
+
+test("the version check does nothing while the page is wanted anyway", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  const before = r.changes();
+  r.cache.check();
+  assert.equal(r.changes(), before);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  r.cache.check(); // heard this run already
+  assert.equal(r.cache.wanted(), true, "still in its idle minute");
+  assert.equal(r.changes(), before);
 });

@@ -1,7 +1,7 @@
 // Mooner pictures on the phone: a short file name for each (wallet, traits, size, renderer
-// version), and the queue in front of the page that draws them (PfpRenderer.js runs the web
-// app's renderer in a hidden WebView). Nothing here imports React Native, so it runs in Node
-// tests with fakes.
+// version), the folder they are kept in (one per renderer version), and the queue in front of
+// the page that draws them (PfpRenderer.js runs the web app's renderer in a hidden WebView).
+// Nothing here imports React Native, so it runs in Node tests with fakes.
 
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
@@ -11,6 +11,12 @@ const PNG = "data:image/png;base64,";
 const MAX_PNG = 2_000_000;
 /** What pfpKey names look like: forget() deletes nothing else. */
 const NAME = /^pfp-[0-9a-f]{24}\.png$/;
+/** The folder of the pictures one renderer version drew: pfp-v17. Its name is also where the
+ *  version is kept between runs. */
+const FOLDER = /^pfp-v(\d{1,9})$/;
+const folderOf = (version) => `pfp-v${version}`;
+/** Left in the cache folder by the first phone build, which kept pictures loose. */
+const LOOSE = /^pfp-[0-9a-f]{24}\.png(\.part)?$|^pfp-version$/;
 
 /** `v` with every object's keys in order, so the same traits always give the same JSON. */
 const sorted = (v) => {
@@ -32,11 +38,13 @@ export function pfpKey(wallet, pfp, px, version) {
  * crashed, it got stuck) nothing more is drawn until the app starts again. Faces without a
  * picture show their fallback.
  *
- * files:       { uri(name), exists(name), write(name, base64), rename(from, to), remove(name) }
- *              the folder pictures are kept in
+ * files:       the cache folder, by paths in it ("pfp-v17/pfp-….png"):
+ *              { uri(path), exists(path), list(path) (names in a folder, "" the cache folder
+ *              itself, [] if missing), write(path, base64) (makes its folder),
+ *              rename(from, to) (in one folder), remove(path) (a file or a whole folder) }
+ *              Pictures are kept in pfp-v<renderer version>/; the one such folder on disk at
+ *              the start gives the version (none or several: not known until the page says).
  * origin:      where the page is served; messages from anywhere else are ignored
- * version:     the renderer version the kept pictures were drawn with (null: not known);
- *              saveVersion(v) keeps the one the page reports when it differs
  * readyMs:     how long an opened page has to say it's ready
  * drawMs:      how long one picture may take; a page slower than this is stuck: down
  * idleMs:      how long the page stays wanted with nothing to draw
@@ -46,8 +54,6 @@ export function pfpKey(wallet, pfp, px, version) {
 export function makePfpCache({
   files,
   origin,
-  version = null,
-  saveVersion = () => {},
   readyMs = 20_000,
   drawMs = 20_000,
   idleMs = 60_000,
@@ -63,14 +69,28 @@ export function makePfpCache({
   let wanted = false;
   let idleTimer = null;
   let killed = false; // Android has stopped the page's process once already
+  let heard = false; // a page said its renderer version this run
   let ids = 0;
+  let version = versionOnDisk(); // the renderer version of the pictures on disk (null: not known)
 
   const emit = () => listeners.forEach((fn) => fn());
   const nameOf = (wallet, pfp, px) => pfpKey(wallet, pfp, px, version);
+  const pathOf = (name) => `${folderOf(version)}/${name}`;
+
+  function versionOnDisk() {
+    try {
+      const found = files.list("").flatMap((n) => FOLDER.exec(n)?.[1] ?? []);
+      return found.length === 1 ? found[0] : null;
+    } catch (e) {
+      console.warn("pfp:", e.message);
+      return null;
+    }
+  }
 
   /** The picture's file uri if it is on disk, else null. */
   function cached(name) {
-    if (!uris.has(name) && files.exists(name)) uris.set(name, files.uri(name));
+    if (version == null) return null;
+    if (!uris.has(name) && files.exists(pathOf(name))) uris.set(name, files.uri(pathOf(name)));
     return uris.get(name) ?? null;
   }
 
@@ -133,18 +153,14 @@ export function makePfpCache({
     }, idleMs);
   }
 
-  /** The page reports another renderer version: pictures kept so far are old. Waiting ones
-   *  get their new names (any already on disk under it is done). */
+  /** The page reports another renderer version: pictures kept so far are old, and deleted.
+   *  Waiting ones get their new names (any already on disk under it is done). */
   function newVersion(v) {
     version = v;
-    try {
-      saveVersion(v);
-    } catch (e) {
-      console.warn("pfp:", e.message);
-    }
     uris.clear();
     failed.clear();
     jobs.clear();
+    sweep();
     for (const job of queue.splice(0)) {
       job.name = nameOf(job.ask.wallet, job.ask.pfp, job.ask.px);
       const uri = cached(job.name);
@@ -155,6 +171,25 @@ export function makePfpCache({
       }
     }
     emit();
+  }
+
+  /** Deletes what other renderer versions left (their folders, and the first build's loose
+   *  files) and pictures left half-written in this version's folder. */
+  function sweep() {
+    const keep = folderOf(version);
+    const drop = (path) => {
+      try {
+        files.remove(path);
+      } catch (e) {
+        console.warn("pfp:", e.message);
+      }
+    };
+    try {
+      for (const n of files.list("")) if ((FOLDER.test(n) && n !== keep) || LOOSE.test(n)) drop(n);
+      for (const n of files.list(keep)) if (n.endsWith(".part")) drop(`${keep}/${n}`);
+    } catch (e) {
+      console.warn("pfp:", e.message);
+    }
   }
 
   /** A message from the page: JSON `text`, sent from `from`: the page's origin (WebViews
@@ -171,7 +206,12 @@ export function makePfpCache({
     if (m.ready) {
       clearTimeout(page.readyTimer);
       page.ready = true;
-      if (m.version != null && String(m.version) !== version) newVersion(String(m.version));
+      // a page without a version (the first build's) counts as version 0
+      const v = /^\d{1,9}$/.test(String(m.version)) ? String(m.version) : "0";
+      const first = !heard;
+      heard = true;
+      if (v !== version) newVersion(v);
+      else if (first) sweep();
       pump();
       idle();
       return;
@@ -186,9 +226,9 @@ export function makePfpCache({
       if (typeof m.png !== "string" || !m.png.startsWith(PNG)) throw new Error(String(m.error || "the page sent no picture"));
       if (m.png.length > MAX_PNG) throw new Error("the page sent a picture too big to keep");
       // a file under the picture's name is always whole: the app may be stopped mid-write
-      files.write(`${job.name}.part`, m.png.slice(PNG.length));
-      files.rename(`${job.name}.part`, job.name);
-      uri = files.uri(job.name);
+      files.write(pathOf(`${job.name}.part`), m.png.slice(PNG.length));
+      files.rename(pathOf(`${job.name}.part`), pathOf(job.name));
+      uri = files.uri(pathOf(job.name));
       uris.set(job.name, uri);
     } catch (e) {
       failed.add(job.name);
@@ -245,15 +285,25 @@ export function makePfpCache({
     emit();
   }
 
-  /** Deletes picture `name` (one that wouldn't load) so it is drawn again next time. */
+  /** Deletes picture `name` (one that wouldn't load) from this version's folder so it is
+   *  drawn again next time. */
   function forget(name) {
-    if (!NAME.test(name)) return;
+    if (!NAME.test(name) || version == null) return;
     uris.delete(name);
     try {
-      files.remove(name);
+      files.remove(pathOf(name));
     } catch (e) {
       console.warn("pfp:", e.message);
     }
+  }
+
+  /** Loads the page once this run when no picture was missing, only to hear its renderer
+   *  version: a phone with every picture on disk would keep old ones forever otherwise. A
+   *  new version renames every picture (version() changes), so faces ask for them again. */
+  function check() {
+    if (heard || down || wanted) return;
+    busy();
+    idle();
   }
 
   function subscribe(fn) {
@@ -270,6 +320,7 @@ export function makePfpCache({
     gone,
     fail,
     forget,
+    check,
     subscribe,
     wanted: () => wanted && !down,
     version: () => version,
