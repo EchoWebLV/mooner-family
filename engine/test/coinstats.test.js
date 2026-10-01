@@ -10,6 +10,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { poolAuthority } from "../src/pdas.js";
 import { dammPoolAuthority } from "../src/damm.js";
 import { Store } from "../server/store.js";
+import { FETCH_MS } from "../src/market.js";
 import { CHART_MS, TOP_REST_MS, chainReads, coinStats, statsConnection, supplyOf, topHolders } from "../server/coinstats.js";
 
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -296,4 +297,27 @@ test("top holders over an RPC that rate-limits them: a 429 is one call and null 
   assert.equal(forbidden.calls.getTokenSupply, 3, "the supply is still read");
   assert.equal(logs.length, 3);
   assert.match(logs[2], /403/);
+});
+
+test("an RPC that sends its headers and then never the body: the read settles with top and supply null within FETCH_MS", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const asked = [];
+  // headers at once, then not a byte (the stream ends only if the request is aborted)
+  const stall = async (url, init) => {
+    asked.push(JSON.parse(init.body).method);
+    const body = new ReadableStream({ start: (c) => init.signal?.addEventListener("abort", () => c.error(new Error("aborted"))) });
+    return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const chain = chainReads(statsConnection("http://rpc.test", stall), { log: () => {} });
+  const p = { row: { mint: MINT.toBase58(), presale: PRESALE.toBase58() }, pool: DBC_POOL, damm: null };
+  let s;
+  coinStats({ chain, p, store: new Store(":memory:"), fetch: routes({}), nowMs: NOW }).then((x) => (s = x));
+  for (let ms = 0; !s; ms += 500) {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    if (s) break;
+    assert.ok(ms <= FETCH_MS, `settled within FETCH_MS (${FETCH_MS / 1000} s) of fake time`);
+    t.mock.timers.tick(500);
+  }
+  assert.deepEqual([s.top, s.supply], [null, null]);
+  assert.deepEqual(asked.sort(), ["getTokenLargestAccounts", "getTokenSupply"], "each asked once, then given up");
 });

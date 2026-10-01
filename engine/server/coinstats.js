@@ -7,11 +7,12 @@
 // holders and the coin's supply (for their shares) are read from chain. A source that fails
 // leaves its figures null; the rest stand.
 // How long a read can take: the API calls and the chain reads all start at once. Each API
-// call goes through market.js getWithin (10 s at most). The chain reads go over a
-// connection of their own (statsConnection): no waiting out rate limits, and 10 s a
-// request. The supply is one request; the top holders are two in a row (the largest
-// accounts, then their owners), so 20 s at the very worst. An RPC that answers the largest
-// accounts 429 isn't asked again for 10 min, or ever after a 403 (chainReads).
+// call is one request through market.js getWithin: 10 s at most, its body included. The
+// chain reads go over the Feed's own connection (statsConnection): no waiting out rate
+// limits, and 10 s a request, its body included. The supply is one request; the top holders
+// are two in a row (the largest accounts, then their owners), so 20 s at the very worst,
+// and so is the whole read. An RPC that answers the largest accounts 429 isn't asked again
+// for 10 min, or ever after a 403 (chainReads).
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import { poolAuthority } from "../src/pdas.js";
@@ -62,11 +63,20 @@ export async function topHolders(conn, mint, labels = {}) {
   }
 }
 
+/** `base` (the global fetch by default), resolving only once the whole body is in: Node's
+ *  fetch resolves at the headers, so a deadline around it alone wouldn't cover an RPC that
+ *  sends its headers and then stalls the body. */
+const whole = (base = (url, init) => globalThis.fetch(url, init)) => async (url, init) => {
+  const r = await base(url, init);
+  return new Response(await r.arrayBuffer(), { status: r.status, statusText: r.statusText, headers: r.headers });
+};
+
 /** The connection coin stats read the chain over (the Feed builds one): a rate limit (429)
  *  fails at once, where tx.js connect would wait it out for up to 31 tries (about 77 s on
- *  mainnet-beta), and each request gets FETCH_MS (10 s). `base`: the fetch under it. */
+ *  mainnet-beta), and each request, its body included, gets FETCH_MS (10 s). `base`: the
+ *  fetch under it. */
 export const statsConnection = (endpoint, base) =>
-  new Connection(endpoint, { commitment: "confirmed", disableRetryOnRateLimit: true, fetch: fetchWithin(FETCH_MS, base) });
+  new Connection(endpoint, { commitment: "confirmed", disableRetryOnRateLimit: true, fetch: fetchWithin(FETCH_MS, whole(base)) });
 
 /** The status an RPC error carries: the HTTP status web3.js puts first in its message
  *  ("429 Too Many Requests: …"), or a JSON-RPC error's code; else null. */

@@ -773,6 +773,27 @@ test("coin stats: a socket's read that settles before a change's timer runs: the
   assert.deepEqual([f.market.reads, f.volumes()], [3, [3]], "then read and pushed to everyone on it");
 });
 
+test("coin stats: a change, then a second socket's read still out when the change's timer runs: one read out; the next statsMs after it settles, pushed", async (t) => {
+  const f = statsFeed(t);
+  await f.join(); // read 1
+  f.change(); // a read set for statsMs after read 1
+  await f.advance(0, 1_000); // due by the clock, the timer not run yet
+  const go = f.market.hold();
+  const b = f.join(); // a second socket: the cache is statsMs old, so it reads (held)
+  await f.flush();
+  assert.equal(f.market.reads, 2);
+  await f.advance(1_000, 0); // the change's timer runs while read 2 is out
+  assert.equal(f.market.reads, 2, "not a second read out at once");
+  go();
+  const [x] = await b;
+  await f.flush();
+  assert.deepEqual([x.data.volume24hUsd, f.published.length], [2, 0], "read 2 went to the socket that asked");
+  await f.advance(999);
+  assert.equal(f.market.reads, 2, "not before statsMs after read 2");
+  await f.advance(1);
+  assert.deepEqual([f.market.reads, f.volumes()], [3, [3]], "then read and pushed to everyone on it");
+});
+
 test("coin stats: the topic empties while a read is out: nothing is pushed, and the read is kept for the next socket", async (t) => {
   const f = statsFeed(t);
   await f.join();
@@ -801,6 +822,59 @@ test("coin stats: a read still out at stop pushes nothing", async (t) => {
   go();
   await f.flush();
   assert.deepEqual(f.published, []);
+});
+
+/** The timers set and not yet run or cleared, from now until `restore()`: wraps the
+ *  (mocked) setTimeout and clearTimeout the feed calls. */
+function timersOut() {
+  const out = new Set();
+  const { setTimeout: set, clearTimeout: clear } = globalThis;
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    const h = set((...a) => (out.delete(h), fn(...a)), ms, ...args);
+    out.add(h);
+    return h;
+  };
+  globalThis.clearTimeout = (h) => (out.delete(h), clear(h));
+  return { out, restore: () => Object.assign(globalThis, { setTimeout: set, clearTimeout: clear }) };
+}
+
+test("coin stats: the last socket leaving, and stop, clear the read a change set: no timer is left", async (t) => {
+  const f = statsFeed(t);
+  const timers = timersOut();
+  try {
+    await f.join();
+    f.change();
+    assert.equal(timers.out.size, 1, "the change's read is set");
+    f.leave();
+    assert.equal(timers.out.size, 0, "last() clears it");
+    await f.join(); // within statsMs, the change still unread: set again
+    assert.equal(timers.out.size, 1);
+    await f.feed.stop();
+    assert.equal(timers.out.size, 0, "stop() clears it");
+  } finally {
+    timers.restore();
+  }
+});
+
+test("coin stats: a read that fails: the socket gets an error, and the read statsMs after it is pushed", async (t) => {
+  const f = statsFeed(t);
+  const p = f.feed.pools.get(f.mint);
+  const pool = p.pool;
+  let bad = true;
+  p.pool = {
+    toBase58() {
+      if (bad) throw new Error("no pool");
+      return pool.toBase58();
+    },
+  };
+  const [e] = await f.join();
+  assert.equal(e.type, "error");
+  assert.equal(f.market.reads, 0, "it failed before asking the market");
+  bad = false;
+  await f.advance(999);
+  assert.deepEqual(f.published, [], "not before statsMs after the failed read");
+  await f.advance(1);
+  assert.deepEqual([f.market.reads, f.volumes()], [1, [1]], "then read and pushed");
 });
 
 test("coin stats: a change nobody is on reads nothing; the next socket gets the cache at once and a read at statsMs", async (t) => {
