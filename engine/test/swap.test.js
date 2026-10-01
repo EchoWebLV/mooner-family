@@ -1,12 +1,15 @@
 // Trading through Jupiter (engine/src/swap.js) against a fake fetch and a fake RPC.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
-import { MEMO } from "../src/consts.js";
+import {
+  AddressLookupTableAccount, Keypair, PublicKey, SendTransactionError, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction,
+} from "@solana/web3.js";
+import { MEMO, TOKEN, TOKEN22 } from "../src/consts.js";
+import { ata } from "../src/pdas.js";
 import { sendSigned } from "../src/tx.js";
 import {
-  buildSwap, buyQuote, explainSwap, impactOf, JUP, JUP_PROGRAM, NO_ROUTE, NO_ROUTE_TEXT, onlyWalletSigns, poolFee, quote,
-  sellAmount, sellQuote, swap, tokenBalance, WSOL,
+  BEHIND_TEXT, buildSwap, buyQuote, explainSwap, impactOf, JUP, JUP_PROGRAM, NO_ANSWER, NO_ROUTE, NO_ROUTE_TEXT, onlyWalletSigns, poolFee,
+  PREFLIGHT_TEXT, quote, sellAmount, sellQuote, swap, tokenBalance, WSOL,
 } from "../src/swap.js";
 
 const MINT = "GS2xpNeKkon1rQHa7XcwkbZ65yP3rBT2v4uh2KMdQDeC";
@@ -35,11 +38,17 @@ function fakeFetch(...replies) {
 }
 
 /** A v0 tx like Jupiter's: the wallet pays; `also` adds a second signer. */
-function jupTx(payer = wallet.publicKey, also = null) {
+function jupTx(payer = wallet.publicKey, also = null, blockhash = BLOCKHASH) {
   const ixs = [SystemProgram.transfer({ fromPubkey: payer, toPubkey: Keypair.generate().publicKey, lamports: 1 })];
   if (also) ixs.push(new TransactionInstruction({ programId: MEMO, keys: [{ pubkey: also, isSigner: true, isWritable: false }], data: Buffer.from("x") }));
-  return new VersionedTransaction(new TransactionMessage({ payerKey: payer, recentBlockhash: BLOCKHASH, instructions: ixs }).compileToV0Message());
+  return new VersionedTransaction(new TransactionMessage({ payerKey: payer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message());
 }
+
+/** A fetch that never answers: it settles only when the call is aborted, as fetch does. */
+const hang = (_url, init) =>
+  new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }))));
+/** A fetch whose reply comes at once but whose body never does. */
+const hangBody = (_url, init) => Promise.resolve({ ok: true, status: 200, json: () => hang(_url, init) });
 const built = (tx, over = {}) => ({
   swapTransaction: Buffer.from(tx.serialize()).toString("base64"), lastValidBlockHeight: 430317386, prioritizationFeeLamports: 8795,
   computeUnitLimit: 87951, simulationError: null, ...over,
@@ -86,6 +95,26 @@ test("quote: no route is its own error, in the website's words", async () => {
   assert.equal(bare.message, "Jupiter said 502");
 });
 
+test("a Jupiter call that doesn't answer is given up after 10 s, the body's read included, in words", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let settled = false;
+  const p = quote({ input: WSOL, output: MINT, amount: 1n, fetch: hang }).catch((x) => x).finally(() => (settled = true));
+  t.mock.timers.tick(9_999);
+  await Promise.resolve();
+  assert.equal(settled, false, "still waiting just before the deadline");
+  t.mock.timers.tick(1);
+  const e = await p;
+  assert.equal(e.message, NO_ANSWER);
+  assert.equal(e.timedOut, true);
+  assert.equal(explainSwap(e), "Jupiter didn't answer. Try again.");
+  // the reply came but its body didn't: a swap build
+  const q = await quote({ input: WSOL, output: MINT, amount: 1n, fetch: fakeFetch([200, QUOTE]) });
+  const b = buildSwap({ quote: q, wallet: wallet.publicKey, fetch: hangBody }).catch((x) => x);
+  await Promise.resolve(); // the body is asked for once the reply is in
+  t.mock.timers.tick(10_000);
+  assert.equal((await b).message, NO_ANSWER);
+});
+
 test("buildSwap: the body Jupiter gets, with the phone's priority or Jupiter's auto", async () => {
   const tx = jupTx();
   const f = fakeFetch([200, built(tx)], [200, built(tx)]);
@@ -106,6 +135,30 @@ test("onlyWalletSigns: one signer, and it's the wallet", () => {
   assert.equal(onlyWalletSigns(jupTx(), wallet.publicKey), true);
   assert.equal(onlyWalletSigns(jupTx(Keypair.generate().publicKey), wallet.publicKey), false, "someone else pays");
   assert.equal(onlyWalletSigns(jupTx(wallet.publicKey, Keypair.generate().publicKey), wallet.publicKey), false, "a second signer");
+});
+
+test("onlyWalletSigns with a lookup table, as Jupiter's txs use: a signer can't hide in the table", () => {
+  const other = Keypair.generate().publicKey;
+  const looked = Array.from({ length: 4 }, () => Keypair.generate().publicKey);
+  const alt = new AddressLookupTableAccount({
+    key: Keypair.generate().publicKey,
+    state: { deactivationSlot: 2n ** 64n - 1n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [...looked, other] },
+  });
+  const programId = Keypair.generate().publicKey;
+  const v0 = (payer, keys) =>
+    new VersionedTransaction(
+      new TransactionMessage({ payerKey: payer, recentBlockhash: BLOCKHASH, instructions: [new TransactionInstruction({ programId, keys, data: Buffer.from([1]) })] }).compileToV0Message([alt]),
+    );
+  const plain = [...looked, other].map((pubkey) => ({ pubkey, isSigner: false, isWritable: true }));
+  const tx = v0(wallet.publicKey, plain);
+  assert.equal(tx.message.addressTableLookups.length, 1, "the other accounts come from the table");
+  assert.equal(onlyWalletSigns(tx, wallet.publicKey), true);
+  assert.equal(onlyWalletSigns(VersionedTransaction.deserialize(tx.serialize()), wallet.publicKey), true, "as Jupiter hands it over, in bytes");
+  // a signer is always a static key, even one the table holds
+  const signs = v0(wallet.publicKey, [{ pubkey: other, isSigner: true, isWritable: false }, ...plain.slice(0, 4)]);
+  assert.equal(signs.message.header.numRequiredSignatures, 2);
+  assert.equal(onlyWalletSigns(signs, wallet.publicKey), false);
+  assert.equal(onlyWalletSigns(v0(other, [{ pubkey: wallet.publicKey, isSigner: true, isWritable: true }]), wallet.publicKey), false, "another pays, the wallet co-signs");
 });
 
 async function q0() {
@@ -162,6 +215,18 @@ test("swap stops after the wallet when its signature doesn't cover the tx", asyn
   assert.deepEqual(conn.sent, []);
 });
 
+test("swap stops after the wallet when it signed with another blockhash: the trade could outlive Jupiter's", async () => {
+  const conn = fakeConn();
+  const rehashed = async () => {
+    const t = jupTx(wallet.publicKey, null, Keypair.generate().publicKey.toBase58());
+    t.sign([wallet]); // a good signature, only the wallet signs: just the blockhash differs
+    return t;
+  };
+  const e = await swap({ quote: await q0(), wallet: wallet.publicKey, conn, signTransaction: rehashed, fetch: fakeFetch([200, built(jupTx())]) }).catch((x) => x);
+  assert.equal(e.message, "Your wallet changed the trade's blockhash, so it wasn't sent. Try again.");
+  assert.deepEqual(conn.sent, []);
+});
+
 test("swap (website): the wallet sends, confirmed against Jupiter's blockhash and its last block height", async () => {
   const conn = fakeConn();
   const tx = jupTx();
@@ -183,15 +248,35 @@ test("explainSwap: Jupiter's slippage error, from logs or from the tx error; the
   assert.equal(explainSwap(new Error("User rejected the request")), "You cancelled it in your wallet.");
 });
 
-test("tokenBalance: every account of the mint, summed", async () => {
-  const acc = (amount) => ({ account: { data: { parsed: { info: { tokenAmount: { amount, decimals: 6 } } } } } });
-  let asked;
-  const conn = { getParsedTokenAccountsByOwner: async (owner, filter) => ((asked = [owner, filter]), { value: [acc("1500000"), acc("250000")] }) };
+test("explainSwap: a refused preflight in a sentence, not web3.js's page of text", () => {
+  const refused = (transactionMessage, logs = []) => new SendTransactionError({ action: "simulate", signature: "", transactionMessage, logs });
+  assert.equal(explainSwap(refused("Transaction simulation failed: Blockhash not found")), BEHIND_TEXT);
+  assert.equal(BEHIND_TEXT, "The network was a step behind. Try again.");
+  // web3.js's own words for a failed simulation, as the RPC returned them
+  const other = refused("Transaction simulation failed: Error processing Instruction 2: custom program error: 0x1", ["Program log: Error: insufficient funds"]);
+  assert.match(other.message, /^Simulation failed\. \nMessage: Transaction simulation failed/);
+  assert.equal(explainSwap(other), PREFLIGHT_TEXT);
+  assert.equal(PREFLIGHT_TEXT, "This trade would fail right now, so it wasn't sent. Try again.");
+  // a wallet adapter that passes the message on keeps only the text
+  assert.equal(explainSwap(new Error(other.message)), PREFLIGHT_TEXT);
+  // what the preflight says that has words already keeps them
+  assert.equal(explainSwap(refused("Transaction simulation failed: Attempt to debit an account but found no record of a prior credit.")), "Your wallet needs a little more SOL to cover rent and the Solana fee.");
+  const slipped = refused("Transaction simulation failed: Error processing Instruction 3: custom program error: 0x1771", [`Program ${JUP_PROGRAM} failed: custom program error: 0x1771`]);
+  assert.equal(explainSwap(slipped), "The price moved more than 3% before your trade landed, so it didn't go through. Try again.");
+});
+
+test("tokenBalance: the wallet's associated token account only, the one a swap sells from", async () => {
   const mint = new PublicKey(MINT);
-  assert.deepEqual(await tokenBalance(conn, wallet.publicKey, mint), { raw: 1_750_000n, decimals: 6, ui: 1.75 });
-  assert.deepEqual(asked, [wallet.publicKey, { mint }]);
-  const none = { getParsedTokenAccountsByOwner: async () => ({ value: [] }) };
-  assert.deepEqual(await tokenBalance(none, wallet.publicKey, mint), { raw: 0n, decimals: 6, ui: 0 });
+  // getParsedTokenAccountsByOwner's items: the account's address and its token program (owner)
+  const acc = (pubkey, program, amount) => ({ pubkey, account: { owner: program, data: { parsed: { info: { tokenAmount: { amount, decimals: 6 } } } } } });
+  const conn = (...value) => ({ getParsedTokenAccountsByOwner: async (owner, filter) => ((conn.asked = [owner, filter]), { value }) });
+  const extra = Keypair.generate().publicKey; // another account of the mint the wallet owns
+  const c22 = conn(acc(extra, TOKEN22, "250000"), acc(ata(wallet.publicKey, mint, TOKEN22), TOKEN22, "1500000"));
+  assert.deepEqual(await tokenBalance(c22, wallet.publicKey, mint), { raw: 1_500_000n, decimals: 6, ui: 1.5 });
+  assert.deepEqual(conn.asked, [wallet.publicKey, { mint }]);
+  assert.deepEqual(await tokenBalance(conn(acc(ata(wallet.publicKey, mint, TOKEN), TOKEN, "700000")), wallet.publicKey, mint), { raw: 700_000n, decimals: 6, ui: 0.7 }, "a classic SPL mint");
+  assert.deepEqual(await tokenBalance(conn(acc(extra, TOKEN22, "250000")), wallet.publicKey, mint), { raw: 0n, decimals: 6, ui: 0 }, "no ATA: nothing a swap can sell");
+  assert.deepEqual(await tokenBalance(conn(), wallet.publicKey, mint), { raw: 0n, decimals: 6, ui: 0 });
 });
 
 test("poolFee: 1% on the SOL side when the route is the coin's own pool", () => {
@@ -219,4 +304,5 @@ test("sellAmount: a share of what's held, all of it at 100%", () => {
   assert.equal(sellAmount(1_000_003n, 25), 250_000n);
   assert.equal(sellAmount(1_000_003n, 50), 500_001n);
   assert.equal(sellAmount(1_000_003n, 100), 1_000_003n);
+  for (const bad of [0, -25, 101, 33.3, NaN, "50", null]) assert.throws(() => sellAmount(1_000_003n, bad), RangeError, String(bad));
 });

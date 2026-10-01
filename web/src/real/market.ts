@@ -85,7 +85,8 @@ export async function swap(q: Quote, user: PublicKey, conn: Connection, sendTran
   }
 }
 
-/** The wallet's balance of a mint, in whole tokens (both token programs). */
+/** The wallet's balance of a mint in its associated token account, the account a Jupiter
+ *  swap sells from (either token program). */
 export async function tokenBalance(conn: Connection, owner: PublicKey, mint: PublicKey): Promise<{ ui: number; raw: bigint; decimals: number }> {
   return balanceOf(conn, owner, mint)
 }

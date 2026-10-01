@@ -8,9 +8,33 @@
 export const GECKO = "https://api.geckoterminal.com/api/v2/networks/solana";
 export const METEORA = "https://damm-v2.datapi.meteora.ag";
 
+/** How long an outside API gets to answer, its body included. */
+export const FETCH_MS = 10_000;
+
+/** `fetch(url, init)` with a deadline: { r (the reply), j (its JSON body, null when it
+ *  isn't JSON) }, both read within `ms`. React Native's fetch on Android never gives up by
+ *  itself and Node's waits 300 s, so every outside call goes through here. Past the deadline
+ *  the call is aborted and this throws an error with `timedOut` set. A timer, not
+ *  AbortSignal.timeout: React Native doesn't have it. swap.js calls Jupiter through it too. */
+export async function getWithin(fetch, url, init = {}, ms = FETCH_MS) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    const r = await fetch(url, { ...init, signal: ac.signal });
+    const j = await r.json().catch(() => null);
+    // an abort while the body was read reads as no JSON above
+    if (ac.signal.aborted) throw new Error("aborted");
+    return { r, j };
+  } catch (e) {
+    if (ac.signal.aborted) throw Object.assign(new Error(`${new URL(url).host} didn't answer in ${ms / 1000} s`), { timedOut: true });
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function getJson(fetch, url) {
-  const r = await fetch(url, { headers: { accept: "application/json" } });
-  const j = await r.json().catch(() => null);
+  const { r, j } = await getWithin(fetch, url, { headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(j?.error ?? j?.errors?.[0]?.title ?? `${new URL(url).host} said ${r.status}`);
   return j;
 }
@@ -36,10 +60,10 @@ export async function geckoCandles(pool, { limit = 300, fetch = globalThis.fetch
   return mergeCandles(list.map(([ts, o, h, l, c]) => ({ t: ts * 1000, o, h, l, c })));
 }
 
-/** A pool's 24h volume and liquidity in USD from GeckoTerminal (null where it has none). */
+/** A pool's 24h volume in USD from GeckoTerminal (null when it has none). */
 export async function geckoStats(pool, { fetch = globalThis.fetch } = {}) {
   const a = (await getJson(fetch, `${GECKO}/pools/${pool}`))?.data?.attributes ?? {};
-  return { volume24hUsd: num(a.volume_usd?.h24), liquidityUsd: num(a.reserve_in_usd) };
+  return { volume24hUsd: num(a.volume_usd?.h24) };
 }
 
 /** A DAMM v2 pool from Meteora's Data API: { price (SOL per token), tvlUsd, volume24hUsd,
@@ -50,7 +74,6 @@ export async function meteoraPool(pool, { fetch = globalThis.fetch } = {}) {
 }
 
 /** METEORA serves 5-minute candles for at most 6 hours a call. */
-export const METEORA_CANDLE_MS = 5 * 60_000;
 export const METEORA_SPAN_MS = 6 * 3_600_000;
 
 /** Five-minute candles of a DAMM v2 pool over the last 6 hours, in SOL per token. */

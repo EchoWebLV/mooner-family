@@ -22,10 +22,10 @@ import * as I from "./ix.js";
 import * as D from "./dbc.js";
 import { ata, configPda, eventAuthority, poolAddresses, poolAuthority, presalePda, seatPda, vaultOf } from "./pdas.js";
 import { send, simulate } from "./tx.js";
+import { TAX_MARGIN_S } from "./views.js"; // claims wait this long past the snipe tax, by the chain's clock
 
 const BATCH = { settle: 8, claim: 6, commit: 10 };
 const RECENT_MS = 30_000; // don't resend an ER commit while the last one is landing
-const TAX_MARGIN_S = 1; // claims wait this long past the snipe tax, by the chain's clock
 const chunks = (xs, n) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const tryDecode = (decode, data) => {
   try {

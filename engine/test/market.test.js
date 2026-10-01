@@ -3,7 +3,7 @@
 // API for pool GwvAt96o….
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { geckoCandles, geckoStats, mergeCandles, meteoraCandles, meteoraPool } from "../src/market.js";
+import { FETCH_MS, geckoCandles, geckoStats, getWithin, mergeCandles, METEORA as METEORA_URL, meteoraCandles, meteoraPool } from "../src/market.js";
 
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 function fakeFetch(...replies) {
@@ -39,9 +39,9 @@ test("GeckoTerminal candles: newest-first rows with a minute listed twice become
   assert.deepEqual(mergeCandles([]), []);
 });
 
-test("GeckoTerminal pool stats: 24h volume and liquidity in USD; a pool it hasn't seen is an error", async () => {
+test("GeckoTerminal pool stats: 24h volume in USD; a pool it hasn't seen is an error", async () => {
   const fetch = fakeFetch(reply({ data: { attributes: { reserve_in_usd: "4241.201", volume_usd: { m5: "0.0", h24: "0.0" } } } }), reply({ errors: [{ status: "404", title: "Not Found" }] }, 404));
-  assert.deepEqual(await geckoStats(DBC_POOL, { fetch }), { volume24hUsd: 0, liquidityUsd: 4241.201 });
+  assert.deepEqual(await geckoStats(DBC_POOL, { fetch }), { volume24hUsd: 0 });
   assert.equal(fetch.calls[0], `https://api.geckoterminal.com/api/v2/networks/solana/pools/${DBC_POOL}`);
   await assert.rejects(geckoStats("nope", { fetch }), /Not Found/);
 });
@@ -79,4 +79,30 @@ test("Meteora candles: 5-minute candles over the last 6 hours, oldest first", as
     [1790833200_000, 1790833500_000],
   );
   assert.equal(c[1].l, 1.1164651230572074e-7);
+});
+
+/** A fetch that never answers: it settles only when the call is aborted, as fetch does. */
+const hang = (_url, init) =>
+  new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }))));
+
+test("an API that doesn't answer is given up after FETCH_MS (10 s), the body's read included", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  assert.equal(FETCH_MS, 10_000);
+  const c = geckoCandles(DBC_POOL, { fetch: hang }).catch((x) => x);
+  t.mock.timers.tick(FETCH_MS);
+  const e = await c;
+  assert.equal(e.message, "api.geckoterminal.com didn't answer in 10 s");
+  assert.equal(e.timedOut, true);
+  // the reply came, its body didn't
+  const slowBody = async (url, init) => ({ ok: true, status: 200, json: () => hang(url, init) });
+  const body = getWithin(slowBody, `${METEORA_URL}/pools/x`, {}, 5_000).catch((x) => x);
+  await Promise.resolve(); // the body is asked for once the reply is in
+  t.mock.timers.tick(5_000);
+  const b = await body;
+  assert.equal(b.message, "damm-v2.datapi.meteora.ag didn't answer in 5 s");
+  assert.equal(b.timedOut, true);
+  // in time: the reply, its JSON, and the init passed on with the signal
+  let seen;
+  const ok = await getWithin(async (url, init) => ((seen = init), reply({ a: 1 })), `${METEORA_URL}/pools/y`, { headers: { accept: "application/json" } });
+  assert.deepEqual([ok.r.status, ok.j, seen.headers, seen.signal.aborted], [200, { a: 1 }, { accept: "application/json" }, false]);
 });
