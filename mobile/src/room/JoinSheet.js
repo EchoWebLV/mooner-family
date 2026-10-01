@@ -1,14 +1,15 @@
 // The join sheet: pick a seat, see what it costs, sign once in the wallet.
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
 import { seatChoices } from "../../../engine/src/views.js";
 import { store } from "../app";
+import { Chip } from "../ui/Chip";
 import { solText } from "../ui/format";
 import { CheckIcon } from "../ui/icons";
 import { Button, Sheet, Steps, T } from "../ui/kit";
-import { C, F, R } from "../ui/theme";
+import { C } from "../ui/theme";
 import { pickOf, shortOf } from "./room";
 
 /** `view`: the room's presale view; `info`: store.info; `lamports`: the wallet's SOL (a
@@ -92,30 +93,5 @@ export function JoinSheet({ open, onClose, onFailed, view, info, lamports, signe
         />
       </View>
     </Sheet>
-  );
-}
-
-/** An oval amount chip: quiet, or with the accent rim on a soft accent when picked. */
-function Chip({ text, on, disabled, onPress }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={text}
-      accessibilityState={{ selected: on, disabled }}
-      disabled={disabled}
-      onPress={() => {
-        Haptics.selectionAsync().catch(() => {});
-        onPress();
-      }}
-      style={({ pressed }) => [
-        {
-          flex: 1, height: 44, borderRadius: R.pill, borderWidth: 1, alignItems: "center", justifyContent: "center",
-          backgroundColor: on ? C.accentSoft : C.bg2, borderColor: on ? C.accent : C.lineStrong,
-        },
-        pressed && { opacity: 0.85 },
-      ]}
-    >
-      <T style={{ fontFamily: F.semi, fontSize: 15 }}>{text}</T>
-    </Pressable>
   );
 }

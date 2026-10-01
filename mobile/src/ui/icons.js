@@ -33,6 +33,16 @@ export function MeIcon({ color, size = 22 }) {
   );
 }
 
+/** A plus in a rounded square: create. */
+export function PlusIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Rect x={3} y={3} width={18} height={18} rx={5} stroke={color} {...STROKE} />
+      <Path d="M12 8 V16 M8 12 H16" stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
 /** A chevron pointing left: back. */
 export function BackIcon({ color, size = 24 }) {
   return (
