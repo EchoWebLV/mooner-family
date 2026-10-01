@@ -9,9 +9,37 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07080b",
     "android": {
-      "package": "family.mooner.app"
+      "package": "family.mooner.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "app.mooner.family",
+              "pathPrefix": "/presale/"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
-    "plugins": [["expo-router", { "sitemap": false }], "expo-secure-store", "expo-font"],
-    "experiments": { "typedRoutes": false }
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "sitemap": false
+        }
+      ],
+      "expo-secure-store",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
   }
 }
