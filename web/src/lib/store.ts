@@ -16,6 +16,7 @@ import { TITLES } from './levels'
 import { DEFAULT_PFP, handlePfp, sanitizePfp } from './pfp/traits'
 import { canJoin, pickMatch } from './presale'
 import { joinCost, openCost } from '../../../engine/src/flows.js'
+import { signIn as engineSignIn } from '../../../engine/src/signin.js'
 import type {
   Candle, ChatMessage, Lamports, Level, Participant, Pfp, Stage, Title, TitleProgress, TitleStats, Token, Trade,
   User, World,
@@ -844,11 +845,8 @@ export function createAppStore(): AppStore {
         if (!w.signMessage) return fail("This wallet can't sign messages. Try Phantom or Solflare.")
         const wallet = w.publicKey.toBase58()
         try {
-          const time = Math.floor(Date.now() / 1000)
-          const text = chain.loginMessage(wallet, time)
-          const sig = await w.signMessage(new TextEncoder().encode(text))
-          const r = await api.login({ wallet, time, signature: btoa(String.fromCharCode(...sig)) })
-          login = { token: r.token, exp: r.exp }
+          const signMessage = w.signMessage
+          login = await engineSignIn({ api, wallet: w.publicKey, signMessage: (bytes: Uint8Array) => signMessage(bytes) })
           try {
             localStorage.setItem(LOGIN_KEY(wallet), JSON.stringify(login))
           } catch {}
