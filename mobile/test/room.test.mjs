@@ -1,0 +1,118 @@
+// The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { bottomOf, heroOf, hhmm, isKey, linksOf, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
+import { C } from "../src/ui/theme.js";
+
+const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
+const KEY = "11111111111111111111111111111111";
+const ME = "HgZ9KPJhH9aQ7NG7k7xrxzTJkP7LkBZygRTnBGZQ5u8D";
+const NOW = 1_000_000_000; // ms
+const open = (over = {}) => ({ presale: KEY, state: "OPEN", where: "er", raised: "200000000", deadlineTs: NOW / 1000 + 600, seats: [], ...over });
+const seatRow = (over = {}) => ({ seat: "S", user: ME, deposit: "250000000", commit: "250000000", settled: false, claimed: false, creator: false, where: "er", ...over });
+
+test("isKey: base58, 32 to 44 characters", () => {
+  assert.equal(isKey(KEY), true);
+  assert.equal(isKey(ME), true);
+  assert.equal(isKey("0OIl" + KEY.slice(4)), false);
+  assert.equal(isKey("short"), false);
+  assert.equal(isKey(undefined), false);
+});
+
+test("heroOf: the clock and C.er while open, C.up once full or past it, Closed when expired", () => {
+  assert.deepEqual(heroOf(open(), null, N, NOW), { stage: "presale", fill: 0.4, color: C.er, under: "10:00 left" });
+  assert.equal(heroOf(open({ raised: "500000000" }), null, N, NOW).color, C.up);
+  assert.deepEqual(heroOf(open({ state: "LAUNCHING", raised: "500000000" }), null, N, NOW), { stage: "launching", fill: 1, color: C.up, under: "Launching on Solana" });
+  assert.equal(heroOf(open({ state: "SETTLED" }), null, N, NOW).under, "Live");
+  assert.equal(heroOf(open(), { presale: KEY, pool: { migrated: true } }, N, NOW).under, "Live");
+  const gone = heroOf(open({ state: "EXPIRED" }), null, N, NOW);
+  assert.equal(gone.under, "Closed");
+  assert.equal(gone.color, C.text2);
+});
+
+test("bottomOf: connect, your seat, join, or why not", () => {
+  assert.deepEqual(bottomOf(open(), null, N, NOW), { kind: "connect" });
+  assert.deepEqual(bottomOf(open({ state: "EXPIRED" }), null, N, NOW), { kind: "why", why: "This presale isn't taking seats." });
+  assert.deepEqual(bottomOf(open(), ME, N, NOW), { kind: "join" });
+  const mine = bottomOf(open({ seats: [seatRow()] }), ME, N, NOW);
+  assert.equal(mine.kind, "seat");
+  assert.equal(mine.seat.commit, 250_000_000n);
+  // a seat stays yours after launch, when nobody can join
+  assert.equal(bottomOf(open({ state: "SETTLED", seats: [seatRow({ settled: true })] }), ME, N, NOW).kind, "seat");
+  assert.deepEqual(bottomOf(open({ raised: "500000000" }), ME, N, NOW), { kind: "why", why: "The pool is full." });
+  assert.deepEqual(bottomOf(open({ deadlineTs: NOW / 1000 - 1 }), ME, N, NOW), { kind: "why", why: "Time's up for this presale." });
+  // the list item (no seats yet) knows you're in from its users
+  assert.deepEqual(bottomOf({ ...open(), seats: undefined, users: [{ user: ME, commit: "1" }] }, ME, N, NOW), { kind: "why", why: "You're already in." });
+});
+
+test("pickOf: the whole chip while it fits; a note when less fits", () => {
+  assert.deepEqual(pickOf(open(), N, 100_000_000n), { deposit: 100_000_000n, commit: 100_000_000n, note: null });
+  // 0.3 SOL of room: a 0.5 chip puts in 0.3 and the seat holds 0.3
+  assert.deepEqual(pickOf(open(), N, 500_000_000n), { deposit: 300_000_000n, commit: 300_000_000n, note: "Only 0.3 SOL fits." });
+  // 0.05 SOL of room: the seat still holds 0.1, so 0.05 comes back after launch
+  assert.deepEqual(pickOf(open({ raised: "450000000" }), N, 250_000_000n), {
+    deposit: 100_000_000n, commit: 50_000_000n, note: "Only 0.05 SOL fits; the rest comes back to you after launch.",
+  });
+  assert.equal(pickOf(open({ raised: "500000000" }), N, 100_000_000n).note, null); // full: the why says so
+});
+
+test("shortOf: the seat plus fees and rent against the wallet", () => {
+  assert.equal(shortOf(100_000_000n, 3_000_000n, 200_000_000), null);
+  assert.equal(shortOf(100_000_000n, null, 1), null); // cost not read yet
+  assert.equal(shortOf(100_000_000n, 3_000_000n, null), null); // wallet not read yet
+  assert.equal(
+    shortOf(250_000_000n, 3_456_789n, 200_000_000),
+    "You need 0.253 SOL for this (the seat plus about 0.0035 SOL in fees and rent). You have 0.2.",
+  );
+});
+
+test("seatPlan: in, out of the pool, creator, locked, claimed", () => {
+  const plan = (view, seat) => seatPlan(view, null, seat, ME, NOW);
+  const seat = (over) => ({ deposit: 250_000_000n, commit: 250_000_000n, creator: false, settled: false, claimed: false, ...over });
+  assert.deepEqual(plan(open({ seats: [seatRow()] }), seat()), { title: "You're in · 0.25 SOL", note: null, back: true });
+  assert.deepEqual(plan(open({ seats: [seatRow({ commit: "0" })] }), seat({ commit: 0n })), {
+    title: "In your seat · 0.25 SOL, out of the pool", note: null, back: true,
+  });
+  assert.deepEqual(plan(open({ seats: [seatRow({ creator: true })] }), seat({ creator: true })), { title: "You're in · 0.25 SOL", note: "creator", back: false });
+  const launching = open({ state: "LAUNCHING", seats: [seatRow()] });
+  assert.deepEqual(plan(launching, seat()), { title: "You're in · 0.25 SOL", note: "locked", back: false });
+  assert.equal(plan(open({ state: "LAUNCHING", seats: [seatRow({ creator: true })] }), seat({ creator: true })).note, "locked");
+  const live = open({ state: "SETTLED", seats: [seatRow({ settled: true, claimed: true })] });
+  assert.deepEqual(plan(live, seat({ settled: true, claimed: true })), { title: "You're in · 0.25 SOL", note: "claimed", back: false });
+  // expired before filling: the seat's SOL can come back
+  assert.equal(plan(open({ state: "EXPIRED", seats: [seatRow()] }), seat()).back, true);
+});
+
+test("momentStep: plays only for a change seen live", () => {
+  // first sight of an already launching or live presale: nothing
+  assert.equal(momentStep(null, null, "launching"), null);
+  assert.equal(momentStep(null, null, "live"), null);
+  // presale -> launching -> live
+  assert.equal(momentStep(null, "presale", "launching"), "launching");
+  assert.equal(momentStep("launching", "launching", "live"), "live");
+  // straight to live, or from launching seen at the start
+  assert.equal(momentStep(null, "presale", "live"), "live");
+  assert.equal(momentStep(null, "launching", "migrated"), "live");
+  // no change, or one that isn't a launch
+  assert.equal(momentStep(null, "presale", "presale"), null);
+  assert.equal(momentStep(null, "presale", "expired"), null);
+  assert.equal(momentStep(null, "live", "migrated"), null);
+  // a failed launch ends it; closed stays closed
+  assert.equal(momentStep("launching", "launching", "expired"), "done");
+  assert.equal(momentStep("done", "launching", "live"), "done");
+  assert.equal(momentStep("live", "live", "migrated"), "live");
+});
+
+test("linksOf: the https links that are there", () => {
+  assert.deepEqual(linksOf(null), []);
+  assert.deepEqual(linksOf({ links: { twitter: "https://x.com/m", telegram: "", website: "https://m.fun " } }), [
+    { label: "X", url: "https://x.com/m" },
+    { label: "Website", url: "https://m.fun" },
+  ]);
+  assert.deepEqual(linksOf({ links: { twitter: "javascript:alert(1)", telegram: "http://t.me/m", website: "intent://x" } }), []);
+});
+
+test("hhmm: two digits each", () => {
+  const d = new Date(2026, 9, 1, 9, 5, 0);
+  assert.equal(hhmm(d.getTime()), "09:05");
+});
