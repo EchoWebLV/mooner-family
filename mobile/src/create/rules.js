@@ -60,9 +60,12 @@ export const cleanDescription = (s) =>
 const HANDLE = /^@?([A-Za-z0-9_]{1,32})$/;
 const HANDLE_BASE = { x: "https://x.com/", telegram: "https://t.me/" };
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-// https, a dotted host of letters, digits and hyphens (no user, no port), then maybe a path,
-// query or fragment without spaces or control characters
-const HTTPS = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+([/?#][^\s\u0000-\u001f\u007f]*)?$/i;
+// https, then a host the server's new URL (Node's) takes, checked by hand since the phone's URL
+// (Expo's whatwg-url-minimum) doesn't check punycode: dotted labels of letters, digits and
+// hyphens, 1–63 long with no hyphen at either end and none starting "xn--", the last of 2–63
+// letters (so never a number, as in 999.1); no user, no port; then maybe a path, query or
+// fragment without spaces or control characters
+const HTTPS = /^https:\/\/(?:(?!xn--)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}([/?#][^\s\u0000-\u001f\u007f]*)?$/i;
 
 /** The https address a link field means, or null. A bare @handle becomes an X or Telegram
  *  address; a bare domain gets https://. */
@@ -125,6 +128,7 @@ export function commitBounds(N) {
 /** The commit chips: the seat presets under the most the creator may put in, then that most. */
 export function commitChoices(N) {
   const { min, max } = commitBounds(N);
+  // assumes TARGET − MIN_SEAT is a multiple of STEP and at least MIN_SEAT, as mainnet's numbers are
   return [...SEAT_PRESETS.filter((a) => a >= min && a < max), max];
 }
 
@@ -136,10 +140,11 @@ export function commitProblem(commit, N) {
 }
 
 /** What the wallet lacks to open, as one line, or null. `extra`: openCost() (BigInt, or null
- *  while it's read); `lamports`: the wallet's SOL (a number, or null while it's read). Unknown
- *  amounts block nothing: the wallet and Solana have the last word. */
+ *  while it's read); `lamports`: the wallet's SOL (a number, or null while it's read; NaN, from
+ *  a reply without lamports, counts as not read). Unknown amounts block nothing: the wallet
+ *  and Solana have the last word. */
 export function shortOfOpen(commit, extra, lamports) {
-  if (extra == null || lamports == null) return null;
+  if (extra == null || lamports == null || !Number.isFinite(Number(lamports))) return null;
   const have = BigInt(Math.floor(Number(lamports)));
   const need = commit + extra;
   if (need <= have) return null;
@@ -242,7 +247,8 @@ export function createError(e, pid = null) {
   if (e?.status === 429) return "Too many tries from here for now. Try again later.";
   if (e?.status === 401) return "The wallet's signature didn't match the coin's details. Try again.";
   if (e?.status === 409) return "That signature was already used. Try again.";
-  if (e?.status === 502) return "Couldn't save the picture and details to IPFS. Try again.";
+  // only the mint's own 502 is about IPFS (api.js: `IPFS: …; try again`); a proxy's isn't
+  if (e?.status === 502 && /^IPFS: /.test(m)) return "Couldn't save the picture and details to IPFS. Try again.";
   if (/time must be now/.test(m)) return "Your phone's clock is off. Turn on automatic date and time, then try again.";
   if (/make the launch tx \d+ bytes/.test(m)) return "The name and ticker are too long together. Make the name shorter.";
   return explain(e);
@@ -284,11 +290,16 @@ export function backAction({ at, locked, issued, step }) {
   return "previous";
 }
 
-/** Whether `o` is a whole saved open: its mint, presale and ticker, and its commit as a
- *  string of whole lamports. A missing or broken `at` still counts: the coin stays locked,
+/** Whether `o` is a whole saved open: its mint, presale and ticker (not blank), and its commit
+ *  as whole lamports above 0. A missing or broken `at` still counts: the coin stays locked,
  *  and canStartOver never lets it go. */
 export const isOpening = (o) =>
-  !!o && typeof o.mint === "string" && typeof o.presale === "string" && typeof o.symbol === "string" && /^\d+$/.test(String(o.commit ?? ""));
+  !!o &&
+  typeof o.mint === "string" &&
+  typeof o.presale === "string" &&
+  typeof o.symbol === "string" &&
+  o.symbol.trim() !== "" &&
+  /^[1-9]\d*$/.test(String(o.commit ?? ""));
 
 /** The screen's state for `opening`, the store's saved open whose outcome wasn't known ({ mint,
  *  presale, symbol, name, description, links, image, commit, at }), or null: the coin on the

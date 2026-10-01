@@ -48,6 +48,23 @@ test("linkHref: handles, bare domains and https links; nothing else", () => {
   assert.equal(linkHref("website", "  "), null);
   const bad = ["moondog", "@moondog", "http://moondog.xyz", "ftp://moondog.xyz", "https://user@moondog.xyz", "https://moondog.xyz:8080", "localhost:3000", "https://moon dog.xyz", "javascript:alert(1)"];
   for (const v of bad) assert.equal(linkHref("website", v), null, v);
+  // the server takes a link when Node's new URL parses it as https (engine/server/api.js parseLinks)
+  const serverTakes = (href) => {
+    try {
+      return new URL(href).protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+  for (const host of ["999.1", "1.2.3.4.5", "xn--a.com"]) {
+    assert.equal(serverTakes(`https://${host}`), false, `the server refuses ${host}`);
+    assert.equal(linkHref("website", host), null, host);
+  }
+  for (const host of ["moondog.xyz", "app.moondog.xyz", "MoonDog.XYZ"]) {
+    const href = linkHref("website", host);
+    assert.equal(href, `https://${host}`, host);
+    assert.equal(serverTakes(href), true, `the server takes ${host}`);
+  }
 });
 
 test("validate: name, ticker, description and links", () => {
@@ -106,6 +123,9 @@ test("shortOfOpen: the commit plus fees and rent against the wallet", () => {
     shortOfOpen(100_000_000n, 8_800_000n, 100_000_000),
     "You need 0.109 SOL to open this (your commit plus about 0.0088 SOL in fees and rent). You have 0.1.",
   );
+  // a balance reply without `lamports` (apiclient.js balance: Number(undefined)) is not read
+  assert.equal(shortOfOpen(100_000_000n, 8_800_000n, Number.NaN), null);
+  assert.equal(shortOfOpen(100_000_000n, 8_800_000n, Number.POSITIVE_INFINITY), null);
 });
 
 test("takenTickers: presales in play and launched coins; an expired one's is free", () => {
@@ -114,9 +134,11 @@ test("takenTickers: presales in play and launched coins; an expired one's is fre
     B: { presale: "B", state: "EXPIRED", token: { symbol: "OLD" } },
     C: { presale: "C", state: "FULL", token: { symbol: "cat" } },
     D: { presale: "D", state: "OPEN", token: null },
+    F: { presale: "F", state: "LAUNCHING", token: { symbol: "FOX" } },
+    G: { presale: "G", state: "SETTLED", token: { symbol: "GNU" } },
   };
   const launched = { E: { presale: "E", token: { symbol: "PUP" } } };
-  assert.deepEqual([...takenTickers({ presales, launched })].sort(), ["CAT", "MDOG", "PUP"]);
+  assert.deepEqual([...takenTickers({ presales, launched })].sort(), ["CAT", "FOX", "GNU", "MDOG", "PUP"]);
 });
 
 test("unopenedOf: the wallet's coins no presale has opened", () => {
@@ -140,6 +162,9 @@ test("createError: the server's and the wallet's refusals in plain words", () =>
   assert.equal(createError(new ApiError(401, "the signature doesn't match this wallet and these details", {})), "The wallet's signature didn't match the coin's details. Try again.");
   assert.equal(createError(new ApiError(409, "this signed request was already used", {})), "That signature was already used. Try again.");
   assert.equal(createError(new ApiError(502, "IPFS: pin failed; try again", {})), "Couldn't save the picture and details to IPFS. Try again.");
+  // only the mint's own 502 (api.js: `IPFS: …; try again`) is about IPFS; a proxy's 502 is not
+  assert.equal(createError(new ApiError(502, "the server said 502", null)), "the server said 502");
+  assert.equal(createError(new ApiError(502, "bad gateway", { error: "bad gateway" })), "bad gateway");
   assert.equal(createError(new ApiError(400, "time must be now, in unix seconds", {})), "Your phone's clock is off. Turn on automatic date and time, then try again.");
   assert.equal(
     createError(new ApiError(400, "the name, symbol and link make the launch tx 1240 bytes (max 1232)", {})),
@@ -195,6 +220,13 @@ test("openFailure: after the wallet signed, anything but the server's refusal is
     assert.equal(mayHaveSent(e), false, String(status));
     assert.equal(openFailure(e, true), e, `a ${status}: the server sent nothing`);
   }
+  // http.js's own 4xx from before a route runs (no route, wrong method, a body too big): not
+  // the server's refusal, so the safe side
+  for (const status of [404, 405, 413]) {
+    const e = new ApiError(status, "refused", {});
+    assert.equal(mayHaveSent(e), true, String(status));
+    assert.equal(openFailure(e, true).outcomeUnknown, true, String(status));
+  }
   const slow = new ApiError(503, "the network is slow, try again", { error: "the network is slow, try again", sent: false });
   assert.equal(mayHaveSent(slow), false, "an answer from before the send says sent: false");
   assert.equal(openFailure(slow, true), slow, "a 503 with sent: false: the server sent nothing");
@@ -244,6 +276,10 @@ test("restoredOpen: a saved open whose outcome wasn't known comes back on the la
   };
   assert.equal(isOpening(saved), true);
   assert.equal(isOpening({ ...saved, commit: "0.1" }), false, "the commit is whole lamports");
+  assert.equal(isOpening({ ...saved, commit: "0" }), false, "a commit of more than 0");
+  assert.equal(isOpening({ ...saved, symbol: "" }), false, "a ticker");
+  assert.equal(isOpening({ ...saved, symbol: " " }), false, "a ticker, not blanks");
+  assert.equal(restoredOpen({ ...saved, commit: "0" }), null);
   assert.equal(isOpening({ ...saved, at: undefined }), true, "a missing at still locks; canStartOver never lets it go");
   const r = restoredOpen(saved);
   assert.equal(r.step, "review");
