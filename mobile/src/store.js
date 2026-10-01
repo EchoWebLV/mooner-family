@@ -10,6 +10,8 @@ import { signIn as walletSignIn } from "../../engine/src/signin.js";
 import { explainSwap } from "../../engine/src/swap.js";
 
 const CHAT_KEEP = 200;
+/** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
+export const PRICE_MOVED = "The price moved. Check the new numbers and press again.";
 const loginName = (w) => `mooner:login:${w}`;
 const mineName = (w) => `mooner:mine:${w}`;
 const without = (o, k) => {
@@ -43,6 +45,11 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     missing: {}, // key -> true: the server has no such presale
     viewError: {}, // key -> the server's words when it couldn't read that presale; its next snapshot clears it
     launched: {}, // presale key -> launched row
+    // mint -> this phone's clock when a `launched` upsert first brought the coin's launch (seen
+    // live). The Buy and Sell lock ends 4 s after the later of this and launch.at (the
+    // server's clock), so a phone clock that runs fast can't open them early. A coin first
+    // seen in a snapshot has none.
+    launchSeen: {},
     profiles: {}, // wallet -> Mooner picture traits
     solUsd: 0,
     wallet: null, // base58
@@ -80,7 +87,13 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
   function onLaunched(m) {
     if (m.type === "snapshot") feedSnapshot("launched", Object.fromEntries(m.data.map((r) => [r.presale, r])));
-    else if (m.type === "upsert") patch("launched", (l) => ({ ...l, [m.data.presale]: m.data }));
+    else if (m.type === "upsert")
+      set((s) => {
+        const r = m.data;
+        const launched = { ...s.launched, [r.presale]: r };
+        const first = r.launch != null && s.launched[r.presale]?.launch == null && r.mint && s.launchSeen[r.mint] == null;
+        return first ? { launched, launchSeen: { ...s.launchSeen, [r.mint]: now() } } : { launched };
+      });
     else if (m.type === "error") feedFailed("launched", m.error);
   }
 
@@ -328,20 +341,25 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
   /** Buys or sells coin `mint` at a fresh quote (the price may have moved since the sheet's).
    *  Returns { ok, value: { sig, quote } } or { ok: false, error } once the swap is confirmed;
-   *  the balance read it starts lands in `holdings` on its own. */
-  function trade(side, mint, amount, signer) {
-    return run(
+   *  the balance read it starts lands in `holdings` on its own. `opts.atLeast` (BigInt): the
+   *  minimum the sheet showed. A fresh quote that doesn't reach it stops before anything is
+   *  signed: { ok: false, moved: true, value: { quote }, error: PRICE_MOVED }, so the sheet
+   *  can show the new numbers. */
+  async function trade(side, mint, amount, signer, { atLeast = null } = {}) {
+    const r = await run(
       mint,
       side,
       async (onStep) => {
         onStep("Getting a price from Jupiter");
         const q = await market.quote(side, mint, amount);
+        if (atLeast != null && q.outAmount < atLeast) return { moved: true, quote: q };
         const sig = await market.swap(q, signer, onStep);
         readHolding(mint); // catches its own errors; a hung read mustn't hold the lock
         return { sig, quote: q };
       },
       explainSwap,
     );
+    return r.ok && r.value.moved ? { ok: false, moved: true, value: { quote: r.value.quote }, error: PRICE_MOVED } : r;
   }
 
   /** What a join takes from the wallet besides the deposit (BigInt lamports). */

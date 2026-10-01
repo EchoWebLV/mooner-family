@@ -8,12 +8,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
-import { tradeOpensAt } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { PriceChart } from "../../src/launched/PriceChart";
 import {
   atMigration, capText, coinScreenState, curveOf, dayTime, holderRows, holdersText, inWith, liquidityText, positionOf, priceText, volumeText,
 } from "../../src/launched/coin";
+import { lockEnds } from "../../src/launched/trade";
 import { TradeSheet } from "../../src/launched/TradeSheet";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { FillBar } from "../../src/ui/FillBar";
@@ -22,7 +22,7 @@ import { Button, Card, Empty, PillButton, Screen, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
 import { TopBar } from "../../src/ui/TopBar";
 import { C, S } from "../../src/ui/theme";
-import { useSigner } from "../../src/wallet";
+import { useAccount, useSigner } from "../../src/wallet";
 
 /** How long "Copied" shows after a copy. */
 const COPIED_MS = 2_000;
@@ -46,6 +46,8 @@ export default function Coin() {
   const statsError = useStore(store, (s) => (mint ? s.coinError[mint] : undefined));
   const holding = useStore(store, (s) => (mint ? s.holdings[mint] : undefined));
   const lamports = useStore(store, (s) => s.lamports);
+  const seenAt = useStore(store, (s) => (mint ? s.launchSeen[mint] : undefined));
+  const account = useAccount(); // undefined while the saved wallet is read on a cold start
   const signer = useSigner();
   const [sheet, setSheet] = useState(null); // "buy" | "sell" | null
   const [done, setDone] = useState(null); // what the last trade here did
@@ -74,9 +76,11 @@ export default function Coin() {
           </View>
           <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={atMigration(row.pool) ? null : row.pool?.sqrtPrice} />
           {done ? (
-            <Card>
-              <T color={C.up}>{done}</T>
-            </Card>
+            <View accessibilityLiveRegion="polite">
+              <Card>
+                <T color={C.up}>{done}</T>
+              </Card>
+            </View>
           ) : null}
           {position ? (
             <Card style={{ gap: 6 }}>
@@ -105,9 +109,10 @@ export default function Coin() {
           {feedError ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{feedError}</T> : null}
         </View>
       )}
-      {shows === "coin" ? (
+      {shows === "coin" && account !== undefined ? (
         <TradeBar
           row={row}
+          seenAt={seenAt}
           signer={signer}
           sheet={sheet}
           setSheet={setSheet}
@@ -122,10 +127,10 @@ export default function Coin() {
 
 /** The sticky Buy and Sell buttons and their sheets; "Connect to trade" without a wallet. A
  *  sheet's close closes only that sheet: a trade that lands after its sheet was closed
- *  mustn't close the other one. */
-function TradeBar({ row, signer, sheet, setSheet, onDone, holding, lamports }) {
+ *  mustn't close the other one. `seenAt`: store launchSeen for the coin. */
+function TradeBar({ row, seenAt, signer, sheet, setSheet, onDone, holding, lamports }) {
   const insets = useSafeAreaInsets();
-  const opensAt = tradeOpensAt(row);
+  const opensAt = lockEnds(row, seenAt);
   const closeBuy = useCallback(() => setSheet((s) => (s === "buy" ? null : s)), [setSheet]);
   const closeSell = useCallback(() => setSheet((s) => (s === "sell" ? null : s)), [setSheet]);
   const sheets = { row, holding, lamports, signer, opensAt, onDone };

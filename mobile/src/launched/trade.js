@@ -1,6 +1,7 @@
 // What the Buy and Sell sheets say, as plain functions (no React Native, so Node tests run
 // them). Amounts are BigInt: lamports for SOL, raw units for the coin (6 decimals).
-import { impactOf, poolFee, SLIPPAGE_BPS } from "../../../engine/src/swap.js";
+import { impactOf, poolFee, sellAmount, SLIPPAGE_BPS } from "../../../engine/src/swap.js";
+import { tradeOpensAt } from "../../../engine/src/views.js";
 import { compact } from "../ui/format.js";
 import { sig3 } from "./coin.js";
 
@@ -10,16 +11,35 @@ export const BUY_CHIPS = [100_000_000n, 500_000_000n, 1_000_000_000n];
 export const SELL_PCTS = [25, 50, 100];
 /** Price impact from which the sheet shows it in red. */
 export const HIGH_IMPACT = 0.05;
+/** The most a token amount can be on chain (u64). */
+const U64_MAX = (1n << 64n) - 1n;
+
+/**
+ * What a buy needs in the wallet besides the SOL it spends (lamports). Rent as mainnet's
+ * getMinimumBalanceForRentExemption said on 2026-10-01; the accounts as Jupiter's
+ * swap-instructions built them for a fresh wallet buying a Mooner coin that day:
+ * - the coin's token account: a Token-2022 ATA. Mooner mints carry only mint-side extensions
+ *   (metadataPointer, tokenMetadata), so it's 165 bytes + the account type + ImmutableOwner's
+ *   header = 170 bytes: 1_513_840. Only a first buy pays it; the check keeps it back always.
+ * - the wrapped-SOL account Jupiter opens for the swap (SPL Token, 165 bytes): 1_488_440,
+ *   back in the wallet when Jupiter closes it at the end of the same tx. While it's open the
+ *   wallet is without it; after the tx the wallet must still hold its own rent-exempt minimum
+ *   (0 bytes: 650_240). The larger of the two counts.
+ * - the network fee: 5_000 for the one signature, plus 1_400_000 CU (the most a tx can ask,
+ *   and what Jupiter set for that wallet) at 100_000 µL per CU (what Seed Vault raises the
+ *   priority to): 145_000.
+ */
+export const BUY_RESERVE = 1_513_840n + 1_488_440n + 145_000n;
 
 /** Typed SOL ("0.25", "1", "0,5") as lamports, or null when it isn't a positive amount
- *  with at most 9 decimals. */
+ *  with at most 9 decimals that fits a u64. */
 export function parseSol(text) {
   const t = String(text ?? "").trim().replace(",", ".");
   if (!/^\d*\.?\d*$/.test(t) || t === "" || t === ".") return null;
   const [int, frac = ""] = t.split(".");
   if (frac.length > 9) return null;
   const v = BigInt(int || "0") * 1_000_000_000n + BigInt(frac.padEnd(9, "0"));
-  return v > 0n ? v : null;
+  return v > 0n && v <= U64_MAX ? v : null;
 }
 
 /** Lamports as SOL with 3 significant digits: "0.00988", "1.5". */
@@ -61,3 +81,37 @@ export function tradeLines(side, q, { pools, sqrtPrice, symbol }) {
 
 /** Whole seconds until `at` (ms), at least 1, for the lock's countdown; 0 once it's there. */
 export const secondsTo = (at, nowMs) => (at == null || nowMs >= at ? 0 : Math.ceil((at - nowMs) / 1000));
+
+/** When a coin's Buy and Sell open (ms, this phone's clock): views.js tradeOpensAt counted from
+ *  the later of the launch's time on the server's clock (`launch.at`) and `seenAt`, this
+ *  phone's clock when it first heard of the launch (store launchSeen; undefined for a coin
+ *  that came in a snapshot). A phone clock that runs fast then can't open them during the
+ *  tax for a launch it saw live. null when the row has no launch. */
+export function lockEnds(row, seenAt) {
+  const at = row?.launch?.at;
+  if (at == null) return null;
+  return tradeOpensAt({ launch: { at: seenAt == null ? Number(at) : Math.max(Number(at), seenAt) } });
+}
+
+/**
+ * Why a sheet's Buy or Sell can't go ahead now: { text, wait } or null. `wait`: it passes by
+ * itself (the lock, another action), else something to change. In order: the lock (`secs`
+ * left), another action going on (`busy` that isn't this sheet's own trade), a buy of
+ * `amount` lamports the wallet's `lamports` can't cover with BUY_RESERVE, a sell with nothing
+ * held (`holding`), or a `pct` of it that rounds to nothing.
+ */
+export function whyNot({ side, secs, amount, lamports, holding, pct, symbol, busy, trading }) {
+  if (secs > 0) return { text: `Trading opens in ${secs} s, after the launch's snipe tax.`, wait: true };
+  if (busy && !trading) {
+    const trade = busy.kind === "buy" || busy.kind === "sell";
+    return { text: trade ? "Wait for the last trade to finish." : "Wait for the last one to finish.", wait: true };
+  }
+  if (side === "buy") {
+    if (amount == null || lamports == null || amount + BUY_RESERVE <= BigInt(lamports)) return null;
+    return { text: `Your wallet has ${solSig(lamports)} SOL, and a buy needs about ${solSig(BUY_RESERVE)} SOL more for fees and rent.`, wait: false };
+  }
+  if (!holding) return null;
+  if (holding.raw <= 0n) return { text: `You don't hold any $${symbol}.`, wait: false };
+  if (sellAmount(holding.raw, pct) === 0n) return { text: `Too little to sell ${pct}%. Try 100%.`, wait: false };
+  return null;
+}

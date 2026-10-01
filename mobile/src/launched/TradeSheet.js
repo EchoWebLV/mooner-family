@@ -11,7 +11,7 @@ import { Button, PillButton, Sheet, Steps, T } from "../ui/kit";
 import { C, F, R } from "../ui/theme";
 import { useNow } from "../ui/useNow";
 import { atMigration } from "./coin";
-import { BUY_CHIPS, parseSol, secondsTo, SELL_PCTS, solSig, tokensText, tradeLines } from "./trade";
+import { BUY_CHIPS, parseSol, secondsTo, SELL_PCTS, solSig, tokensText, tradeLines, whyNot } from "./trade";
 
 /** How long the amount must sit still before the sheet asks Jupiter for a price. */
 const QUOTE_AFTER_MS = 400;
@@ -20,7 +20,7 @@ const QUOTE_AFTER_MS = 400;
  *  its sheet was closed still says why when it opens again. `side`: "buy" | "sell"; `row`:
  *  the launched row; `holding`: the wallet's balance of the
  *  coin ({ raw, decimals, ui } or undefined while it's read); `lamports`: the wallet's SOL;
- *  `opensAt`: when trading opens (ms, views.js tradeOpensAt); `onDone(text)`: a trade landed. */
+ *  `opensAt`: when trading opens (ms, trade.js lockEnds); `onDone(text)`: a trade landed. */
 export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports, signer, opensAt }) {
   const busy = useStore(store, (s) => s.busy);
   const [chip, setChip] = useState(side === "buy" ? BUY_CHIPS[0] : SELL_PCTS[0]);
@@ -39,7 +39,19 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
     return raw > 0n ? raw : null; // 25% of a few raw units can round to nothing
   }, [buying, typed, chip, holding]);
 
-  // A price once the amount sits still: one ask per amount the user picks, never on a timer.
+  // Locked until the snipe tax is over: a 1 s clock re-renders the countdown meanwhile (it
+  // reads no server); the seconds come from the clock now, so an unrelated render can't
+  // leave a stale count behind. `opensAt` counts from the later of the server's launch time
+  // and when this phone heard of the launch (trade.js lockEnds), so a phone clock that runs
+  // fast doesn't open a launch it saw live early; a coin first seen in a snapshot has only
+  // the server's time.
+  const locked = opensAt != null && Date.now() < opensAt;
+  useNow(1000, open && locked);
+  const secs = locked ? secondsTo(opensAt, Date.now()) : 0;
+
+  // A price once the amount sits still and the lock is over: one ask per amount the user
+  // picks (and one when the lock ends), never on a timer. A price from inside the tax's
+  // seconds would be stale by the time Buy opens.
   const ask = (a) => {
     const n = ++asked.current;
     setPriced(null);
@@ -47,30 +59,21 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
     store.getState().preview(side, mint, a).then((r) => n === asked.current && setPriced({ amount: a, ...r }));
   };
   useEffect(() => {
-    if (!open) return;
+    if (!open || locked) return;
     const t = setTimeout(() => ask(amount), QUOTE_AFTER_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, amount]);
+  }, [open, amount, locked]);
 
-  // Locked until the snipe tax is over: a 1 s clock re-renders the countdown meanwhile (it
-  // reads no server); the seconds come from the clock now, so an unrelated render can't
-  // leave a stale count behind. `opensAt` is the server's clock and this is the phone's, so
-  // a phone that runs fast unlocks early: the quote and the program still have the last word.
-  const locked = opensAt != null && Date.now() < opensAt;
-  useNow(1000, open && locked);
-  const secs = locked ? secondsTo(opensAt, Date.now()) : 0;
   const trading = busy?.key === mint && busy.kind === side;
-  const failed = priced?.ok === false && priced.amount === amount ? priced : null;
-  const q = priced?.ok && priced.amount === amount ? priced.value : null;
+  const failed = !locked && priced?.ok === false && priced.amount === amount ? priced : null;
+  const q = !locked && priced?.ok && priced.amount === amount ? priced.value : null;
   const pools = [row.pool?.address, row.pool?.damm].filter(Boolean);
   // a migrated coin's sqrtPrice is the one at migration until its DAMM v2 pool is found: no
   // live price then, so the impact is Jupiter's own
   const sqrtPrice = atMigration(row.pool) ? null : row.pool?.sqrtPrice ?? null;
   const lines = q ? tradeLines(side, q, { pools, sqrtPrice, symbol }) : null;
-  const short = buying && amount != null && lamports != null && amount > BigInt(lamports) ? `Your wallet has ${solSig(lamports)} SOL.` : null;
-  const none = !buying && holding && holding.raw <= 0n ? `You don't hold any $${symbol}.` : null;
-  const why = secs > 0 ? `Trading opens in ${secs} s, after the launch's snipe tax.` : short ?? none;
+  const why = whyNot({ side, secs, amount, lamports, holding, pct: chip, symbol, busy, trading });
 
   // Closed: the next opening starts from the first chip, with no old error and no old price.
   // A closing in the middle of a trade keeps the amount, which the error (if any) is about.
@@ -85,11 +88,18 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
     onClose();
   };
 
+  // One signature, at a fresh price: one that no longer reaches the minimum shown comes back
+  // unsigned, and the sheet shows it so the next press is at the new numbers.
   async function go() {
-    if (store.getState().busy || amount == null || !signer) return;
+    if (store.getState().busy || amount == null || !signer || !q) return;
     setError(null);
-    const r = await store.getState().trade(side, mint, amount, signer);
-    Haptics.notificationAsync(r.ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error).catch(() => {});
+    const r = await store.getState().trade(side, mint, amount, signer, { atLeast: q.minOut });
+    const buzz = r.ok ? "Success" : r.moved ? "Warning" : "Error";
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType[buzz]).catch(() => {});
+    if (r.moved) {
+      asked.current++; // a price still on its way is older than this one
+      setPriced({ amount, ok: true, value: r.value.quote });
+    }
     if (!r.ok) return setError(r.error);
     const got = r.value.quote.outAmount;
     onDone?.(buying ? `Bought about ${tokensText(got)} $${symbol}` : `Sold for about ${solSig(got)} SOL`);
@@ -105,6 +115,7 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
             <Chip
               key={String(c)}
               text={buying ? `${solSig(c)} SOL` : `${c}%`}
+              label={buying ? undefined : `Sell ${c}%`}
               on={c === chip && !typed}
               disabled={trading}
               onPress={() => {
@@ -147,7 +158,7 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
             <PillButton title="Try again" onPress={() => ask(amount)} />
           </View>
         ) : null}
-        {why ? <T v="small" color={secs > 0 ? C.warn : C.down}>{why}</T> : null}
+        {why ? <T v="small" color={why.wait ? C.warn : C.down}>{why.text}</T> : null}
         {error ? <T v="small" color={C.down}>{error}</T> : null}
         {trading ? <Steps step={busy.step} /> : null}
         <Button
@@ -172,12 +183,12 @@ function Line({ label, value, color }) {
   );
 }
 
-/** An oval amount chip, as in the join sheet. */
-function Chip({ text, on, disabled, onPress }) {
+/** An oval amount chip, as in the join sheet. `label`: what a screen reader says, if not `text`. */
+function Chip({ text, label, on, disabled, onPress }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={text}
+      accessibilityLabel={label ?? text}
       accessibilityState={{ selected: on, disabled }}
       disabled={disabled}
       onPress={() => {

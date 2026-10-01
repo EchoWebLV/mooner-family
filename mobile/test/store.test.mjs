@@ -636,3 +636,50 @@ test("trade: a failed swap in plain words; a second trade waits for the first", 
   release();
   assert.deepEqual(await first, { ok: false, error: "The price moved more than 3% before your trade landed, so it didn't go through. Try again." });
 });
+
+test("launched: an upsert that first brings a coin's launch notes this phone's clock; a snapshot's rows don't", () => {
+  let t = 5_000;
+  const { store, push } = rig({ now: () => t });
+  store.getState().start();
+  push("launched", "snapshot", [{ presale: "A", mint: "MA", launch: { at: 1 } }]);
+  push("launched", "upsert", { presale: "A", mint: "MA", launch: { at: 1 }, pool: {} });
+  push("launched", "upsert", { presale: "B", mint: "MB", launch: null });
+  t = 6_000;
+  push("launched", "upsert", { presale: "B", mint: "MB", launch: { at: 5_500 } });
+  t = 7_000;
+  push("launched", "upsert", { presale: "B", mint: "MB", launch: { at: 5_500 }, pool: {} });
+  push("launched", "upsert", { presale: "C", mint: "MC", launch: { at: 6_900 } });
+  assert.deepEqual(store.getState().launchSeen, { MB: 6_000, MC: 7_000 }, "A came in the snapshot; B from its first row with a launch; later rows change nothing");
+  push("launched", "snapshot", [{ presale: "B", mint: "MB", launch: { at: 5_500 } }]);
+  assert.deepEqual(store.getState().launchSeen, { MB: 6_000, MC: 7_000 }, "a snapshot (a reconnect) keeps them");
+});
+
+test("trade: a fresh price below the minimum the sheet showed goes back to the sheet unsigned", async () => {
+  const { store, calls } = rig();
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 8n });
+  assert.deepEqual(r, {
+    ok: false,
+    moved: true,
+    value: { quote: { side: "buy", inAmount: 100_000_000n, outAmount: 7n, route: [] } },
+    error: "The price moved. Check the new numbers and press again.",
+  });
+  assert.deepEqual(calls.map((c) => c[0]), ["quote"], "no swap: nothing to sign");
+  assert.equal(store.getState().busy, null);
+});
+
+test("trade: a fresh price that still reaches the minimum the sheet showed goes ahead", async () => {
+  const { store, calls } = rig();
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer, { atLeast: 7n });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.sig, "SIG");
+  assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap", "holding"]);
+});
+
+test("trade: with no minimum, any fresh price goes ahead", async () => {
+  const { store, calls } = rig({ market: { quote: async (side, mint, amount) => (calls.push(["quote"]), { side, inAmount: amount, outAmount: 1n, route: [] }) } });
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap"]);
+});
