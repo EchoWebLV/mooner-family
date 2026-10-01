@@ -37,7 +37,29 @@
       ],
       "expo-secure-store",
       "expo-font",
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      [
+        "expo-image-picker",
+        {
+          "microphonePermission": false,
+          "colors": {
+            "cropToolbarColor": "#0d0e12",
+            "cropToolbarIconColor": "#f3f4f6",
+            "cropToolbarActionTextColor": "#f3f4f6",
+            "cropBackButtonIconColor": "#f3f4f6",
+            "cropBackgroundColor": "#07080b"
+          },
+          "dark": {
+            "colors": {
+              "cropToolbarColor": "#0d0e12",
+              "cropToolbarIconColor": "#f3f4f6",
+              "cropToolbarActionTextColor": "#f3f4f6",
+              "cropBackButtonIconColor": "#f3f4f6",
+              "cropBackgroundColor": "#07080b"
+            }
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false
