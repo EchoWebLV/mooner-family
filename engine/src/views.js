@@ -127,3 +127,14 @@ export function canGetBack(view, wallet, nowMs) {
   if (view.state === "OPEN") return secondsLeft(view, nowMs) > 0;
   return view.state === "EXPIRED" || view.state === "FAILED";
 }
+
+/** Seconds of DBC's snipe tax after a pool opens (engine/src/dbc.js CURVE.SNIPE_S: about
+ *  99% in the launch second, the 1% floor from 3 s on; buys and sells alike). */
+export const SNIPE_S = 3;
+/** Past the tax, the same margin the keeper waits before it delivers presale tokens. */
+export const TAX_MARGIN_S = 1;
+
+/** When a launched coin's Buy and Sell open (ms): its launch time (`launch.at`, the
+ *  server's clock once the launch tx confirmed, so after the pool opened) plus the tax and
+ *  the margin. null when the row has no launch. */
+export const tradeOpensAt = (row) => (row?.launch?.at == null ? null : Number(row.launch.at) + (SNIPE_S + TAX_MARGIN_S) * 1000);

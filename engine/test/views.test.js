@@ -122,3 +122,13 @@ test("canGetBack", () => {
   assert.equal(canGetBack(open({ seats: [seat({ commit: "0" })], state: "SETTLED" }), "W", NOW), true);
   assert.equal(canGetBack(open({ seats: [seat({ commit: "0", creator: true })], state: "FULL" }), "W", NOW), false);
 });
+
+test("tradeOpensAt: launch time plus the snipe tax (dbc.js's) and the keeper's margin", async () => {
+  const { CURVE } = await import("../src/dbc.js");
+  const { SNIPE_S, TAX_MARGIN_S, tradeOpensAt } = await import("../src/views.js");
+  assert.equal(SNIPE_S, CURVE.SNIPE_S);
+  assert.equal(TAX_MARGIN_S, 1);
+  assert.equal(tradeOpensAt({ launch: { at: NOW } }), NOW + 4_000);
+  assert.equal(tradeOpensAt({ launch: null }), null);
+  assert.equal(tradeOpensAt(undefined), null);
+});

@@ -1,14 +1,17 @@
-// Market data and trades for launched coins, from public APIs the browser can call:
-// GeckoTerminal (candles and trades of a pool), Jupiter (SOL price, quotes and swaps).
-// A swap is a transaction Jupiter builds and the user's wallet signs and sends.
+// Market data and trades for launched coins. Quotes, swaps and token balances are the
+// engine's (engine/src/swap.js), the code the phone app trades with; a swap is a
+// transaction Jupiter builds and the user's wallet signs and sends. Candles come from
+// GeckoTerminal through engine/src/market.js; trades of a pool from GeckoTerminal and SOL/USD
+// from Jupiter, here.
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js'
 import type { Candle, Trade } from '@/lib/types'
+import { geckoCandles } from '../../../engine/src/market.js'
+import { explainSwap, quote as jupQuote, swap as jupSwap, tokenBalance as balanceOf, WSOL } from '../../../engine/src/swap.js'
+
+export { WSOL }
 
 const GECKO = 'https://api.geckoterminal.com/api/v2/networks/solana'
 const JUP = 'https://lite-api.jup.ag'
-export const WSOL = 'So11111111111111111111111111111111111111112'
-const TOKEN_2022 = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
-const SPL_TOKEN = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
 async function getJson(url: string, init?: RequestInit) {
   const r = await fetch(url, init)
@@ -26,19 +29,7 @@ export async function solUsd(): Promise<number> {
 }
 
 /** One-minute candles in SOL per token, oldest first, one per minute. */
-export async function candlesOf(pool: string, limit = 300): Promise<Candle[]> {
-  const j = await getJson(`${GECKO}/pools/${pool}/ohlcv/minute?aggregate=1&limit=${limit}&currency=token`)
-  const list: number[][] = j?.data?.attributes?.ohlcv_list ?? []
-  const sorted = list.map(([ts, o, h, l, c]) => ({ t: ts * 1000, o, h, l, c })).sort((a, b) => a.t - b.t)
-  // GeckoTerminal can list a minute twice; the chart needs strictly rising times
-  const out: Candle[] = []
-  for (const c of sorted) {
-    const last = out[out.length - 1]
-    if (last && last.t === c.t) out[out.length - 1] = { t: c.t, o: last.o, h: Math.max(last.h, c.h), l: Math.min(last.l, c.l), c: c.c }
-    else out.push(c)
-  }
-  return out
-}
+export const candlesOf = (pool: string, limit = 300): Promise<Candle[]> => geckoCandles(pool, { limit })
 
 /** Recent trades, oldest first. `userId` is the trader's wallet. */
 export async function tradesOf(pool: string, mint: string): Promise<{ trades: Trade[]; volumeUsd: number }> {
@@ -65,56 +56,36 @@ export async function tradesOf(pool: string, mint: string): Promise<{ trades: Tr
   return { trades: trades.sort((a, b) => a.at - b.at), volumeUsd }
 }
 
+type EngineQuote = Awaited<ReturnType<typeof jupQuote>>
+
 export interface Quote {
   inAmount: string
   outAmount: string
   priceImpactPct: string
-  raw: unknown
+  raw: EngineQuote
 }
 
-/** A Jupiter quote: `amount` in the input's smallest units. */
+/** A Jupiter quote: `amount` in the input's smallest units. No route throws "no route for
+ *  this trade yet". */
 export async function quote(inputMint: string, outputMint: string, amount: bigint, slippageBps = 300): Promise<Quote> {
-  const u = `${JUP}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`
-  const j = await getJson(u)
-  if (!j?.outAmount) throw new Error('no route for this trade yet')
-  return { inAmount: j.inAmount, outAmount: j.outAmount, priceImpactPct: j.priceImpactPct, raw: j }
+  const q = await jupQuote({ input: inputMint, output: outputMint, amount, slippageBps })
+  return { inAmount: String(q.inAmount), outAmount: String(q.outAmount), priceImpactPct: String(q.impact), raw: q }
 }
 
 type SendTx = (tx: VersionedTransaction, conn: Connection) => Promise<string>
 
-/** Builds the swap for a quote, has the wallet sign and send it, and waits for it. */
+/** Builds the swap for a quote, checks the wallet is its only signer, has the wallet sign and
+ *  send it, and waits for it against Jupiter's blockhash. Errors are in plain words. */
 export async function swap(q: Quote, user: PublicKey, conn: Connection, sendTransaction: SendTx): Promise<string> {
-  const j = await getJson(`${JUP}/swap/v1/swap`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      quoteResponse: q.raw,
-      userPublicKey: user.toBase58(),
-      wrapAndUnwrapSol: true,
-      dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: 'auto',
-    }),
-  })
-  const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(j.swapTransaction), (c) => c.charCodeAt(0)))
-  const sig = await sendTransaction(tx, conn)
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
-  const r = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
-  if (r.value.err) throw new Error('the swap failed on chain')
-  return sig
+  try {
+    // engine/src is plain JS: its optional signer params read as null to TypeScript
+    return await jupSwap({ quote: q.raw, wallet: user, conn, sendTransaction: sendTransaction as never })
+  } catch (e) {
+    throw new Error(explainSwap(e))
+  }
 }
 
 /** The wallet's balance of a mint, in whole tokens (both token programs). */
 export async function tokenBalance(conn: Connection, owner: PublicKey, mint: PublicKey): Promise<{ ui: number; raw: bigint; decimals: number }> {
-  let raw = 0n
-  let decimals = 6
-  for (const programId of [TOKEN_2022, SPL_TOKEN]) {
-    const r = await conn.getParsedTokenAccountsByOwner(owner, { programId })
-    for (const a of r.value) {
-      const info = a.account.data.parsed?.info
-      if (info?.mint !== mint.toBase58()) continue
-      raw += BigInt(info.tokenAmount.amount)
-      decimals = info.tokenAmount.decimals
-    }
-  }
-  return { ui: Number(raw) / 10 ** decimals, raw, decimals }
+  return balanceOf(conn, owner, mint)
 }

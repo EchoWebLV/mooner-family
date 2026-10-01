@@ -53,9 +53,10 @@ export class TxError extends Error {
  *  it calls dead can't land later; otherwise after `timeoutMs`. `stuckMs` bounds the
  *  wait for an RPC whose block height stops moving; that error says the outcome is
  *  unknown (the keeper re-reads the chain before it acts again). */
-export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000, stuckMs = 300_000, lastValidBlockHeight } = {}) {
+export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000, stuckMs = 300_000, lastValidBlockHeight, preflight = false } = {}) {
   const raw = tx.serialize();
-  const sig = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
+  // `preflight`: the first send is simulated first, so a tx that would fail costs nothing
+  const sig = await conn.sendRawTransaction(raw, { skipPreflight: !preflight, maxRetries: 0, ...(preflight && { preflightCommitment: "confirmed" }) });
   const t0 = Date.now();
   let lastSend = t0;
   const done = async (st) => {
