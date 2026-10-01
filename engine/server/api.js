@@ -21,7 +21,7 @@ import { DELEGATION_PROGRAM, describeTxError, numbers } from "../src/consts.js";
 import { F_CLAIMED, PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, STATE_NAME, decodePresale, decodeSeat } from "../src/layout.js";
 import { configPda, poolAddresses, presalePda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
-import { TxError, sendSigned, within } from "../src/tx.js";
+import { TxError, sendSigned, sigOf, within } from "../src/tx.js";
 import { cosign, Refused } from "../src/cosigner.js";
 import { launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "./auth.js";
@@ -53,6 +53,10 @@ export function sniffImage(b) {
 
 /** `e` as an answer that says the tx never went out (`sent: false`). An error that isn't
  *  an answer already is a 500, its cause kept for the log (http.js). */
+/** A simulation error's name: the RPC's JSON has a unit variant ("AlreadyProcessed") as the
+ *  string, and one with data as an object keyed by the name. */
+const errName = (err) => (typeof err === "string" ? err : err && typeof err === "object" ? Object.keys(err)[0] ?? null : null);
+
 function unsent(e) {
   if (e instanceof HttpError) return Object.assign(e, { extra: { ...e.extra, sent: false } });
   if (e instanceof Refused) return new HttpError(403, e.message, { sent: false });
@@ -318,7 +322,9 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     return { status: 201, json: { mint: key.publicKey, presale: presalePda(pid, key.publicKey), name, symbol, image: pinned.image, uri: pinned.uri } };
   }
 
-  /** The checks before a co-signed entry tx goes out: { out, tx, programs }. */
+  /** The checks before a co-signed entry tx goes out: { out, tx, programs, before }. `before`
+   *  is "out" when this very tx went out already (the same signed tx again: a retry, or a
+   *  second request after a first that timed out), and "unknown" when that can't be told. */
   async function cosignChecked({ body, ip }) {
     limit(L.cosignPerIp, ip, "requests");
     if (typeof body.tx !== "string" || body.tx.length > 2_000) bad("tx must be a base64 transaction");
@@ -341,19 +347,40 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     const sim = await within(l1.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" }), simMs).catch((e) => {
       throw e?.timedOut ? new HttpError(503, "the network is slow, try again") : e;
     });
+    const name = errName(sim.value.err);
+    if (name === "AlreadyProcessed") return { out, tx, programs, before: "out" };
+    if (name === "BlockhashNotFound") {
+      // an expired blockhash, or this tx went out and its blockhash has since expired: the
+      // tx's own status tells them apart
+      const before = await within(l1.getSignatureStatuses([sigOf(tx)], { searchTransactionHistory: true }), simMs).then(
+        (r) => (!Array.isArray(r?.value) ? "unknown" : r.value[0] ? "out" : null),
+        () => "unknown",
+      );
+      if (before) return { out, tx, programs, before };
+    }
     if (sim.value.err) {
       throw new HttpError(400, `the tx fails: ${describeTxError(sim.value.err, programs, pid, sim.value.logs)}`, { logs: sim.value.logs ?? [] });
     }
-    return { out, tx, programs };
+    return { out, tx, programs, before: null };
   }
 
   async function cosignRoute(req) {
     // every answer from before the tx goes out says `sent: false`: the client (flows.js) takes
     // those as plain failures, and any other (a proxy's 502, no answer, an error once the send
     // began) as outcome unknown
-    const { out, tx, programs } = await cosignChecked(req).catch((e) => {
+    const { out, tx, programs, before } = await cosignChecked(req).catch((e) => {
       throw unsent(e);
     });
+    const reply = (sig, confirmed) => ({
+      status: confirmed ? 200 : 202,
+      json: { sig, confirmed, kind: out.kind, user: out.user, presale: out.presale, ...(out.mint && { mint: out.mint }) },
+    });
+    // this tx may have gone out before: no `sent` marker, so the client doesn't take it as a
+    // plain failure
+    if (before === "unknown") throw new HttpError(503, "the network is slow, try again");
+    // it did: sent, not confirmed here; what the first send records (markOpened, the keeper) is
+    // left to it
+    if (before === "out") return reply(sigOf(tx), false);
     let sig;
     let confirmed = true;
     try {
@@ -369,8 +396,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       keeper?.watch(out.presale); // before its next scan
     }
     if (confirmed) feed?.touch(out.presale);
-    const json = { sig, confirmed, kind: out.kind, user: out.user, presale: out.presale, ...(out.mint && { mint: out.mint }) };
-    return { status: confirmed ? 200 : 202, json };
+    return reply(sig, confirmed);
   }
 
   // ---- routes ----

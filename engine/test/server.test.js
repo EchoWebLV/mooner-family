@@ -17,6 +17,7 @@ import { mintMessage, verifySignature } from "../server/auth.js";
 import { createServer, webFile } from "../server/http.js";
 import * as C from "../src/client.js";
 import { makeRoutes, sniffImage } from "../server/api.js";
+import { sigOf } from "../src/tx.js";
 import { Store } from "../server/store.js";
 import { Keeper } from "../server/keeper.js";
 import { IPFS_GATEWAY, loadConfig, loadKey, openersFrom, openersFromList } from "../server/config.js";
@@ -479,6 +480,66 @@ test("cosign: every answer from before the tx goes out says sent: false; none fr
     assert.equal(limited.json.sent, false, "rate limited");
   } finally {
     await s2.close();
+  }
+});
+
+test("cosign: the same signed tx again after it went out is a 202 with its sig and no sent marker; a blockhash the RPC doesn't know is one only when the tx's status is found", async () => {
+  const creator = Keypair.generate();
+  const presale = presalePda(pid, Keypair.generate().publicKey);
+  const join = (u) => entryTx(u, joinIxs(u.publicKey, presale));
+  const sigIn = (b64) => sigOf(VersionedTransaction.deserialize(Buffer.from(b64, "base64")));
+  const s = await startServer({ openers: [creator], simMs: 50 });
+  const statuses = s.l1.getSignatureStatuses;
+  try {
+    const cosign = (tx) => s.call("POST", "/api/cosign", { tx });
+    // AlreadyProcessed (a unit variant: the RPC's JSON has the name as a string; an object
+    // keyed by it is read the same): it went out before
+    for (const err of ["AlreadyProcessed", { AlreadyProcessed: null }]) {
+      s.l1.simErr = err;
+      const tx = join(Keypair.generate());
+      const r = await cosign(tx);
+      assert.equal(r.status, 202, JSON.stringify(err));
+      assert.deepEqual([r.json.sig, r.json.confirmed, r.json.kind, r.json.presale], [sigIn(tx), false, "join", presale.toBase58()]);
+      assert.equal("sent" in r.json, false, "no sent marker");
+    }
+    // an open the same way: what the first request recorded is left to it
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    s.l1.simErr = "AlreadyProcessed";
+    const open = await cosign(entryTx(creator, openIxs(creator.publicKey, mint)));
+    assert.equal(open.status, 202);
+    assert.deepEqual([open.json.kind, open.json.mint, "sent" in open.json], ["open", mint.toBase58(), false]);
+    assert.notEqual(s.store.token(mint).presale, presalePda(pid, mint).toBase58(), "not recorded as opened here");
+    // BlockhashNotFound: the tx's own status decides
+    const asked = [];
+    const status = (answer) => (s.l1.getSignatureStatuses = async (sigs, opts) => (asked.push([sigs, opts]), answer()));
+    for (const err of ["BlockhashNotFound", { BlockhashNotFound: null }]) {
+      s.l1.simErr = err;
+      status(async () => ({ context: { slot: 9 }, value: [{ slot: 8, confirmationStatus: "finalized", err: null }] }));
+      const tx = join(Keypair.generate());
+      const found = await cosign(tx);
+      assert.equal(found.status, 202, `found: ${JSON.stringify(err)}`);
+      assert.deepEqual([found.json.sig, found.json.confirmed, "sent" in found.json], [sigIn(tx), false, false]);
+      assert.deepEqual(asked.at(-1), [[sigIn(tx)], { searchTransactionHistory: true }]);
+    }
+    s.l1.simErr = "BlockhashNotFound";
+    status(async () => ({ context: { slot: 9 }, value: [null] }));
+    const none = await cosign(join(Keypair.generate()));
+    assert.deepEqual([none.status, none.json.sent], [400, false], "no status: it never went out");
+    assert.match(none.json.error, /BlockhashNotFound/);
+    status(async () => { throw new Error("fetch failed"); });
+    const failed = await cosign(join(Keypair.generate()));
+    assert.deepEqual([failed.status, failed.json.error, "sent" in failed.json], [503, "the network is slow, try again", false], "the read failed");
+    status(() => new Promise(() => {}));
+    const hung = await cosign(join(Keypair.generate()));
+    assert.deepEqual([hung.status, hung.json.error, "sent" in hung.json], [503, "the network is slow, try again", false], "the read took over simMs");
+    // any other simulation error: today's 400, nothing went out
+    s.l1.simErr = "AccountInUse";
+    const other = await cosign(join(Keypair.generate()));
+    assert.deepEqual([other.status, other.json.sent], [400, false]);
+    assert.equal(s.l1.sent.length, 0, "nothing was sent on any of these");
+  } finally {
+    s.l1.getSignatureStatuses = statuses;
+    await s.close();
   }
 });
 

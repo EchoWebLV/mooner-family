@@ -160,7 +160,7 @@ function entryKey(tx, pid) {
 
 /** The server: co-signs what the gate would sign, and then the seat is in the ER with
  *  the key in the tx (as delegation leaves it). */
-function fakeApi(info, { confirmed = true, presale = async () => null } = {}) {
+function fakeApi(info, { confirmed = true, sig, presale = async () => null } = {}) {
   const api = {
     cosigned: [],
     blockhash: async () => ({ blockhash: BH, lastValidBlockHeight: 1 }),
@@ -169,7 +169,7 @@ function fakeApi(info, { confirmed = true, presale = async () => null } = {}) {
       api.cosigned.push(tx);
       const e = checkEntryTx(tx, { pid: info.pid, gate: info.gate, validators: [info.ers[0].validator] });
       info.er.put(seatPda(info.pid, e.presale, e.user), info.pid, seatBytes({ user: e.user, presale: e.presale, sessionKey: entryKey(tx, info.pid) }));
-      return { status: 200, json: { confirmed } };
+      return { status: confirmed ? 200 : 202, json: { confirmed, ...(sig && { sig }) } };
     },
     presale,
   };
@@ -586,7 +586,7 @@ test("openPresale: 50,000 micro-lamports per CU when the app sets no price", asy
 test("openPresale: a tx the server sent but hasn't confirmed waits for the presale to show", async () => {
   const info = fakeInfo();
   const sock = fakeSocket();
-  const api = fakeApi(info, { confirmed: false, presale: async () => ({ where: "closed" }) });
+  const api = fakeApi(info, { confirmed: false, sig: "SERVERSIG", presale: async () => ({ where: "closed" }) });
   const w = fakeWallet();
   const mint = Keypair.generate().publicKey;
   const topic = `presale:${presalePda(info.pid, mint)}`;
@@ -599,6 +599,79 @@ test("openPresale: a tx the server sent but hasn't confirmed waits for the presa
   assert.equal(over, false, "a closed view doesn't end it");
   sock.push(topic, { type: "snapshot", data: { where: "er" } });
   assert.ok((await p).equals(presalePda(info.pid, mint)));
+});
+
+/** The server's read of a presale it hasn't seen yet. */
+const notFound = async () => {
+  throw new ApiError(404, "not found", { error: "not found" });
+};
+
+test("openPresale: a 202 whose presale doesn't show before the wait ends is outcome unknown, named by the server's sig or else the signed tx's; a view that breaks the check stays its own error", async () => {
+  const info = fakeInfo();
+  const w = fakeWallet();
+  for (const sig of ["SERVERSIG", undefined]) {
+    w.asked.length = 0;
+    const api = fakeApi(info, { confirmed: false, sig, presale: notFound });
+    const e = await flows({ api, subscribe: fakeSocket().subscribe })
+      .openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n, waitMs: 20 })
+      .then(() => null, (x) => x);
+    assert.equal(e?.outcomeUnknown, true, `${sig}: ${e?.message}`);
+    assert.equal(e.message, OUTCOME_UNKNOWN);
+    assert.equal(explain(e), OUTCOME_UNKNOWN);
+    assert.equal(e.what, "open");
+    assert.equal(e.sig, sig ?? bs58.encode(w.asked[0].signatures[0]));
+  }
+  const sock = fakeSocket();
+  const mint = Keypair.generate().publicKey;
+  const p = flows({ api: fakeApi(info, { confirmed: false, presale: notFound }), subscribe: sock.subscribe })
+    .openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: mint.toBase58(), commit: 100_000_000n, waitMs: 60_000 })
+    .then(() => null, (x) => x);
+  const topic = `presale:${presalePda(info.pid, mint)}`;
+  await until(() => sock.count(topic) === 1);
+  sock.push(topic, { type: "snapshot", data: null });
+  const e = await p;
+  assert.ok(e instanceof TypeError, String(e));
+  assert.equal(e.outcomeUnknown, undefined);
+});
+
+test("openPresale: a 200 doesn't wait or read the presale", async () => {
+  const info = fakeInfo();
+  const sock = fakeSocket();
+  let read = 0;
+  const api = fakeApi(info, { presale: async () => (read++, null) });
+  const w = fakeWallet();
+  const mint = Keypair.generate().publicKey;
+  const out = await flows({ api, subscribe: sock.subscribe }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: mint.toBase58(), commit: 100_000_000n });
+  assert.ok(out.equals(presalePda(info.pid, mint)));
+  assert.equal(sock.opened, 0, "no subscription");
+  assert.equal(read, 0, "no read");
+});
+
+test("joinPresale: a 202 whose seat doesn't show before the wait ends is outcome unknown and nothing is committed; one whose seat shows goes on to the commit", async () => {
+  const info = fakeInfo();
+  const w = fakeWallet();
+  for (const sig of ["SERVERSIG", undefined]) {
+    w.asked.length = 0;
+    const { view } = joinable(info);
+    const api = fakeApi(info, { confirmed: false, sig, presale: notFound });
+    const e = await flows({ api, keys: memoryKeys(), subscribe: fakeSocket().subscribe })
+      .joinPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, view, amount: 200_000_000n, waitMs: 20 })
+      .then(() => null, (x) => x);
+    assert.equal(e?.outcomeUnknown, true, `${sig}: ${e?.message}`);
+    assert.equal(e.message, OUTCOME_UNKNOWN);
+    assert.equal(e.what, "join");
+    assert.equal(e.sig, sig ?? bs58.encode(w.asked[0].signatures[0]));
+  }
+  assert.equal(info.er.sent.length, 0, "no commit");
+  const sock = fakeSocket();
+  const { presale, view } = joinable(info);
+  const topic = `presale:${presale}`;
+  const p = flows({ api: fakeApi(info, { confirmed: false, sig: "SERVERSIG", presale: notFound }), keys: memoryKeys(), subscribe: sock.subscribe })
+    .joinPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, view, amount: 200_000_000n, waitMs: 60_000 });
+  await until(() => sock.count(topic) === 1);
+  sock.push(topic, { type: "snapshot", data: { ...view, seats: [{ user: w.publicKey.toBase58() }] } });
+  await p;
+  assert.deepEqual(tags(info.er.sent[0], info.pid), [IX.SET_COMMIT], "committed once the seat showed");
 });
 
 test("openPresale: the creator can't take the whole pool; caught before the wallet is asked", async () => {

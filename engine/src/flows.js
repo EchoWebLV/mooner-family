@@ -291,12 +291,22 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
       const plain = e instanceof ApiError && ((e.status >= 400 && e.status < 500) || e.body?.sent === false);
       throw plain ? e : outcomeUnknown(sigOf(signed), "cosign");
     });
-    return r.json;
+    // the tx's id: the server's, else the wallet's signature (the payer's, the tx's first)
+    return { ...r.json, sig: r.json?.sig ?? sigOf(signed) };
   }
+
+  /** After a 202 (the server sent it, unconfirmed): waits for `done` as waitFor does. One
+   *  that doesn't show before the wait ends may still land: outcome unknown, named by `sig`,
+   *  so a retry can't open a second presale or join twice. A `done` that throws ends it with
+   *  that error. */
+  const waitSent = (r, what, presale, done, opts) =>
+    waitFor(presale, done, opts).catch((e) => {
+      throw e?.timedOut ? outcomeUnknown(r.sig, what) : e;
+    });
 
   /** Waits until `done(view)` holds for the presale, as the server pushes it. It reads
    *  once too: the change may already be there. `done` may be async; a throw ends the wait
-   *  with that error. */
+   *  with that error. Past `timeoutMs` it ends with "… didn't show up yet", `timedOut` set. */
   function waitFor(presale, done, { timeoutMs = 90_000, what = "the change" } = {}) {
     const key = presale.toString();
     return new Promise((resolve, reject) => {
@@ -322,7 +332,7 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
       // a socket may hand over a snapshot inside subscribe(): off isn't set yet then
       off = subscribe(`presale:${key}`, (m) => m.type === "snapshot" && check(m.data));
       if (over) return off();
-      timer = setTimeout(() => end(() => reject(new Error(`${what} didn't show up yet; refresh in a moment`))), timeoutMs);
+      timer = setTimeout(() => end(() => reject(Object.assign(new Error(`${what} didn't show up yet; refresh in a moment`), { timedOut: true }))), timeoutMs);
       api.presale(key).then(check, () => {});
     });
   }
@@ -350,8 +360,9 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
     return api.mint({ wallet: wallet.toBase58(), ...t, links: links2, image: b64(image), time, signature: b64(signature) });
   }
 
-  /** open_presale + delegations, with the creator's commit (which is also their deposit). */
-  async function openPresale({ info, wallet, signTransaction, mint, commit }) {
+  /** open_presale + delegations, with the creator's commit (which is also their deposit).
+   *  `waitMs`: how long a 202 waits for the presale to show. */
+  async function openPresale({ info, wallet, signTransaction, mint, commit, waitMs = 90_000 }) {
     if (!validSeat(commit, info.N)) throw new Error(`pick ${sol(info.N.MIN_SEAT)} to ${sol(info.N.MAX_SEAT)} SOL`);
     // the co-signer refuses a creator deposit over this (cosigner.js): at least one other seat fits
     const cap = info.N.TARGET - info.N.MIN_SEAT;
@@ -365,21 +376,22 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
       deposit: commit, commit, validator: er.validator,
     });
     const r = await signAndCosign(signTransaction, wallet, ixs);
-    if (!r.confirmed) await waitFor(presale, (v) => v.where !== "closed", { what: "the presale" });
+    if (!r.confirmed) await waitSent(r, "open", presale, (v) => v.where !== "closed", { what: "the presale", timeoutMs: waitMs });
     return presale;
   }
 
   // ---- join and the ledger ----
 
-  /** join + delegate(seat), then commit the whole deposit in the ER. */
-  async function joinPresale({ info, wallet, signTransaction, view, amount, onStep = (_what) => {} }) {
+  /** join + delegate(seat), then commit the whole deposit in the ER. `waitMs`: how long a
+   *  202 waits for the seat to show. */
+  async function joinPresale({ info, wallet, signTransaction, view, amount, onStep = (_what) => {}, waitMs = 90_000 }) {
     if (!validSeat(amount, info.N)) throw new Error(`pick ${sol(info.N.MIN_SEAT)} to ${sol(info.N.MAX_SEAT)} SOL`);
     const presale = new PublicKey(view.presale);
     const sk = await keyFor(view.presale, wallet.toBase58());
     onStep("Sign in your wallet to put the SOL in");
     const ixs = joinIxs(info.pid, { user: wallet, gate: info.gate, presale, sessionKey: sk.publicKey, deposit: amount, validator: new PublicKey(view.validator) });
     const r = await signAndCosign(signTransaction, wallet, ixs);
-    if (!r.confirmed) await waitFor(presale, (v) => v.seats?.some((s) => s.user === wallet.toBase58()), { what: "your seat" });
+    if (!r.confirmed) await waitSent(r, "join", presale, (v) => v.seats?.some((s) => s.user === wallet.toBase58()), { what: "your seat", timeoutMs: waitMs });
     onStep("Counting you in");
     return setCommit({ info, wallet, signTransaction, view, amount, retries: 8, key: sk });
   }
