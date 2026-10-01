@@ -84,7 +84,7 @@ export default function Room() {
 
   // Whether this wallet's tokens arrived: its seat's commit last seen after OPEN (kept here,
   // per presale and wallet), else a join from this phone not taken back (the keeper delivers
-  // the tokens by itself, so the room often never sees the seat after OPEN).
+  // the tokens by itself, so the room may never see the seat after OPEN).
   const [lock, setLock] = useState({ key: null, wallet: null, commit: null });
   const same = lock.key === key && lock.wallet === wallet;
   const locked = lockedCommit(detail, wallet, same ? lock.commit : null);
