@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-const src = (p) => fileURLToPath(new URL(`./src/${p}`, import.meta.url));
+const here = (p) => fileURLToPath(new URL(p, import.meta.url));
+const src = (p) => here(`./src/${p}`);
 
 export default defineConfig(({ mode }) => {
   // signing in is Privy: its app id (public) goes in web/.env as VITE_PRIVY_APP_ID. Privy
@@ -39,5 +40,11 @@ const config = {
     // ws: the live socket; changeOrigin: a hosted API (MOONER_API=https://app.mooner.family) routes by Host
     proxy: { "/api": { target: process.env.MOONER_API ?? "http://127.0.0.1:8788", ws: true, changeOrigin: true } },
   },
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 2_000 }, // web3.js, Privy, three.js
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 2_000, // web3.js, Privy, three.js
+    // the site, and the page the phone app draws Mooner pictures with (src/pfp-page.ts)
+    rolldownOptions: { input: { main: here("./index.html"), pfp: here("./pfp.html") } },
+  },
 };

@@ -1,4 +1,6 @@
-import { Text, View } from "react-native";
+import { useState } from "react";
+import { Image, Text, View } from "react-native";
+import { usePfp } from "../pfp/PfpRenderer";
 import { C, F, R } from "./theme";
 
 const hue = (wallet) => {
@@ -7,19 +9,29 @@ const hue = (wallet) => {
   return (sum * 37) % 360;
 };
 
-/** A wallet's face. For now the fallback only: a colour from the wallet and its first two
- *  characters. `ring` (a colour) draws a 2px border. */
+/** A wallet's face: its Mooner picture once the phone has it, until then (or if it won't
+ *  load) the fallback, a colour from the wallet and its first two characters. `ring` (a
+ *  colour) draws a 2px border. */
 export function Face({ wallet, size = 32, ring }) {
   const w = wallet ?? "";
+  const uri = usePfp(wallet, size);
+  const [bad, setBad] = useState(null); // the uri that failed to load
+  const picture = uri && bad !== uri;
+  const inner = ring ? size - 4 : size;
   return (
     <View
       style={{
         width: size, height: size, borderRadius: size / 2, backgroundColor: `hsl(${hue(w)}, 55%, 32%)`,
         alignItems: "center", justifyContent: "center",
         ...(ring ? { borderWidth: 2, borderColor: ring } : null),
+        ...(picture ? { overflow: "hidden" } : null),
       }}
     >
-      <Text style={{ fontFamily: F.mono, fontSize: size * 0.38, color: C.text0 }}>{w.slice(0, 2)}</Text>
+      {picture ? (
+        <Image source={{ uri }} onError={() => setBad(uri)} style={{ width: inner, height: inner, borderRadius: inner / 2 }} />
+      ) : (
+        <Text style={{ fontFamily: F.mono, fontSize: size * 0.38, color: C.text0 }}>{w.slice(0, 2)}</Text>
+      )}
     </View>
   );
 }

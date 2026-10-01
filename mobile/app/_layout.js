@@ -1,5 +1,5 @@
-// The root: fonts, the dark system background, the wallet, the store's live topics and
-// the "Reconnecting…" strip above every screen.
+// The root: fonts, the dark system background, the wallet, the store's live topics, the
+// hidden page that draws Mooner pictures and the "Reconnecting…" strip above every screen.
 import { useEffect, useState } from "react";
 import { AppState, View } from "react-native";
 import { Stack } from "expo-router";
@@ -15,6 +15,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-cont
 import { useStore } from "zustand";
 import { live, store } from "../src/app";
 import { WalletProvider } from "../src/wallet";
+import { PfpRenderer } from "../src/pfp/PfpRenderer";
 import { Banner } from "../src/ui/kit";
 import { C } from "../src/ui/theme";
 
@@ -52,6 +53,7 @@ export default function Root() {
 
   return (
     <SafeAreaProvider style={{ flex: 1, backgroundColor: C.bg0 }}>
+      <PfpRenderer />
       <WalletProvider>
         <StatusBar style="light" />
         <Reconnecting />
