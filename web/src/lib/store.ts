@@ -10,7 +10,7 @@ import * as chain from '@/real/chain.js'
 import * as live from '@/real/live.js'
 import { candlesOf, quote, swap, tokenBalance, tradesOf, WSOL } from '@/real/market'
 import {
-  canStartOver, checkBeforeRetry, clearOpening, forgetOpening, openedNote, openingKey, openKept, readOpening, saveOpening, seatFit, shows,
+  canStartOver, checkBeforeRetry, clearOpening, forgetOpening, keptAfter, openedNote, openingKey, openKept, readOpening, seatFit, shows,
 } from '@/real/opening.js'
 import { COMMIT_STEP, MAX_CHAT_LENGTH, MAX_COMMIT, MAX_CREATOR_COMMIT, MIN_COMMIT, PRESALE_TARGET, setSolUsd, SOL_USD, TOAST_MS } from './constants'
 import { priceFromSqrt } from './curve'
@@ -111,8 +111,8 @@ export interface AppState {
   /** The connected wallet's coin whose open may have gone through, or null. */
   opening: Opening | null
   /** The pending coin can be left for a new one (startOver): the last retry found no presale
-   *  for it, sent nothing that can land, and its last open, as storage holds it then, was
-   *  signed long enough before that it can't land either (canStartOver). */
+   *  for it, sent nothing that can land, and its last open, as storage still holds it then,
+   *  was signed long enough before that it can't land either (canStartOver). */
   mayStartOver: boolean
   setWallet(w: WalletLink | null): void
   /** <WalletBridge> hands over the wallet picker. */
@@ -222,6 +222,16 @@ const NO_STATS: TitleStats = {
 }
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
+
+/** `sign`, then `signed()` once the wallet has signed, before the tx is sent (openKept keeps
+ *  the coin as of then). */
+const thenSigned =
+  (sign: WalletLink['signTransaction'], signed: () => void) =>
+  async <T,>(tx: T): Promise<T> => {
+    const done = await sign(tx)
+    signed()
+    return done
+  }
 const short = (w: string) => (w.length > 10 ? w.slice(0, 4) + w.slice(-4) : w)
 const num = (v: string | number | undefined | null) => (v == null ? 0 : Number(v))
 
@@ -709,13 +719,19 @@ export function createAppStore(): AppStore {
     /** A try that leaves a coin pending: the one storage holds now (openKept may have moved its
      *  `at`, another tab may have tried it or kept another), watched again. `read`: the read
      *  before this retry of `coin` (checkBeforeRetry), given only when nothing from the try can
-     *  land; Start over is judged on the record as storage has it now (canStartOver). */
-    function keep(wallet: string, coin: Opening, error: string, read: string | null = null): LaunchResult {
-      const kept = readOpening(wallet) ?? saveOpening(wallet, coin) ?? coin
+     *  land; Start over is judged on the record as storage has it now, and only on one that is
+     *  there (keptAfter). `asked`: the wallet was asked to sign the open; if storage has no
+     *  coin now, another tab cleared it meanwhile, and it isn't written back (keptAfter). */
+    function keep(wallet: string, coin: Opening, error: string, read: string | null = null, asked = false): LaunchResult {
+      const { kept, leave } = keptAfter(wallet, coin, { asked, read, now: Date.now() })
+      if (!kept) {
+        // as storage has it: if that tab's open went through, the toast for its presale
+        if (me() === wallet) resync(wallet)
+        return fail(error)
+      }
       if (me() === wallet) {
         watchOpening(wallet, kept)
-        const leave = kept.presale === coin.presale && get().opening?.presale === kept.presale && canStartOver(kept, read, Date.now())
-        if (leave) set({ mayStartOver: true })
+        if (leave && get().opening?.presale === kept.presale) set({ mayStartOver: true })
       }
       return { ok: false, error, pending: kept }
     }
@@ -739,7 +755,7 @@ export function createAppStore(): AppStore {
       if (f.verdict === 'pending' && shown()) return done(wallet, coin)
       if (f.verdict === 'failed') return fail(chain.explain(f.error))
       const unknown = (f.error as { outcomeUnknown?: unknown } | null)?.outcomeUnknown === true
-      return keep(wallet, coin, chain.explain(f.error), unknown ? null : read)
+      return keep(wallet, coin, chain.explain(f.error), unknown ? null : read, true)
     }
 
     /** What's wrong with a kept commit the presale numbers no longer take (real/opening.js seatFit). */
@@ -777,7 +793,10 @@ export function createAppStore(): AppStore {
           return openKept(
             wallet,
             coin,
-            () => chain.openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: coin.mint, commit: BigInt(coin.commit) }),
+            (signed) =>
+              chain.openPresale({
+                info, wallet: w.publicKey, signTransaction: thenSigned(w.signTransaction, signed), mint: coin.mint, commit: BigInt(coin.commit),
+              }),
             { pid: info.pid.toBase58(), retrying: true },
           )
         })
@@ -1007,7 +1026,10 @@ export function createAppStore(): AppStore {
             const res = await openKept(
               wallet,
               coin,
-              () => chain.openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: coin.mint, commit: BigInt(value) }),
+              (signed) =>
+                chain.openPresale({
+                  info, wallet: w.publicKey, signTransaction: thenSigned(w.signTransaction, signed), mint: coin.mint, commit: BigInt(value),
+                }),
               { pid: info.pid.toBase58() },
             )
             return { coin, res }

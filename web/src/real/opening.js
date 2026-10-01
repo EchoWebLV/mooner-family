@@ -113,14 +113,20 @@ export function afterFailedOpen(e, pid, retrying) {
 
 /** Runs `open` (it signs and sends the open of `coin`) with the coin kept for `wallet` from
  *  before anything is signed, as of `clock()`: a reload or a closed tab mid-open still finds
- *  it. `coin.at`: the record's, on a retry. Another coin kept for the wallet (another tab's,
- *  since this page read none) stays, and `coin` isn't opened: { ok: false, error, verdict:
- *  "other", kept }. Gives { ok: true, value } with the coin still kept (the store clears it as
- *  the presale shows), or { ok: false, error, verdict } (afterFailedOpen): "failed" clears it;
- *  "pending" keeps it, as of when the unknown was reported, or with the `at` it had if this try
- *  failed plainly (nothing from it can land); "open" leaves it to the store. Each of these
- *  writes only over this try's own save (or, for an unknown, none): another tab's since, a
- *  newer try of the coin or another coin, stands. A coin that can't be kept isn't opened.
+ *  it. `open` gets `signed`, to call once the wallet has signed and before the open is sent:
+ *  the coin is kept again as of then, since a wallet may change the tx (an instruction of its
+ *  own, its fees, maybe its blockhash), and that is this try's `at` from then on. `coin.at`:
+ *  the record's, on a retry. Another coin kept for the wallet (another tab's, since this page
+ *  read none) stays, and `coin` isn't opened: { ok: false, error, verdict: "other", kept }.
+ *  Gives { ok: true, value } with the coin still kept (the store clears it as the presale
+ *  shows), or { ok: false, error, verdict } (afterFailedOpen): "failed" clears it; "pending"
+ *  keeps it, as of when the unknown was reported (never back from a later save of it), or,
+ *  if this try failed plainly (nothing from it can land), as storage held it before the try
+ *  (none, if another tab had cleared it), or as of the sign if the wallet signed; "open"
+ *  leaves it to the store. Except for an unknown of the coin, each of these writes only over
+ *  this try's own save: another tab's since, a newer try of the coin or another coin, stands.
+ *  A coin that can't be kept isn't opened.
+ *  @param {(signed: () => void) => Promise<any>} open
  *  @returns {Promise<{ ok: true, value: any } | { ok: false, error: unknown, verdict: string, kept?: Coin }>} */
 export async function openKept(wallet, coin, open, { pid = null, retrying = false, clock = Date.now, storage = local } = {}) {
   const there = readOpening(wallet, storage);
@@ -128,28 +134,54 @@ export async function openKept(wallet, coin, open, { pid = null, retrying = fals
     const error = new Error(`$${there.symbol} is still pending for this wallet, so $${coin.symbol} wasn't opened`);
     return { ok: false, error, verdict: "other", kept: there };
   }
-  const at = clock();
+  let at = clock();
   if (!saveOpening(wallet, { ...coin, at }, storage)) {
     return { ok: false, error: new Error("Couldn't keep the coin to open"), verdict: "failed" };
   }
+  // whether storage still holds this try's own save
+  const mine = (now) => now?.presale === coin.presale && now.at === at;
+  let signed = false;
+  const onSigned = () => {
+    signed = true;
+    if (!mine(readOpening(wallet, storage))) return;
+    at = Math.max(at, clock());
+    saveOpening(wallet, { ...coin, at }, storage);
+  };
   try {
-    return { ok: true, value: await open() };
+    return { ok: true, value: await open(onSigned) };
   } catch (error) {
     const verdict = afterFailedOpen(error, pid, retrying);
     const now = readOpening(wallet, storage);
-    const own = now?.presale === coin.presale && now.at === at;
+    const own = mine(now);
     // another tab's save since: this page's copy follows it, not this try's (a coin never sent,
     // or an older `at`), for when storage is emptied later
     if (!own && now) kept.set(wallet, now);
     if (verdict === "failed") {
       if (own) clearOpening(wallet, coin.presale, storage);
     } else if (verdict === "pending" && error?.outcomeUnknown === true) {
-      if (own || !now) saveOpening(wallet, { ...coin, at: clock() }, storage);
-    } else if (verdict === "pending") {
-      if (own) saveOpening(wallet, coin, storage);
+      // over another coin kept since, nothing
+      if (!now || now.presale === coin.presale) saveOpening(wallet, { ...coin, at: Math.max(now?.at ?? 0, clock()) }, storage);
+    } else if (verdict === "pending" && own && !signed) {
+      // not the caller's copy, which may be older than another tab's save before this try
+      if (there) saveOpening(wallet, there, storage);
+      else clearOpening(wallet, coin.presale, storage);
     }
     return { ok: false, error, verdict };
   }
+}
+
+/** What a try of `coin` that didn't open it leaves pending for `wallet` (`kept`), and whether
+ *  the creator may leave it for a new coin (`leave`). The record as storage has it now; none
+ *  kept, `coin` again, unless the wallet was `asked` to sign it: then another tab cleared it
+ *  meanwhile (its open went through, or its Start over), nothing from this try can land, and
+ *  `kept` is null. `leave` only for a record that was there, judged as canStartOver does with
+ *  `read` (the read before this retry) at `now`.
+ *  @returns {{ kept: Coin | null, leave: boolean }} */
+export function keptAfter(wallet, coin, { asked = false, read = /** @type {string | null} */ (null), now = Date.now(), storage = local } = {}) {
+  const there = readOpening(wallet, storage);
+  if (!there && asked) return { kept: null, leave: false };
+  const kept = there ?? saveOpening(wallet, coin, storage) ?? coin;
+  return { kept, leave: there != null && kept.presale === coin.presale && canStartOver(kept, read, now) };
 }
 
 /** The error the server sends with its 404 for a presale it has neither the account nor a

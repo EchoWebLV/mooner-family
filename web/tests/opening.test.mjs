@@ -4,8 +4,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  afterFailedOpen, canStartOver, checkBeforeRetry, clearOpening, forgetOpening, NO_SUCH_PRESALE, openedNote, openingKey, openKept, readOpening, saveOpening,
-  seatFit, shows, START_OVER_MS,
+  afterFailedOpen, canStartOver, checkBeforeRetry, clearOpening, forgetOpening, keptAfter, NO_SUCH_PRESALE, openedNote, openingKey, openKept, readOpening,
+  saveOpening, seatFit, shows, START_OVER_MS,
 } from '../src/real/opening.js'
 
 const WALLET = '7'.repeat(43)
@@ -282,6 +282,165 @@ test('openKept: what another tab saved during the try stands', async () => {
   assert.deepEqual(await tried({ ...COIN, at: null }, false, unknown(), cleared), ['pending', { ...COIN, at: TA }])
   // and a plain failure then leaves nothing
   assert.deepEqual(await tried({ ...COIN, at: T0 }, true, refused(), cleared), ['pending', null])
+})
+
+test('openKept: a refused retry puts back the record as storage held it, not its caller\'s copy', async () => {
+  const T0 = AT // the caller's copy: its last open, long ago
+  // storage holds a newer save of the coin than the caller's copy
+  const st = stored({ wallet: WALLET, ...COIN, at: T0 + 5_000 })
+  const r = await openKept(WALLET, { ...COIN, at: T0 }, async () => {
+    throw refused()
+  }, { pid: PID, retrying: true, clock: () => T0 + 9_000, storage: st })
+  assert.equal(r.verdict, 'pending')
+  assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: T0 + 5_000 })
+  clearOpening(WALLET, COIN.presale, st)
+})
+
+test('openKept: a retry refused here after another tab\'s try went out keeps that try\'s `at`', async () => {
+  // tab A saved X@TA and its open is out; this tab (B) still holds X@T0, gets its 404, saves
+  // X@TB, and its wallet refuses: storage keeps A's save, so Start over isn't offered
+  const T0 = AT
+  const TA = T0 + START_OVER_MS + 60_000
+  const TB = TA + 2_000
+  const st = stored({ wallet: WALLET, ...COIN, at: TA })
+  await openKept(WALLET, { ...COIN, at: T0 }, async () => {
+    throw refused()
+  }, { pid: PID, retrying: true, clock: () => TB, storage: st })
+  const back = readOpening(WALLET, st)
+  assert.deepEqual(back, { ...COIN, at: TA })
+  assert.equal(canStartOver(back, 'retry', TB + 1), false)
+  clearOpening(WALLET, COIN.presale, st)
+})
+
+test('openKept: a refused retry of a coin no longer kept (another tab cleared it) leaves nothing', async () => {
+  const st = storage()
+  await openKept(WALLET, { ...COIN, at: AT }, async () => {
+    throw refused()
+  }, { pid: PID, retrying: true, clock: () => AT + 9_000, storage: st })
+  assert.equal(st().m.size, 0)
+  assert.equal(readOpening(WALLET, st), null)
+})
+
+test('openKept: an unknown never moves the coin\'s `at` back', async () => {
+  const REPORT = AT + 10_000
+  const tried = async (otherAt) => {
+    const st = storage()
+    await openKept(WALLET, { ...COIN, at: null }, async () => {
+      // another tab's save of the same coin while this try was out
+      st().m.set(openingKey(WALLET), JSON.stringify({ wallet: WALLET, ...COIN, at: otherAt }))
+      throw unknown()
+    }, { pid: PID, clock: () => REPORT, storage: st })
+    const left = readOpening(WALLET, st)
+    clearOpening(WALLET, COIN.presale, st)
+    return left
+  }
+  // its save is older than this report: kept as of the report
+  assert.deepEqual(await tried(AT + 1), { ...COIN, at: REPORT })
+  // newer: kept as of it
+  assert.deepEqual(await tried(REPORT + 50_000), { ...COIN, at: REPORT + 50_000 })
+})
+
+test('openKept: the coin is saved again once the wallet signs', async () => {
+  const START = AT // before the wallet prompt
+  const SIGNED = AT + 180_000 // a prompt held open for 3 minutes
+  const END = SIGNED + 90_000 // the unknown, reported after the wait
+  let t = START
+  const clock = () => t
+  // a first try that ends unknown: kept as of the sign while it waits, then as of the report
+  {
+    t = START
+    const st = storage()
+    const r = await openKept(WALLET, { ...COIN, at: null }, async (signed) => {
+      assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: START })
+      t = SIGNED
+      signed()
+      assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: SIGNED })
+      t = END
+      throw unknown()
+    }, { pid: PID, clock, storage: st })
+    assert.equal(r.verdict, 'pending')
+    assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: END })
+    clearOpening(WALLET, COIN.presale, st)
+  }
+  // a retry that fails plainly after the sign (the server refused to co-sign): the sign-time
+  // save stays, not the one before the prompt nor the record before the try
+  {
+    t = START
+    const st = stored({ wallet: WALLET, ...COIN, at: AT - 1 })
+    await openKept(WALLET, COIN, async (signed) => {
+      t = SIGNED
+      signed()
+      t = END
+      throw unsent()
+    }, { pid: PID, retrying: true, clock, storage: st })
+    assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: SIGNED })
+    clearOpening(WALLET, COIN.presale, st)
+  }
+  // a first try that fails plainly after the sign: its own save (the sign-time one) is cleared
+  {
+    t = START
+    const st = storage()
+    const r = await openKept(WALLET, { ...COIN, at: null }, async (signed) => {
+      t = SIGNED
+      signed()
+      throw unsent()
+    }, { pid: PID, clock, storage: st })
+    assert.equal(r.verdict, 'failed')
+    assert.equal(readOpening(WALLET, st), null)
+    assert.equal(st().m.size, 0)
+  }
+  // another tab saved the coin after this try did: the sign doesn't write over it
+  {
+    t = START
+    const st = storage()
+    const OTHER_AT = START + 1
+    await openKept(WALLET, { ...COIN, at: null }, async (signed) => {
+      st().m.set(openingKey(WALLET), JSON.stringify({ wallet: WALLET, ...COIN, at: OTHER_AT }))
+      t = SIGNED
+      signed()
+      assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: OTHER_AT })
+      throw refused()
+    }, { pid: PID, clock, storage: st })
+    assert.deepEqual(readOpening(WALLET, st), { ...COIN, at: OTHER_AT })
+    clearOpening(WALLET, COIN.presale, st)
+  }
+})
+
+test('keptAfter: what a try leaves pending, and whether Start over is offered', async () => {
+  const OLD = AT + START_OVER_MS + 1
+  // another tab's success cleared the coin while this retry was in the wallet (its storage
+  // event dropped this page's copy), then the wallet refused: nothing is written back, and no
+  // Start over
+  {
+    const st = stored({ wallet: WALLET, ...COIN })
+    saveOpening(WALLET, COIN, st)
+    await openKept(WALLET, COIN, async () => {
+      const was = st().m.get(openingKey(WALLET))
+      st().m.delete(openingKey(WALLET))
+      forgetOpening(WALLET, was)
+      throw refused()
+    }, { pid: PID, retrying: true, clock: () => OLD, storage: st })
+    assert.equal(st().m.size, 0)
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: true, read: 'retry', now: OLD + START_OVER_MS, storage: st }), { kept: null, leave: false })
+    assert.equal(st().m.size, 0)
+    assert.equal(readOpening(WALLET, st), null)
+  }
+  // before the wallet was asked (the read failed, no SOL for it): the caller's coin is put
+  // back, but Start over isn't offered on a record that wasn't there
+  {
+    const st = storage()
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: false, read: 'retry', now: OLD, storage: st }), { kept: COIN, leave: false })
+    assert.deepEqual(readOpening(WALLET, st), COIN)
+    // there now: the server's 404 and an old `at` offer it; anything else doesn't
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: true, read: 'retry', now: OLD, storage: st }), { kept: COIN, leave: true })
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: true, read: null, now: OLD, storage: st }), { kept: COIN, leave: false })
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: true, read: 'retry', now: AT + 1, storage: st }), { kept: COIN, leave: false })
+    // another coin kept now: that one, and no Start over for it on this coin's 404
+    st().m.set(openingKey(WALLET), JSON.stringify({ wallet: WALLET, ...SECOND }))
+    assert.deepEqual(keptAfter(WALLET, COIN, { asked: true, read: 'retry', now: OLD, storage: st }), { kept: SECOND, leave: false })
+    clearOpening(WALLET, SECOND.presale, st)
+    clearOpening(WALLET, COIN.presale, st)
+  }
 })
 
 test('openKept: an unknown outcome is kept as of when it was reported', async () => {
