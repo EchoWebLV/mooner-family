@@ -1,0 +1,23 @@
+{
+  "name": "mooner-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "android": "sh scripts/run-android.sh",
+    "bundle:check": "sh scripts/check-bundle.sh"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@solana/web3.js": "1.99.0",
+    "@wallet-ui/react-native-web3js": "4.3.0",
+    "buffer": "6.0.3",
+    "expo": "~55.0.23",
+    "expo-status-bar": "~55.0.4",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-get-random-values": "~1.11.0"
+  }
+}
