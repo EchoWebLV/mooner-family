@@ -45,7 +45,7 @@ programs/presale/
 programs/presale/litesvm/
   Cargo.toml                       standalone [workspace], MagicPad's pinned versions
   fixtures/fetch.sh                dumps dbc.so + the Mooner DBC config from mainnet
-  fixtures/dbc-config.json         HnKg7Vb2… account (committed; small)
+  fixtures/dbc-config.json         j7j5CfUS… account (committed; small)
   tests/common/mod.rs              svm setup, PDAs, ix builders, decoders, DBC builders
   tests/config_gate.rs  tests/entry.rs  tests/ledger.rs  tests/settle_seat.rs
   tests/launch.rs       tests/finish.rs
@@ -99,7 +99,7 @@ Notes:
 - [ ] `consts.rs`, `state.rs` with offsets as `const`s, `util.rs` with `valid_seat(amount)`.
 - [ ] Unit tests (`cargo test`, host):
   - the offsets and lengths (Config 130, Presale 272, Seat 120);
-  - `valid_seat`: 0.1 and 1.0 pass; 0.09, 1.01 and 0.105 fail;
+  - `valid_seat`: 0.1 and 0.5 pass; 0.09, 0.51 and 0.105 fail (0.5 SOL max for testing since 2026-09-30; was 1.0 passes, 1.01 fails);
   - `fee_share(10_000, 3) == 3_333`;
   - the refund formula at S < R stays solvent.
 - [ ] `cargo build-sbf` succeeds.
@@ -184,7 +184,7 @@ The CPI itself is covered by the canary.
 
 ### Task 8: release + settle, a real DBC launch (tests/launch.rs)
 - **The happy path:**
-  - a full presale of 10 seats settles;
+  - a full presale settles (FULL_SEATS standard seats: 5 × 0.1 SOL at the 0.5 SOL testing pool since 2026-09-30; was 10 × 1 SOL at 10 SOL);
   - one tx runs init_pool (bot) → pot wSOL ATA → vault ATA → release → sync_native → swap2 (pot, with the sysvar) → settle → transfer_pool_creator → close the pot's wSOL;
   - checks: state SETTLED; total_tokens = the vault balance; the pool creator = fee_dest; the bot got exactly the rents + LAUNCH_TX_FEE; `released` is as the formula says.
 - **Each of these makes the tx fail:**
@@ -227,7 +227,7 @@ The CPI itself is covered by the canary.
   7. everything done → close.
 - [x] `canary.js` on devnet:
   - deploy with a fresh keypair, then init_config;
-  - happy path: the creator plus throwaway users, funded from the devnet payer, fill 10 SOL. The canary's own config uses devnet amounts, because devnet SOL is scarce. The program is identical, and the TARGET is a compile-time feature `canary` = 0.2 SOL (MIN 0.01, MAX 0.1, STEP 0.001, GRACE 60 s), used only for the canary build.
+  - happy path: the creator plus throwaway users, funded from the devnet payer, fill the pool. The canary's own config uses devnet amounts, because devnet SOL is scarce. The program is identical, and the TARGET is a compile-time feature `canary` = 0.2 SOL (MIN 0.01, MAX 0.1, STEP 0.001, GRACE 60 s), used only for the canary build.
   - expiry path: `canary` DURATION = 120 s.
 - [x] Commit, then report the devnet results (engine/CANARY.md: devnet 13/13, local 13/13).
 

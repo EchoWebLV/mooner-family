@@ -7,8 +7,8 @@
 ## Goal
 
 A presale where:
-- many independent wallets each put in 0.1–1 SOL;
-- the pool fills to exactly 10 SOL within 1 hour;
+- many independent wallets each put in 0.1–0.5 SOL;
+- the pool fills to exactly 0.5 SOL within 1 hour (0.5 SOL for testing since 2026-09-30; was 10 SOL, with 0.1–1 SOL seats);
 - it launches on Meteora DBC with the whole pot as one top-level first buy at the 1% fee floor;
 - every buyer gets tokens pro rata, at one price.
 
@@ -22,8 +22,8 @@ Four things must hold throughout:
 
 | Topic | Decision |
 |---|---|
-| Target | exactly 10 SOL; the pool locks the moment it gets there |
-| Seat | 0.1–1 SOL per wallet in 0.01 steps; the last commit is cut to the room left |
+| Target | exactly 0.5 SOL (0.5 SOL for testing since 2026-09-30; was 10 SOL); the pool locks the moment it gets there |
+| Seat | 0.1–0.5 SOL per wallet in 0.01 steps (was 0.1–1 SOL); the last commit is cut to the room left |
 | Timer | **1 hour**, fixed. The wireframe's 5/10/15 min and the bot's 2–8 min timers are replaced |
 | Change | a buyer can change their commit any time before full |
 | Withdraw | anyone except the creator can withdraw before full |
@@ -129,13 +129,15 @@ A layout unit test pins these offsets.
 
 | name | value |
 |---|---|
-| TARGET | 10_000_000_000 (10 SOL) |
-| MIN_SEAT / MAX_SEAT / STEP | 100_000_000 / 1_000_000_000 / 10_000_000 |
+| TARGET | 500_000_000 (0.5 SOL for testing since 2026-09-30; was 10_000_000_000, 10 SOL) |
+| MIN_SEAT / MAX_SEAT / STEP | 100_000_000 / 500_000_000 (was 1_000_000_000) / 10_000_000 |
 | DURATION | 3_600 s |
 | GRACE (full → failed) | 900 s |
 | TX_FEE | 10_000 lamports: the allowance for one crank tx; one per tx, split across its ixs |
 | LAUNCH_TX_FEE | 100_000 lamports (mainnet measured 95_000) |
 | LAUNCH_COST_CAP | 50_000_000 (0.05 SOL): a hard ceiling on what the pot reimburses for the launch |
+
+While TARGET == MAX_SEAT, one seat can hold the whole pool. open_presale never sets FULL, so a creator who opens with commit == TARGET leaves an OPEN presale at 100% that nobody else can join (NoRoom), and a lone creator whose deposit allows it can raise to TARGET and launch a one-seat presale. The web and sim cap the creator at `min(MAX_SEAT, TARGET − MIN_SEAT)` (0.4 SOL); the program does not. The gate co-signer does: it refuses an open whose deposit is over `TARGET − MIN_SEAT` (engine/src/cosigner.js, the open branch of checkEntryTx, with N from server/api.js), and since `set_commit` refuses a commit over the deposit (ledger.rs, OverDeposit), the creator can't raise past it later either. flows.js `openPresale` checks the same cap before the wallet is asked to sign. mobile's pre-check (mobile/src/checks.js) calls checkEntryTx without N, so there the server's co-signer is what enforces it.
 
 ## Instructions
 
@@ -228,7 +230,7 @@ If any check fails, the whole tx reverts and the pot stays intact. After GRACE, 
   2. Joins, each paid by its user: join + delegate, in one tx.
 
   The entry and its delegates must share a tx. A seat is created with commit 0, and settle_seat on a commit-0 seat is permissionless, so a cranker could settle it home (and take a fee from the deposit) in the gap between a separate open or join and its delegate. The co-signer only signs these exact shapes, with the presale delegated before the seat (delegate(seat) reads the validator that delegate(presale) writes).
-  3. Free commits in the ER, until the last one hits 10 SOL and makes it FULL.
+  3. Free commits in the ER, until the last one hits TARGET and makes it FULL.
   4. The bot runs commit_presale and commit_seats in the ER.
   5. The bot settles every committed seat on L1.
   6. The bot sends the launch tx.
