@@ -7,6 +7,9 @@ const path = require("path");
 const { getDefaultConfig } = require("expo/metro-config");
 
 const config = getDefaultConfig(__dirname);
+// Expo's default store (a FileStore in $TMPDIR/metro-cache) is shared by every checkout
+// of this repo; the same class rooted here keeps each checkout's cache its own
+config.cacheStores = [new (config.cacheStores[0].constructor)({ root: path.join(__dirname, ".metro-cache") })];
 const engine = path.resolve(__dirname, "../engine");
 const fromApp = path.join(__dirname, "index.js");
 
