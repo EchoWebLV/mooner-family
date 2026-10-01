@@ -5,7 +5,9 @@
 //
 //   GET  /api/info                   program, keys, ER endpoints, the presale numbers
 //   POST /api/mint                   { wallet, name, symbol, description, links, image, time, signature }
-//   POST /api/cosign                 { tx }  (base64, signed by the user) -> sent, { sig, confirmed }
+//   POST /api/cosign                 { tx, ref? }  (base64, signed by the user) -> sent, { sig, confirmed };
+//                                    ref: the wallet whose link the joiner came from, kept with
+//                                    a sent join (referrals.js)
 //   GET  /api/presales               every live presale (open ones list the wallets in them)
 //   GET  /api/launched               every launched token with its pool's price and progress
 //   GET  /api/presale/:presale       one presale with its seats (or its record once closed)
@@ -26,6 +28,8 @@ import { cosign, Refused } from "../src/cosigner.js";
 import { launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "./auth.js";
 import { HttpError, Limiter, limit } from "./http.js";
+import { Referrals } from "./referrals.js";
+import { cleanRef } from "../src/refs.js";
 
 const KEY = "(?<key>[1-9A-HJ-NP-Za-km-z]{32,44})";
 const MAX_IMAGE = 2 * 1024 * 1024;
@@ -66,6 +70,20 @@ function unsent(e) {
 const bad = (msg) => {
   throw new HttpError(400, msg);
 };
+
+/** A join's referrer from the body's `ref`: a wallet that isn't the joiner (`user`), else
+ *  null. The shape is the shared rule (refs.js cleanRef); `new PublicKey` checks it is 32
+ *  bytes. A bad ref never fails the join it came with. */
+export function refOf(v, user) {
+  const s = cleanRef(v);
+  if (!s) return null;
+  try {
+    const k = new PublicKey(s);
+    return k.equals(user) ? null : k;
+  } catch {
+    return null;
+  }
+}
 
 export function parseKey(v, what) {
   try {
@@ -269,6 +287,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
   const N = numbers(canary);
   const L = Object.fromEntries(Object.entries({ ...DEFAULT_LIMITS, ...limits }).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
   const usedSigs = new Map(); // signature -> when, for the replay window
+  const referrals = new Referrals(store.db);
   let botBalance = { at: 0, value: null };
 
   // ---- writes ----
@@ -396,6 +415,17 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       keeper?.watch(out.presale); // before its next scan
     }
     if (confirmed) feed?.touch(out.presale);
+    // a join from a shared link: who shared it. A 202 from this send (sent, not confirmed in
+    // time) is noted unconfirmed and gives way to the seat's next join; a confirmed one stays
+    // (referrals.js). A repeat of a tx that already went out returned above, with no row.
+    const ref = out.kind === "join" ? refOf(req.body.ref, out.user) : null;
+    if (ref) {
+      try {
+        referrals.add(out.presale, out.user, ref, sig, now(), confirmed);
+      } catch (e) {
+        console.error(`referral ${sig}: ${e.message}`); // the join was sent; the reply says so
+      }
+    }
     return reply(sig, confirmed);
   }
 

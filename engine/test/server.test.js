@@ -16,7 +16,8 @@ import { Bot, launchAltKeys, launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "../server/auth.js";
 import { createServer, webFile } from "../server/http.js";
 import * as C from "../src/client.js";
-import { makeRoutes, sniffImage } from "../server/api.js";
+import { makeRoutes, refOf, sniffImage } from "../server/api.js";
+import { Referrals } from "../server/referrals.js";
 import { sigOf } from "../src/tx.js";
 import { Store } from "../server/store.js";
 import { Keeper } from "../server/keeper.js";
@@ -937,5 +938,99 @@ test("config: the deployment record, the openers file", () => {
     assert.equal(loadKey(`\n${JSON.stringify([...kp.secretKey])}\n`).publicKey.toBase58(), kp.publicKey.toBase58(), "the key's JSON");
   } finally {
     fs.rmSync(dir, { recursive: true });
+  }
+});
+
+/** The seat's referral row without its time, or null. */
+function referral(refs, presale, user) {
+  const r = refs.referralOf(presale, user);
+  return r && { referrer: r.referrer, sig: r.sig, confirmed: r.confirmed };
+}
+
+test("cosign: a join from a shared link records who shared it; an open, a bad ref or the joiner's own wallet records nothing", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator], sendTimeoutMs: 300 });
+  try {
+    const refs = new Referrals(s.store.db);
+    const sharer = Keypair.generate().publicKey;
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const presale = presalePda(pid, mint);
+    const open = await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)), ref: sharer.toBase58() });
+    assert.equal(open.status, 200);
+    assert.equal(refs.referralOf(presale, creator.publicKey), null, "an open isn't a join");
+
+    const user = Keypair.generate();
+    const j = await s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)), ref: sharer.toBase58() });
+    assert.deepEqual([j.status, j.json.kind], [200, "join"]);
+    assert.deepEqual(referral(refs, presale, user.publicKey), { referrer: sharer.toBase58(), sig: j.json.sig, confirmed: true });
+
+    const u2 = Keypair.generate();
+    const bad = await s.call("POST", "/api/cosign", { tx: entryTx(u2, joinIxs(u2.publicKey, presale)), ref: "not a wallet" });
+    assert.deepEqual([bad.status, bad.json.kind], [200, "join"], "a bad ref never fails the join");
+    assert.equal(refs.referralOf(presale, u2.publicKey), null, "and writes nothing");
+
+    const u3 = Keypair.generate();
+    await s.call("POST", "/api/cosign", { tx: entryTx(u3, joinIxs(u3.publicKey, presale)), ref: u3.publicKey.toBase58() });
+    assert.equal(refs.referralOf(presale, u3.publicKey), null, "no one refers themselves");
+  } finally {
+    await s.close();
+  }
+});
+
+test("cosign: a 202 join notes its referrer unconfirmed, a later 200 replaces it, and a confirmed one is never replaced", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator], sendTimeoutMs: 300 });
+  try {
+    const refs = new Referrals(s.store.db);
+    const [a, b, c] = [Keypair.generate().publicKey, Keypair.generate().publicKey, Keypair.generate().publicKey];
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const presale = presalePda(pid, mint);
+    assert.equal((await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)) })).status, 200);
+    const user = Keypair.generate();
+    const join = (ref) => s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)), ref: ref.toBase58() });
+
+    s.l1.confirm = false;
+    const slow = await join(a);
+    assert.equal(slow.status, 202);
+    assert.deepEqual(referral(refs, presale, user.publicKey), { referrer: a.toBase58(), sig: slow.json.sig, confirmed: false }, "sent, not confirmed in time: noted, unconfirmed");
+
+    s.l1.confirm = true;
+    const ok = await join(b);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(referral(refs, presale, user.publicKey), { referrer: b.toBase58(), sig: ok.json.sig, confirmed: true }, "the join that confirmed replaces it");
+
+    s.l1.confirm = false;
+    assert.equal((await join(c)).status, 202);
+    s.l1.confirm = true;
+    assert.equal((await join(c)).status, 200);
+    assert.deepEqual(referral(refs, presale, user.publicKey), { referrer: b.toBase58(), sig: ok.json.sig, confirmed: true }, "a confirmed row is never replaced");
+  } finally {
+    await s.close();
+  }
+});
+
+test("cosign: a repeat of a join tx that already went out gets the early 202 and writes no row; its first send did", async () => {
+  const s = await startServer({ sendTimeoutMs: 300 });
+  try {
+    const refs = new Referrals(s.store.db);
+    const presale = presalePda(pid, Keypair.generate().publicKey);
+    const user = Keypair.generate();
+    s.l1.simErr = "AlreadyProcessed"; // a real RPC's answer to a tx it has seen
+    const again = await s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)), ref: Keypair.generate().publicKey.toBase58() });
+    assert.deepEqual([again.status, again.json.kind, again.json.confirmed], [202, "join", false]);
+    assert.equal(refs.referralOf(presale, user.publicKey), null, "the early 202 returns before the referral block");
+  } finally {
+    await s.close();
+  }
+});
+
+test("refOf: a wallet that isn't the joiner's, else null", () => {
+  const user = Keypair.generate().publicKey;
+  const other = Keypair.generate().publicKey;
+  assert.ok(refOf(other.toBase58(), user).equals(other));
+  assert.ok(refOf(` ${other.toBase58()}\n`, user).equals(other), "the shared rule (refs.js cleanRef) trims");
+  assert.equal(refOf(user.toBase58(), user), null);
+  for (const v of [undefined, null, 5, "", "nope", "0".repeat(44), "1".repeat(45), "z".repeat(44), { ref: other.toBase58() }]) {
+    assert.equal(refOf(v, user), null, String(v));
   }
 });
