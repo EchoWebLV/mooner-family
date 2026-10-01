@@ -5,7 +5,10 @@ import { pfpKey } from './traits'
 
 /** Bump when the renderer's output changes, so stored pictures are drawn again. */
 const RENDER_VERSION = 17
-const CACHE = `mooner-pfp-v${RENDER_VERSION}`
+/** The sim draws with its own renderer, on the real app's origin and with the same picture
+ *  keys: its pictures live in caches of their own (the app's are mooner-pfp-v*). */
+const PREFIX = 'mooner-sim-pfp-'
+const CACHE = `${PREFIX}v${RENDER_VERSION}`
 
 /** Pixel sizes pictures are drawn at. */
 export const PFP_SIZES = [128, 256, 512] as const
@@ -111,7 +114,7 @@ function openCache(): Promise<Cache | undefined> {
   cache ??= (async () => {
     if (typeof caches === 'undefined') return undefined
     try {
-      for (const name of await caches.keys()) if (name.startsWith('mooner-pfp-') && name !== CACHE) await caches.delete(name)
+      for (const name of await caches.keys()) if (name.startsWith(PREFIX) && name !== CACHE) await caches.delete(name)
       return await caches.open(CACHE)
     } catch {
       return undefined
