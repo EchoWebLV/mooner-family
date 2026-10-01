@@ -273,7 +273,8 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       openingOf(wallet),
     ]);
     if (get().wallet !== wallet) return; // switched meanwhile
-    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {}, opening });
+    // the copy in memory again: a save made during these reads is newer than openingOf's answer
+    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {}, opening: openings.has(wallet) ? openings.get(wallet) : opening });
   }
 
   /** Mooner sign-in (one wallet signature), kept 7 days on this phone. Returns { ok: true,

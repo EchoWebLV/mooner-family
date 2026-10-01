@@ -28,6 +28,8 @@ const PID = "6iCH5T57amKEmbxU7sNrfnYC5BYyjGWTW8mayEAz7Lpa";
  *  keys (create/rules.js isOpening). */
 const MINT = "CtqGFBa6JYHvjp52W1oJ3r2ZoTYidPDbAmKbyU68oTWk";
 const PRE = "FjwDw8HvJEXrkmwwzZkNfKW4C6hGgCpMVvDvuhwDxwu2";
+/** Another wallet, a key made for these tests too. */
+const OTHER = "Beqnsw1bfeTdHKvFrGXLcXLj6NV4WX6x8Sde3VsxAcGC";
 /** The server's coin, with its presale's key, as the screen hands it to openCoin. */
 const OPENING = {
   mint: MINT,
@@ -59,17 +61,33 @@ const ALREADY_EXISTS = new ApiError(400, "the tx fails: ix 1: AlreadyExists (28)
 });
 
 /** `disk`: the phone's saved state (a fresh rig on the same disk is the app started again);
- *  `presale(key)`: what GET /api/presale gives; `setFails`: secure storage refuses every save;
+ *  `presale(key)`: what GET /api/presale gives; `setFails`, `clearFails`: secure storage
+ *  refuses every save, every clear; `hold(name)`: a read of `name` waits for what it returns;
  *  `now`: the store's clock (5_000 unless a test moves it). */
-function rig({ flows: over = {}, signer: signerOver = {}, presale = NOT_FOUND, disk = new Map(), setFails = false, now = () => 5_000 } = {}) {
+function rig({
+  flows: over = {},
+  signer: signerOver = {},
+  presale = NOT_FOUND,
+  disk = new Map(),
+  setFails = false,
+  clearFails = false,
+  hold = () => {},
+  now = () => 5_000,
+} = {}) {
   const live = { subscribe: () => () => {}, onStatus: () => () => {} };
   const saved = (name) => ({
-    get: async () => (disk.has(name) ? structuredClone(disk.get(name)) : undefined),
+    get: async () => {
+      await hold(name);
+      return disk.has(name) ? structuredClone(disk.get(name)) : undefined;
+    },
     set: async (v) => {
       if (setFails) throw new Error("the secure store refused it");
       disk.set(name, structuredClone(v));
     },
-    clear: async () => void disk.delete(name),
+    clear: async () => {
+      if (clearFails) throw new Error("the secure store refused it");
+      disk.delete(name);
+    },
   });
   const calls = [];
   const flows = {
@@ -444,6 +462,35 @@ test("openCoin: the coin is saved again once the wallet signs, so an app that en
   assert.deepEqual(again.store.getState().opening, SIGNED);
 });
 
+test("openCoin: each save of the coin is in the state before it reaches the disk", async () => {
+  let store;
+  const seen = []; // the state's `opening` as each save of the coin reaches the disk
+  const disk = new Map();
+  const put = disk.set.bind(disk);
+  disk.set = (k, v) => (k === SAVED_NAME && seen.push(store.getState().opening), put(k, v));
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), { disk, ...movingClock() });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.deepEqual(seen, [SAVED, SIGNED, REPORTED]);
+});
+
+test("openCoin: a save for a wallet no longer connected stays out of the state, and is that wallet's when it connects again", async () => {
+  let store;
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), {
+    // another account is connected while the wallet is up
+    signer: { signTransaction: async (tx) => (await store.getState().setWallet(OTHER), tx) },
+  });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.equal(store.getState().wallet, OTHER);
+  assert.equal(store.getState().opening, null, "the connected wallet has none");
+  assert.deepEqual(r.disk.get(SAVED_NAME), SAVED);
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, SAVED);
+});
+
 test("openCoin: when secure storage refuses the save, a copy in memory keeps the coin for its wallet while the app runs", async () => {
   const { store, disk, signer } = signedThen(outcomeUnknown("SIG", "cosign"), { setFails: true });
   await store.getState().setWallet(W);
@@ -461,6 +508,77 @@ test("openCoin: when secure storage refuses the save, a copy in memory keeps the
   await store.getState().setWallet(null);
   await store.getState().setWallet(W);
   assert.equal(store.getState().opening, null, "a clear removes the copy too");
+});
+
+test("openCoin: when secure storage refuses the save over an earlier try's coin, the copy in memory wins over the disk", async () => {
+  const { store, disk, signer } = signedThen(outcomeUnknown("SIG", "cosign"), {
+    disk: new Map([[SAVED_NAME, OLD]]),
+    setFails: true,
+    ...movingClock(),
+  });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: false, error: OUTCOME_UNKNOWN, read: readOf("retry") });
+  assert.deepEqual(disk.get(SAVED_NAME), OLD, "the disk still has the earlier try's");
+  await store.getState().setWallet(null);
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, REPORTED, "this try's last save, not the disk's older `at`");
+  const declined = Object.assign(new Error("transaction not signed"), { code: -3 });
+  const no = { ...signer, signTransaction: async () => { throw declined; } };
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, no), {
+    ok: false,
+    error: "You cancelled it in your wallet.",
+    read: { verdict: "retry", at: 9_000 },
+  });
+  assert.deepEqual(store.getState().opening, REPORTED, "a refused retry puts back the copy in memory, not the disk's");
+});
+
+test("openCoin: when secure storage refuses the clear, the copy in memory keeps it cleared while the app runs", async () => {
+  const { store, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]), clearFails: true });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
+  assert.deepEqual(disk.get(SAVED_NAME), SAVED, "the clear didn't reach the disk");
+  await store.getState().setWallet(null);
+  await store.getState().setWallet(W);
+  assert.equal(store.getState().opening, null, "the disk's coin doesn't come back");
+});
+
+test("setWallet: another wallet's `opening` is unread (undefined) until it has been read", async () => {
+  const { store } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, OLD);
+  const switching = store.getState().setWallet(OTHER);
+  assert.equal(store.getState().opening, undefined, "not the last wallet's coin");
+  await switching;
+  assert.equal(store.getState().opening, null);
+});
+
+test("setWallet: a reconnect while an open goes out shows the coin's last save, not the one there when it began", async () => {
+  let store;
+  let reconnect;
+  let release;
+  let held; // the reconnect's sign-in read, held until the open is done
+  const clock = movingClock();
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), {
+    ...clock,
+    hold: (name) => (name === `mooner:login:${W}` ? held : undefined),
+    signer: {
+      // the adapter drops the account and brings it back while the wallet is up
+      signTransaction: async (tx) => {
+        await store.getState().setWallet(null);
+        held = new Promise((done) => (release = done));
+        reconnect = store.getState().setWallet(W);
+        return clock.signer.signTransaction(tx);
+      },
+    },
+  });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.deepEqual(store.getState().opening, REPORTED);
+  release();
+  await reconnect;
+  assert.deepEqual(r.disk.get(SAVED_NAME), REPORTED);
+  assert.deepEqual(store.getState().opening, REPORTED, "the report's, as on disk");
 });
 
 test("openCoin: a presale the feed already shows stops the open before the wallet is asked", async () => {
@@ -529,6 +647,20 @@ test("openCoin: a retry reads first, then checks its saved commit, which it keep
   assert.deepEqual(kept.store.getState().mine[PRE], { deposit: "100000000", at: 5_000, back: null });
 });
 
+test("openCoin: a retry's read is timed from when it was asked, not when it answered", async () => {
+  let t = 5_000;
+  const { store, signer } = rig({
+    disk: new Map([[SAVED_NAME, OLD]]),
+    now: () => t,
+    presale: async (key) => {
+      t = 6_000;
+      return NOT_FOUND(key);
+    },
+  });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
+});
+
 test("openCoin: a retry short of SOL says so after the read, signs nothing, and the saved coin stays", async () => {
   const { store, calls, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
   await store.getState().setWallet(W);
@@ -541,4 +673,11 @@ test("openCoin: a retry short of SOL says so after the read, signs nothing, and 
   assert.deepEqual(calls.filter(([k]) => k === "presale"), [["presale", PRE]]);
   assert.ok(!calls.some(([k]) => k === "open" || k === "signTransaction"));
   assert.deepEqual(disk.get(SAVED_NAME), OLD);
+});
+
+test("openCoin: a retry's funds check reads the signing wallet's SOL only, not another connected wallet's", async () => {
+  const { store, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(OTHER);
+  store.setState({ lamports: 50_000_000 });
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
 });

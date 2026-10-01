@@ -20,7 +20,8 @@
   - A success or ALREADY_OPEN clears the coin. A first try's plain failure clears it too, but a retry's keeps it.
   - The one way to a new coin is Start over. It shows only after a retry's read got that 404 more than 5 minutes after the coin's last save (`at`, `canStartOver`).
   - **What that guarantees, on this phone:** an unknown outcome leads neither to a second coin nor to a second presale for the same coin.
-  - **The one gap:** secure storage refuses the save, and then the app ends before the outcome is known. The copy in memory goes with the app, so nothing is left to restore.
+  - **The first gap:** secure storage refuses the save, and then the app ends before the outcome is known. The copy in memory goes with the app, so nothing is left to restore.
+  - **A second gap:** secure storage refuses to read the saved coin while its saves still work. Then `opening` reads null, as if nothing were saved, so another mint's open can go ahead and overwrite the saved coin.
 - **The screen.** `mobile/app/(tabs)/create.js` steps through four parts in `mobile/src/create/`. A coin that was issued but never opened shows at the top and opens without signing its details again.
 - **Sharing.** The new presale's room opens with Android's share sheet up, with piece 3's share words and link (`?ref=<wallet>`, so joins through the creator's share credit them).
 - **The picture.** `expo-image-picker` gives Android's 1:1 crop screen. `expo-image-manipulator` then makes a square JPEG of at most 1024 px.
@@ -71,11 +72,11 @@
   - its Task 0: `check-bundle.sh` checks that the bundle holds this checkout's own screens, Metro keeps a cache per checkout, and every install runs the check first;
   - `app.json` already written by a JSON script (`JSON.stringify(j, null, 2) + "\n"`), with its release-signing plugin and App Links filter, so Task 1's script changes only the picker's entry;
   - its USER STEP B choice about release signing, recorded in Task 10's checklist line there: **(a)**, the agent's builds sign with the user's key. This plan's installs follow it (see Device below).
-- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 53 tests: 24 in `test/create.test.mjs` and 29 in `test/create-store.test.mjs`.
+- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 61 tests: 24 in `test/create.test.mjs` and 37 in `test/create-store.test.mjs`.
 - **Checked while writing (a record, not a gate).** The second round's changes were not run in a copy at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210` or `ef2e0f2`: the saved open and the read before a retry, `alreadyOpen`, `openPresale`'s unknown outcome after a 202, the share only after an open that succeeded here, and the Device wording. The third round's weren't either: the save before the wallet is asked, the copy in memory, the read before the commit check and its server-only 404, Start over, and the `trying` watch. Its check was read-only: each store, `JoinSheet.js` and `icons.js` anchor was counted at `ef2e0f2` (14 anchors, each found once), and piece 3's committed blocks were read, not applied: none of them holds or shares a line with any of these anchors, so each still matches once after piece 3. The checks below are from before them, on 2026-10-01 at HEAD `c38e1c4`, in a clean `git archive` of it in the scratchpad (and first at `8edc177` and `238150c`, with the same results but for the engine's count). Piece 3's blocks were applied by script first (68 edits), then this plan's (26: Task 1's `app.json` script, the new files, the store, `JoinSheet.js` and `icons.js` edits, and the tabs layout). Each anchor matched exactly once. The fourth round's changes (the coin saved again once the wallet signs and when an unknown is reported, and their tests) were not run either. Its check was read-only as well: the 14 anchors were counted again at `ccb0f94`, by a script that reads `git show HEAD:<file>`, and each was found once.
   - Task 1: the plugins print begins exactly as in Step 2, and the `app.json` diff after piece 3 is only the picker's lines. `mobile/node_modules/expo/bundledNativeModules.json` lists `expo-image-manipulator` `~55.0.21` and `expo-image-picker` `~55.0.24`.
-  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 53 now (24 and 29).
-  - Failing first, as written: `create.test.mjs` with `ERR_MODULE_NOT_FOUND` for `rules.js`; `create-store.test.mjs` with `# fail 15` (`mintCoin`, `openCoin`, `openCost` not functions) before the store edits. With the fourth round's tests, Task 3 Step 2 expects `# fail 29` (not run).
+  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 61 now (24 and 37).
+  - Failing first, as written: `create.test.mjs` with `ERR_MODULE_NOT_FOUND` for `rules.js`; `create-store.test.mjs` with `# fail 15` (`mintCoin`, `openCoin`, `openCost` not functions) before the store edits. With the fourth round's tests and the review's, Task 3 Step 2 expects `# fail 37` (checked against the store at `ea6c593`, before Task 3).
   - `cd engine && npm test`: `# pass 384`, `# fail 0`: 369 at `c38e1c4`, plus piece 3's 15. `6b9bbfe`, `df9abda`, `0c1cad3`, `e81bb45`, `874b210`, `5ba106a` and `ef2e0f2` change engine tests; that count wasn't taken. This plan changes nothing in `engine/`.
   - The parse check passes on `create.js`, `_layout.js`, the six files of Task 6, `picture.js`, `Chip.js`, `JoinSheet.js`, `icons.js` and `store.js`, with piece 3's screen files. `JoinSheet.js` has no `Pressable`, `F.` or `R.` left, and keeps `Haptics`.
   - Not run: `expo install`, prebuild, any Metro bundle and the device steps. `node_modules` were symlinks from the repo, used only by `node --test`, and removed afterwards.
@@ -195,7 +196,7 @@ BigInts and PublicKeys arrive as strings.
 - Create `src/ui/Chip.js` (moved out of `src/room/JoinSheet.js`, which then imports it), with an optional `label` for screen readers. Modify `src/ui/icons.js` (`PlusIcon`).
 - Create `src/create/Field.js`, `src/create/PictureStep.js`, `src/create/DetailsStep.js`, `src/create/CommitStep.js`, `src/create/ReviewStep.js`, `src/create/Unopened.js`.
 - Create `app/(tabs)/create.js`. Modify `app/(tabs)/_layout.js` (the Create tab, between Launched and Me).
-- Create `test/create.test.mjs` (24 tests) and `test/create-store.test.mjs` (29 tests).
+- Create `test/create.test.mjs` (24 tests) and `test/create-store.test.mjs` (37 tests).
 
 **Docs:** at the end, a piece 4 status line in the spec.
 
@@ -1190,7 +1191,7 @@ The saved open (`opening`):
   - when an unknown outcome is reported, as the web does (`6871fe7`).
 
   So `at` is the coin's last save, by any try, and Start over (`canStartOver`, Task 2) counts from it.
-- **A copy in memory.** Secure storage can refuse a save (`keep` swallows the error). A `Map` of wallet → record keeps the coin for as long as the app runs, and `openingOf` and `setWallet` read it before the disk. Every save and clear writes the `Map` first, and a clear leaves `null` there rather than deleting the entry: every write goes through `noteOpening`, so the `Map` is never older than the disk, while the disk can be, after a refused save or clear. Read first, the disk would bring back a coin the app already cleared, or an older `at` (which could let Start over show too soon).
+- **A copy in memory.** Secure storage can refuse a save (`keep` swallows the error). A `Map` of wallet → record keeps the coin for as long as the app runs, and `openingOf` and `setWallet` read it before the disk. `setWallet` reads it again when it sets the state, so a save made while it read the disk (an open going out during a reconnect) isn't replaced by the older record. Every save and clear writes the `Map` first, and a clear leaves `null` there rather than deleting the entry: every write goes through `noteOpening`, so the `Map` is never older than the disk, while the disk can be, after a refused save or clear. Read first, the disk would bring back a coin the app already cleared, or an older `at` (which could let Start over show too soon).
 - **Kept:** an unknown outcome (OUTCOME_UNKNOWN), saved again as of the report; a retry's plain failure, as the record was before that try (its `at` too: nothing from that try can land, even after the sign, since a plain failure means the server never sent the tx, or sent it and it failed for certain); a retry stopped by the read, the kept commit or the funds check. **Cleared:** a success; ALREADY_OPEN (the program's AlreadyExists, the read, or the feed); a first try's plain failure (the wallet's Decline, the server's refusal), since nothing of it can land.
 - **The read comes first.** A retry of the saved coin reads its presale once (`checkBeforeRetry` with `api.presale`), before any other check, so a landed open is never signed again whatever else is wrong. If the server knows it in any state (on chain, or its record of one that closed), that open landed: the saved coin is cleared and the answer is ALREADY_OPEN, with nothing signed. A presale that closed leaves no account, so the program alone would open the same coin again. Only the server's own 404 (`e.body.error` is exactly "no such presale", api.js line 259) lets the retry go on. Anything else (another 404, a 5xx, a timeout, a network error) stops it with RETRY_UNCHECKED, and the coin stays saved.
 - **The saved commit.** A retry opens with the saved commit, whatever the screen hands in: it is fixed for its mint. If it no longer fits a seat under /api/info's numbers, `keptCommitProblem` says so in one line (e.g. "0.45 SOL is more than a seat can hold now.") and nothing is signed. Then the funds check (`shortOfOpen` with `openCost()` and the wallet's SOL), after the read, so a wallet short of SOL still gets the read that Start over needs.
@@ -1238,6 +1239,8 @@ const PID = "6iCH5T57amKEmbxU7sNrfnYC5BYyjGWTW8mayEAz7Lpa";
  *  keys (create/rules.js isOpening). */
 const MINT = "CtqGFBa6JYHvjp52W1oJ3r2ZoTYidPDbAmKbyU68oTWk";
 const PRE = "FjwDw8HvJEXrkmwwzZkNfKW4C6hGgCpMVvDvuhwDxwu2";
+/** Another wallet, a key made for these tests too. */
+const OTHER = "Beqnsw1bfeTdHKvFrGXLcXLj6NV4WX6x8Sde3VsxAcGC";
 /** The server's coin, with its presale's key, as the screen hands it to openCoin. */
 const OPENING = {
   mint: MINT,
@@ -1269,17 +1272,33 @@ const ALREADY_EXISTS = new ApiError(400, "the tx fails: ix 1: AlreadyExists (28)
 });
 
 /** `disk`: the phone's saved state (a fresh rig on the same disk is the app started again);
- *  `presale(key)`: what GET /api/presale gives; `setFails`: secure storage refuses every save;
+ *  `presale(key)`: what GET /api/presale gives; `setFails`, `clearFails`: secure storage
+ *  refuses every save, every clear; `hold(name)`: a read of `name` waits for what it returns;
  *  `now`: the store's clock (5_000 unless a test moves it). */
-function rig({ flows: over = {}, signer: signerOver = {}, presale = NOT_FOUND, disk = new Map(), setFails = false, now = () => 5_000 } = {}) {
+function rig({
+  flows: over = {},
+  signer: signerOver = {},
+  presale = NOT_FOUND,
+  disk = new Map(),
+  setFails = false,
+  clearFails = false,
+  hold = () => {},
+  now = () => 5_000,
+} = {}) {
   const live = { subscribe: () => () => {}, onStatus: () => () => {} };
   const saved = (name) => ({
-    get: async () => (disk.has(name) ? structuredClone(disk.get(name)) : undefined),
+    get: async () => {
+      await hold(name);
+      return disk.has(name) ? structuredClone(disk.get(name)) : undefined;
+    },
     set: async (v) => {
       if (setFails) throw new Error("the secure store refused it");
       disk.set(name, structuredClone(v));
     },
-    clear: async () => void disk.delete(name),
+    clear: async () => {
+      if (clearFails) throw new Error("the secure store refused it");
+      disk.delete(name);
+    },
   });
   const calls = [];
   const flows = {
@@ -1654,6 +1673,35 @@ test("openCoin: the coin is saved again once the wallet signs, so an app that en
   assert.deepEqual(again.store.getState().opening, SIGNED);
 });
 
+test("openCoin: each save of the coin is in the state before it reaches the disk", async () => {
+  let store;
+  const seen = []; // the state's `opening` as each save of the coin reaches the disk
+  const disk = new Map();
+  const put = disk.set.bind(disk);
+  disk.set = (k, v) => (k === SAVED_NAME && seen.push(store.getState().opening), put(k, v));
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), { disk, ...movingClock() });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.deepEqual(seen, [SAVED, SIGNED, REPORTED]);
+});
+
+test("openCoin: a save for a wallet no longer connected stays out of the state, and is that wallet's when it connects again", async () => {
+  let store;
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), {
+    // another account is connected while the wallet is up
+    signer: { signTransaction: async (tx) => (await store.getState().setWallet(OTHER), tx) },
+  });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.equal(store.getState().wallet, OTHER);
+  assert.equal(store.getState().opening, null, "the connected wallet has none");
+  assert.deepEqual(r.disk.get(SAVED_NAME), SAVED);
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, SAVED);
+});
+
 test("openCoin: when secure storage refuses the save, a copy in memory keeps the coin for its wallet while the app runs", async () => {
   const { store, disk, signer } = signedThen(outcomeUnknown("SIG", "cosign"), { setFails: true });
   await store.getState().setWallet(W);
@@ -1671,6 +1719,77 @@ test("openCoin: when secure storage refuses the save, a copy in memory keeps the
   await store.getState().setWallet(null);
   await store.getState().setWallet(W);
   assert.equal(store.getState().opening, null, "a clear removes the copy too");
+});
+
+test("openCoin: when secure storage refuses the save over an earlier try's coin, the copy in memory wins over the disk", async () => {
+  const { store, disk, signer } = signedThen(outcomeUnknown("SIG", "cosign"), {
+    disk: new Map([[SAVED_NAME, OLD]]),
+    setFails: true,
+    ...movingClock(),
+  });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: false, error: OUTCOME_UNKNOWN, read: readOf("retry") });
+  assert.deepEqual(disk.get(SAVED_NAME), OLD, "the disk still has the earlier try's");
+  await store.getState().setWallet(null);
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, REPORTED, "this try's last save, not the disk's older `at`");
+  const declined = Object.assign(new Error("transaction not signed"), { code: -3 });
+  const no = { ...signer, signTransaction: async () => { throw declined; } };
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, no), {
+    ok: false,
+    error: "You cancelled it in your wallet.",
+    read: { verdict: "retry", at: 9_000 },
+  });
+  assert.deepEqual(store.getState().opening, REPORTED, "a refused retry puts back the copy in memory, not the disk's");
+});
+
+test("openCoin: when secure storage refuses the clear, the copy in memory keeps it cleared while the app runs", async () => {
+  const { store, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]), clearFails: true });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
+  assert.deepEqual(disk.get(SAVED_NAME), SAVED, "the clear didn't reach the disk");
+  await store.getState().setWallet(null);
+  await store.getState().setWallet(W);
+  assert.equal(store.getState().opening, null, "the disk's coin doesn't come back");
+});
+
+test("setWallet: another wallet's `opening` is unread (undefined) until it has been read", async () => {
+  const { store } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(W);
+  assert.deepEqual(store.getState().opening, OLD);
+  const switching = store.getState().setWallet(OTHER);
+  assert.equal(store.getState().opening, undefined, "not the last wallet's coin");
+  await switching;
+  assert.equal(store.getState().opening, null);
+});
+
+test("setWallet: a reconnect while an open goes out shows the coin's last save, not the one there when it began", async () => {
+  let store;
+  let reconnect;
+  let release;
+  let held; // the reconnect's sign-in read, held until the open is done
+  const clock = movingClock();
+  const r = signedThen(outcomeUnknown("SIG", "cosign"), {
+    ...clock,
+    hold: (name) => (name === `mooner:login:${W}` ? held : undefined),
+    signer: {
+      // the adapter drops the account and brings it back while the wallet is up
+      signTransaction: async (tx) => {
+        await store.getState().setWallet(null);
+        held = new Promise((done) => (release = done));
+        reconnect = store.getState().setWallet(W);
+        return clock.signer.signTransaction(tx);
+      },
+    },
+  });
+  store = r.store;
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, r.signer), { ok: false, error: OUTCOME_UNKNOWN });
+  assert.deepEqual(store.getState().opening, REPORTED);
+  release();
+  await reconnect;
+  assert.deepEqual(r.disk.get(SAVED_NAME), REPORTED);
+  assert.deepEqual(store.getState().opening, REPORTED, "the report's, as on disk");
 });
 
 test("openCoin: a presale the feed already shows stops the open before the wallet is asked", async () => {
@@ -1739,6 +1858,20 @@ test("openCoin: a retry reads first, then checks its saved commit, which it keep
   assert.deepEqual(kept.store.getState().mine[PRE], { deposit: "100000000", at: 5_000, back: null });
 });
 
+test("openCoin: a retry's read is timed from when it was asked, not when it answered", async () => {
+  let t = 5_000;
+  const { store, signer } = rig({
+    disk: new Map([[SAVED_NAME, OLD]]),
+    now: () => t,
+    presale: async (key) => {
+      t = 6_000;
+      return NOT_FOUND(key);
+    },
+  });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
+});
+
 test("openCoin: a retry short of SOL says so after the read, signs nothing, and the saved coin stays", async () => {
   const { store, calls, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
   await store.getState().setWallet(W);
@@ -1752,12 +1885,19 @@ test("openCoin: a retry short of SOL says so after the read, signs nothing, and 
   assert.ok(!calls.some(([k]) => k === "open" || k === "signTransaction"));
   assert.deepEqual(disk.get(SAVED_NAME), OLD);
 });
+
+test("openCoin: a retry's funds check reads the signing wallet's SOL only, not another connected wallet's", async () => {
+  const { store, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(OTHER);
+  store.setState({ lamports: 50_000_000 });
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE, read: readOf("retry") });
+});
 ```
 
 - [ ] **Step 2: Run it to see it fail**
 
 Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/create-store.test.mjs`
-Expected: `# fail 29`, with errors such as `store.getState(...).mintCoin is not a function`
+Expected: `# fail 37`, with errors such as `store.getState(...).mintCoin is not a function`
 
 - [ ] **Step 3: Add the actions to the store**
 
@@ -1880,7 +2020,8 @@ with:
       openingOf(wallet),
     ]);
     if (get().wallet !== wallet) return; // switched meanwhile
-    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {}, opening });
+    // the copy in memory again: a save made during these reads is newer than openingOf's answer
+    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {}, opening: openings.has(wallet) ? openings.get(wallet) : opening });
 ```
 
 Replace (after `joinCost`):
@@ -2061,10 +2202,10 @@ After piece 3 the line ends `…joinCost, sendChat, noteRef, preview, trade });`
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/create-store.test.mjs`
-Expected: `# pass 29`, `# fail 0`
+Expected: `# pass 37`, `# fail 0`
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 53, `# fail 0`. `test/store.test.mjs` passes unchanged.
+Expected: pass is BEFORE + 61, `# fail 0`. `test/store.test.mjs` passes unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -2319,7 +2460,7 @@ export function PlusIcon({ color, size = 22 }) {
 - [ ] **Step 4: Tests and parse check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 53, `# fail 0`
+Expected: pass is BEFORE + 61, `# fail 0`
 
 Run from `mobile/` the parse check with `src/ui/Chip.js src/room/JoinSheet.js src/ui/icons.js`.
 Expected: `parsed 3 files`
@@ -3105,7 +3246,7 @@ The other screens' options are exactly as at `c38e1c4` (the file is unchanged si
 - [ ] **Step 3: Tests, parse check, bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 53, `# fail 0`
+Expected: pass is BEFORE + 61, `# fail 0`
 
 Run from `mobile/` the parse check with `"app/(tabs)/create.js" "app/(tabs)/_layout.js"`.
 Expected: `parsed 2 files`
@@ -3347,7 +3488,7 @@ Run superpowers:code-reviewer over the commits of Tasks 1-7, against this plan a
 - [ ] **Step 2: Every suite and the bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 53, plus any tests the review added; `# fail 0`
+Expected: pass is BEFORE + 61, plus any tests the review added; `# fail 0`
 
 Run: `cd engine && npm test`
 Expected: 0 fail. This plan changes nothing in `engine/`.
@@ -3379,7 +3520,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- docs/superpowers/spe
 - 3. Your commit → Task 2 (`commitChoices`, `commitProblem`, `shortOfOpen`) and Task 6 (`CommitStep`).
 - 4. Review: sign the mint request, then the open tx → Task 3 (`mintCoin`, `openCoin`) and Task 6 (`ReviewStep`).
 - 5. The new presale opens with the share sheet up → Task 2 (`newPresaleShare`, through piece 3's `shareOf`) and Task 7 (`router.push`, then `Share.share`).
-- An open whose outcome isn't known never leads to a second coin on this phone → Task 2 (`openFailure`, `mayHaveSent`, `ALREADY_OPEN` through `alreadyOpen`, `RETRY_UNCHECKED`, `OPEN_PENDING`, `checkBeforeRetry`, `canStartOver`, `keptCommitProblem`, `isOpening`, `presaleKeyOf`, `openLanded`, `backAction`, `restoredOpen`), Task 3 (`openCoin`: the coin saved before the wallet is asked, again once it signs and when an unknown is reported, the copy in memory, the read before any other check with the server's own 404 only, the saved commit, the feed's check before the prompt, one coin at a time; twenty tests) and Task 7 (the restored state, the watch held while a try runs, the locked Back, and Start over only through `canStartOver`). The one gap: secure storage refuses the save and the app ends before the outcome is known; the copy in memory ends with it.
+- An open whose outcome isn't known never leads to a second coin on this phone → Task 2 (`openFailure`, `mayHaveSent`, `ALREADY_OPEN` through `alreadyOpen`, `RETRY_UNCHECKED`, `OPEN_PENDING`, `checkBeforeRetry`, `canStartOver`, `keptCommitProblem`, `isOpening`, `presaleKeyOf`, `openLanded`, `backAction`, `restoredOpen`), Task 3 (`openCoin`: the coin saved before the wallet is asked, again once it signs and when an unknown is reported, the copy in memory, the read before any other check with the server's own 404 only, the saved commit, the feed's check before the prompt, one coin at a time; twenty-eight tests) and Task 7 (the restored state, the watch held while a try runs, the locked Back, and Start over only through `canStartOver`). The first gap: secure storage refuses the save and the app ends before the outcome is known; the copy in memory ends with it. The second: secure storage refuses to read the saved coin while its saves work, so `opening` reads null and another mint's open can overwrite it.
 - The phone-only touches (line 213): haptics on the chips, Back and the result; the Android share sheet; the camera → Tasks 5-7.
 - A refused opener (`MOONER_OPENER_WALLETS`) → Task 2 (`createError`), Task 3 (tests for both the mint's 403 and the co-signer's), and optionally on the device in Task 9.
 
@@ -3422,5 +3563,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- docs/superpowers/spe
 - **The store's `watch` and the room's (verified).** Create stops its watch (the form resets) before it pushes the room, which starts its own. The order can't matter: `engine/src/live.js` `subscribe` (lines 91–108 at `ef2e0f2`: its doc comment 91–95, the function 96–108) keeps a Set of listeners per topic and sends `unsub` only when the last one leaves. Since `0c1cad3` it sends `sub` again for a topic it has, so a listener that comes second gets the snapshot too. Since `874b210` the server answers at most 30 such repeat subs of a held topic a minute per socket, and the doc says a listener must not subscribe again from its own snapshot handler. Create and the room make at most one repeat sub per open, and neither makes it from a handler.
 - **What marks a presale as there (verified).** `openLanded` takes a `views[key]` or `presales[key]` with a `state`. `mobile/src/store.js` `onPresale` (lines 125-129 at `ccb0f94`) puts a missing presale only in `missing[key]`, never in `views`. A `"closed"` view needs the server's `markOpened`, which runs only after an open landed (`api.js` lines 327 and 414, `keeper.js` line 67, at `ccb0f94`).
 - **The share's "in so far".** The new presale's share says the creator's commit is what's in, from the open itself, not from the feed. Someone joining in the same seconds isn't counted.
-- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 53 (24 + 29).
+- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 61 (24 + 37).
 - **Not run at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210`, `ef2e0f2` or `ccb0f94`.** The second round's changes (the saved open and the read before a retry, `alreadyOpen`, the 202's unknown outcome, the share only after an open that succeeded here, the Device wording) and the third round's (the save before the wallet is asked, the copy in memory, the read before the commit check with the server's own 404 only, the saved commit, the feed's check before the prompt, one coin at a time, Start over, and the `trying` watch) were not applied to a clean copy or run, and neither were the fourth round's (the coin saved again once the wallet signs and when an unknown is reported, with their tests). Both checks were read-only: the third round counted each anchor at `ef2e0f2`, and the fourth counted all 14 again at `ccb0f94` (a script that reads `git show HEAD:<file>`; each found once). Nothing was run. The counts in "Before this plan" are from `c38e1c4`, before them: a record, not a gate.
