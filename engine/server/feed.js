@@ -48,7 +48,7 @@ export class Feed extends EventEmitter {
    * `db`: the server's SQLite (chat and pictures).
    */
   constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, log = console.log }) {
-    super();
+    super({ captureRejections: true });
     Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
@@ -101,6 +101,11 @@ export class Feed extends EventEmitter {
 
   has(topic) {
     return !!this.hub?.has(topic);
+  }
+
+  /** An async listener that rejected (captureRejections sends it here): logged, not a crash. */
+  [Symbol.for("nodejs.rejection")](err, ev) {
+    this.log(`${ev} listener: ${err?.message ?? err}`);
   }
 
   // ---- presales ----
@@ -201,12 +206,17 @@ export class Feed extends EventEmitter {
       if (!s) return;
       const was = p.migrated;
       p.migrated = s.migrated;
+      const pool = { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated };
+      const row = { ...p.row, pool };
+      this.publish("launched", { type: "upsert", data: row });
       if (s.migrated && was === false) {
         this.log(`$${p.row.token?.symbol} (${mint}) migrated to DAMM v2`);
-        this.emit("migrated", p.row);
+        try {
+          this.emit("migrated", row);
+        } catch (e) {
+          this.log(`migrated listener: ${e?.message ?? e}`);
+        }
       }
-      const pool = { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated };
-      this.publish("launched", { type: "upsert", data: { ...p.row, pool } });
     });
   }
 

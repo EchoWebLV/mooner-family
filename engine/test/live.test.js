@@ -9,7 +9,7 @@ import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG } from "../src/consts.js";
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { Bot } from "../src/bot.js";
-import { createServer } from "../server/http.js";
+import { createServer, toJson } from "../server/http.js";
 import { makeReads } from "../server/api.js";
 import { makeSocialRoutes } from "../server/social.js";
 import { Store } from "../server/store.js";
@@ -429,10 +429,10 @@ function launchedCoin(l1, store, { migrated = false } = {}) {
 test("migrated: one event when a pool's flag flips; none for a coin that migrated while the server was down", async () => {
   let old;
   const s = await startLive({ before: ({ l1, store }) => (old = launchedCoin(l1, store, { migrated: true })) });
-  const coin = launchedCoin(s.l1, s.store);
   const events = [];
   const c = await s.client();
   try {
+    const coin = launchedCoin(s.l1, s.store);
     s.feed.on("migrated", (row) => events.push(row.mint));
     c.sub("launched");
     await c.next(on("launched", "snapshot"));
@@ -451,6 +451,74 @@ test("migrated: one event when a pool's flag flips; none for a coin that migrate
     s.l1.write(old.pool, DBC, dbcPool(true));
     await c.next((m) => on("launched", "upsert")(m) && m.data.mint === old.mint.toBase58());
     assert.deepEqual(events, [coin.mint.toBase58()]);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("migrated: a coin launched before the start, not migrated yet, fires when its pool flips", async () => {
+  let pre;
+  const s = await startLive({ before: ({ l1, store }) => (pre = launchedCoin(l1, store)) });
+  const c = await s.client();
+  const events = [];
+  try {
+    s.feed.on("migrated", (row) => events.push(row.mint));
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.l1.write(pre.pool, DBC, dbcPool(true));
+    await c.next((m) => on("launched", "upsert")(m) && m.data.mint === pre.mint.toBase58());
+    assert.deepEqual(events, [pre.mint.toBase58()]);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("migrated: the event carries the upsert's row; a listener that throws is logged, and the upsert still goes out", async () => {
+  const s = await startLive();
+  const c = await s.client();
+  const rows = [];
+  try {
+    const coin = launchedCoin(s.l1, s.store);
+    s.feed.on("migrated", (row) => rows.push(row));
+    s.feed.on("migrated", () => {
+      throw new Error("boom");
+    });
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    const up = await c.next(on("launched", "upsert"));
+    assert.equal(up.data.pool.migrated, true);
+    assert.equal(rows.length, 1);
+    assert.deepEqual(JSON.parse(toJson(rows[0])), up.data);
+    assert.ok(s.logs.includes("migrated listener: boom"), "logged");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("migrated: an async listener that rejects is logged, not a crash", async () => {
+  const s = await startLive();
+  const c = await s.client();
+  try {
+    const coin = launchedCoin(s.l1, s.store);
+    s.feed.on("migrated", async () => {
+      throw new Error("later");
+    });
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    assert.equal((await c.next(on("launched", "upsert"))).data.pool.migrated, true);
+    await wait(20); // the rejection reaches the feed a tick after the emit
+    assert.ok(s.logs.includes("migrated listener: later"), "logged");
   } finally {
     c.close();
     await s.close();
