@@ -14,7 +14,7 @@ export function Face({ wallet, size = 32, ring }) {
   return (
     <View
       style={{
-        width: size, height: size, borderRadius: size / 2, backgroundColor: `hsl(${hue(w)}, 55%, 45%)`,
+        width: size, height: size, borderRadius: size / 2, backgroundColor: `hsl(${hue(w)}, 55%, 32%)`,
         alignItems: "center", justifyContent: "center",
         ...(ring ? { borderWidth: 2, borderColor: ring } : null),
       }}
