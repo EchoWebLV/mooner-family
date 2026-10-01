@@ -53,7 +53,7 @@ function rig({ flows: over = {}, api: apiOver = {}, market: marketOver = {}, now
     ...apiOver,
   };
   const market = {
-    quote: async (side, mint, amount) => (calls.push(["quote", side, mint, amount]), { side, inAmount: amount, outAmount: 7n, route: [] }),
+    quote: async (side, mint, amount) => (calls.push(["quote", side, mint, amount]), { side, inAmount: amount, outAmount: 7n, minOut: 7n, route: [] }),
     holding: async (wallet, mint) => (calls.push(["holding", wallet, mint]), { raw: 5_000_000n, decimals: 6, ui: 5 }),
     swap: async (q, s, onStep) => {
       calls.push(["swap", q, s]);
@@ -598,9 +598,9 @@ test("trade: a fresh quote, the swap with the screen's signer, then the balance;
   await store.getState().setWallet(W);
   const steps = [];
   const unsub = store.subscribe((s, was) => s.busy && s.busy !== was.busy && steps.push([s.busy.kind, s.busy.step]));
-  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer);
+  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer, { atLeast: 7n });
   unsub();
-  assert.deepEqual(r, { ok: true, value: { sig: "SIG", quote: { side: "sell", inAmount: 2_500_000n, outAmount: 7n, route: [] } } });
+  assert.deepEqual(r, { ok: true, value: { sig: "SIG", quote: { side: "sell", inAmount: 2_500_000n, outAmount: 7n, minOut: 7n, route: [] } } });
   assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap", "holding"], "no coin screen open: the trade reads the balance after");
   assert.equal(calls[1][2], signer);
   assert.deepEqual(steps, [["sell", null], ["sell", "Getting a price from Jupiter"], ["sell", "Sign the trade in your wallet"]]);
@@ -610,11 +610,11 @@ test("trade: a fresh quote, the swap with the screen's signer, then the balance;
 test("trade: a balance read that never answers doesn't hold the trade or the next one", async () => {
   const { store, calls } = rig({ market: { holding: () => new Promise(() => {}) } });
   await store.getState().setWallet(W);
-  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 7n });
   assert.equal(r.ok, true);
   assert.equal(r.value.sig, "SIG");
   assert.equal(store.getState().busy, null);
-  assert.equal((await store.getState().trade("buy", MINT, 100_000_000n, signer)).ok, true, "the next trade isn't told to wait");
+  assert.equal((await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 7n })).ok, true, "the next trade isn't told to wait");
   assert.equal(calls.filter((c) => c[0] === "swap").length, 2);
 });
 
@@ -630,9 +630,9 @@ test("trade: a failed swap in plain words; a second trade waits for the first", 
       },
     },
   });
-  const first = store.getState().trade("buy", MINT, 100_000_000n, signer);
+  const first = store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 7n });
   await tick();
-  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer), { ok: false, error: "Wait for the last one to finish." });
+  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 7n }), { ok: false, error: "Wait for the last one to finish." });
   release();
   assert.deepEqual(await first, { ok: false, error: "The price moved more than 3% before your trade landed, so it didn't go through. Try again." });
 });
@@ -654,6 +654,30 @@ test("launched: an upsert that first brings a coin's launch notes this phone's c
   assert.deepEqual(store.getState().launchSeen, { MB: 6_000, MC: 7_000 }, "a snapshot (a reconnect) keeps them");
 });
 
+test("launched: an upsert before the feed's snapshot doesn't note the clock (an old coin's pool change can come first)", () => {
+  let t = 100_000;
+  const { store, push } = rig({ now: () => t });
+  store.getState().start();
+  push("launched", "upsert", { presale: "A", mint: "MA", launch: { at: 99_000 }, pool: {} });
+  assert.deepEqual(store.getState().launchSeen, {});
+  push("launched", "snapshot", [{ presale: "A", mint: "MA", launch: { at: 99_000 } }]);
+  push("launched", "upsert", { presale: "A", mint: "MA", launch: { at: 99_000 }, pool: {} });
+  assert.deepEqual(store.getState().launchSeen, {}, "the snapshot had its launch already");
+});
+
+test("launched: only a launch within 34 s of this phone's clock (the tax, its margin and 30 s) is noted", () => {
+  let t = 1_000_000;
+  const { store, push } = rig({ now: () => t });
+  store.getState().start();
+  push("launched", "snapshot", []);
+  push("launched", "upsert", { presale: "A", mint: "MA", launch: { at: t - 34_000 } });
+  push("launched", "upsert", { presale: "B", mint: "MB", launch: { at: t - 34_001 } });
+  push("launched", "upsert", { presale: "C", mint: "MC", launch: { at: t - 3 * 3600_000 } });
+  push("launched", "upsert", { presale: "D", mint: "MD", launch: { at: t + 34_000 } });
+  push("launched", "upsert", { presale: "E", mint: "ME", launch: { at: t + 34_001 } });
+  assert.deepEqual(store.getState().launchSeen, { MA: 1_000_000, MD: 1_000_000 });
+});
+
 test("trade: a fresh price below the minimum the sheet showed goes back to the sheet unsigned", async () => {
   const { store, calls } = rig();
   await store.getState().setWallet(W);
@@ -661,7 +685,7 @@ test("trade: a fresh price below the minimum the sheet showed goes back to the s
   assert.deepEqual(r, {
     ok: false,
     moved: true,
-    value: { quote: { side: "buy", inAmount: 100_000_000n, outAmount: 7n, route: [] } },
+    value: { quote: { side: "buy", inAmount: 100_000_000n, outAmount: 7n, minOut: 7n, route: [] } },
     error: "The price moved. Check the new numbers and press again.",
   });
   assert.deepEqual(calls.map((c) => c[0]), ["quote"], "no swap: nothing to sign");
@@ -746,18 +770,27 @@ test("trade: a tight quote that still comes up short goes back to the sheet with
   assert.equal(store.getState().busy, null);
 });
 
-test("trade: with no minimum, any fresh price goes ahead", async () => {
-  const { store, calls } = rig({ market: { quote: async (side, mint, amount) => (calls.push(["quote"]), { side, inAmount: amount, outAmount: 1n, route: [] }) } });
-  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
-  assert.equal(r.ok, true);
-  assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap"]);
+test("trade: with no minimum from the sheet, nothing is quoted or signed", async () => {
+  const { store, calls } = rig();
+  await store.getState().setWallet(W);
+  const refused = { ok: false, error: "Get a price first, then press again." };
+  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer), refused);
+  assert.deepEqual(await store.getState().trade("sell", MINT, 2_500_000n, signer, {}), refused);
+  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: null }), refused);
+  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 7 }), refused, "a minimum that isn't a BigInt isn't one");
+  assert.deepEqual(calls, [], "no quote, no swap");
+  assert.equal(store.getState().busy, null);
 });
 
-test("trade: with no minimum, one quote at the default slippage, swapped as it is", async () => {
-  const { asked, market } = quoting(() => ({ outAmount: 1_000n, minOut: 500n }));
-  const { store, calls } = rig({ market });
-  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
-  assert.equal(r.ok, true);
-  assert.deepEqual(asked, [undefined]);
-  assert.equal(calls[0][1].minOut, 500n);
+test("trade: a fresh quote with no minimum of its own is never signed, however far above the shown one it is", async () => {
+  for (const atLeast of [998n, 900n]) {
+    const { asked, market } = quoting(() => ({ outAmount: 1_000n }));
+    const { store, calls } = rig({ market });
+    await store.getState().setWallet(W);
+    const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast });
+    assert.equal(r.ok, false);
+    assert.equal(r.moved, true);
+    assert.deepEqual(calls.map((c) => c[0]), [], `${atLeast}: no swap`);
+    assert.deepEqual(asked, atLeast === 998n ? [undefined] : [undefined, 1_000], `${atLeast}: quoted again only with 0.5% or more to spare`);
+  }
 });

@@ -8,6 +8,7 @@ import { createStore } from "zustand/vanilla";
 import { explain } from "../../engine/src/flows.js";
 import { signIn as walletSignIn } from "../../engine/src/signin.js";
 import { explainSwap } from "../../engine/src/swap.js";
+import { SNIPE_S, TAX_MARGIN_S } from "../../engine/src/views.js";
 
 const CHAT_KEEP = 200;
 /** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
@@ -15,6 +16,11 @@ export const PRICE_MOVED = "The price moved. Check the new numbers and press aga
 /** Under this much slippage (0.5%) between a fresh price and the sheet's minimum, a trade
  *  goes back to the sheet instead of quoting again that tight. */
 export const MIN_REQUOTE_BPS = 50;
+/** What a trade says when the sheet gave it no minimum to hold the swap to. */
+export const NO_MINIMUM = "Get a price first, then press again.";
+/** How near this phone's clock a launch must be for its first upsert to count as seen live:
+ *  the snipe tax, its margin and 30 s. An older coin's row (a pool change) isn't news. */
+const SEEN_LIVE_MS = (SNIPE_S + TAX_MARGIN_S + 30) * 1000;
 const loginName = (w) => `mooner:login:${w}`;
 const mineName = (w) => `mooner:mine:${w}`;
 const without = (o, k) => {
@@ -50,8 +56,10 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     launched: {}, // presale key -> launched row
     // mint -> this phone's clock when a `launched` upsert first brought the coin's launch (seen
     // live). The Buy and Sell lock ends 4 s after the later of this and launch.at (the
-    // server's clock), so a phone clock that runs fast can't open them early. A coin first
-    // seen in a snapshot has none.
+    // server's clock), so a phone clock that runs fast can't open them early. Only upserts
+    // after the feed's snapshot count, and only for a launch within SEEN_LIVE_MS of this
+    // phone's clock: the server joins a socket to the feed before its snapshot, and an old
+    // coin's pool changes are upserts too. A coin first seen in a snapshot has none.
     launchSeen: {},
     profiles: {}, // wallet -> Mooner picture traits
     solUsd: 0,
@@ -94,8 +102,9 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       set((s) => {
         const r = m.data;
         const launched = { ...s.launched, [r.presale]: r };
-        const first = r.launch != null && s.launched[r.presale]?.launch == null && r.mint && s.launchSeen[r.mint] == null;
-        return first ? { launched, launchSeen: { ...s.launchSeen, [r.mint]: now() } } : { launched };
+        if (!s.loaded.launched || r.launch == null || s.launched[r.presale]?.launch != null || !r.mint || s.launchSeen[r.mint] != null) return { launched };
+        const at = now();
+        return Math.abs(at - Number(r.launch.at)) <= SEEN_LIVE_MS ? { launched, launchSeen: { ...s.launchSeen, [r.mint]: at } } : { launched };
       });
     else if (m.type === "error") feedFailed("launched", m.error);
   }
@@ -345,7 +354,8 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   /** Buys or sells coin `mint` at a fresh quote (the price may have moved since the sheet's).
    *  Returns { ok, value: { sig, quote } } or { ok: false, error } once the swap is confirmed;
    *  the balance read it starts lands in `holdings` on its own. `opts.atLeast` (BigInt): the
-   *  minimum the sheet showed ("At least"), and the swap enforces it: what gets signed is a
+   *  minimum the sheet showed ("At least"), required: without one (a BigInt) nothing is
+   *  quoted or signed and it says NO_MINIMUM. The swap enforces it: what gets signed is a
    *  quote whose own minOut (the tx's otherAmountThreshold) is at least that. A fresh quote
    *  whose minOut is looser is quoted again with the slippage left between its price and
    *  `atLeast`, floored. When the fresh price is below `atLeast`, under MIN_REQUOTE_BPS
@@ -353,14 +363,15 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
    *  { ok: false, moved: true, value: { quote }, error: PRICE_MOVED }, so the sheet can show
    *  the new numbers. */
   async function trade(side, mint, amount, signer, { atLeast = null } = {}) {
+    if (typeof atLeast !== "bigint") return { ok: false, error: NO_MINIMUM };
     const r = await run(
       mint,
       side,
       async (onStep) => {
         onStep("Getting a price from Jupiter");
         let q = await market.quote(side, mint, amount);
-        if (atLeast != null && q.outAmount < atLeast) return { moved: true, quote: q };
-        if (atLeast != null && !(q.minOut >= atLeast)) {
+        if (q.outAmount < atLeast) return { moved: true, quote: q };
+        if (!(q.minOut >= atLeast)) {
           const bps = Number(((q.outAmount - atLeast) * 10_000n) / q.outAmount);
           if (bps < MIN_REQUOTE_BPS) return { moved: true, quote: q };
           q = await market.quote(side, mint, amount, bps);

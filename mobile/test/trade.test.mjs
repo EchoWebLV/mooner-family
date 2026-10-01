@@ -1,7 +1,7 @@
 // What the Buy and Sell sheets say (src/launched/trade.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BUY_CHIPS, BUY_RESERVE, lockEnds, parseSol, pctText, secondsTo, solSig, tokensText, tradeLines, whyNot } from "../src/launched/trade.js";
+import { BUY_CHIPS, BUY_RESERVE, SELL_RESERVE, lockEnds, parseSol, pctText, secondsTo, solSig, tokensText, tradeLines, whyNot } from "../src/launched/trade.js";
 
 const POOL = "8bnXSQC6zNX8BhWanfNLjn7wEmSU2NJRHjjeWVkpD3ri";
 // sqrt of 1 lamport per raw token (0.001 SOL per whole token)
@@ -50,7 +50,7 @@ test("tradeLines: a sell through other pools says the fees are in the price", ()
   });
 });
 
-test("tradeLines: the slippage is the quote's own (Jupiter's slippageBps), never shown above it; 3% when it doesn't say", () => {
+test("tradeLines: the slippage is the quote's own (Jupiter's slippageBps), never shown above it", () => {
   const base = { inAmount: 1_000_000_000n, outAmount: 891_000_000n, minOut: 883_000_000n, impact: 0, route: [{ amm: POOL }] };
   const slip = (raw) => tradeLines("buy", { ...base, raw }, { pools: [POOL], sqrtPrice: ONE, symbol: "MOON" }).slippage;
   assert.equal(slip({ slippageBps: 90 }), "0.9%");
@@ -58,9 +58,18 @@ test("tradeLines: the slippage is the quote's own (Jupiter's slippageBps), never
   assert.equal(slip({ slippageBps: 125 }), "1.25%");
   assert.equal(slip({ slippageBps: 7 }), "0.07%");
   assert.equal(slip({ slippageBps: 12.7 }), "0.12%", "a fraction of a bp is cut, not rounded up");
-  assert.equal(slip({}), "3%");
-  assert.equal(slip(undefined), "3%");
-  assert.equal(slip({ slippageBps: null }), "3%");
+});
+
+test("tradeLines: a quote that doesn't say its slippage shows the one its minimum leaves, cut down; 3% only when that isn't known either", () => {
+  const lines = (q) => tradeLines("buy", { inAmount: 1_000_000_000n, impact: 0, route: [{ amm: POOL }], ...q }, { pools: [POOL], sqrtPrice: ONE, symbol: "MOON" });
+  assert.equal(lines({ outAmount: 891_000_000n, minOut: 883_000_000n }).slippage, "0.89%", "8_000_000 * 10^4 / 891_000_000 = 89.8 bps, cut to 89");
+  assert.equal(lines({ outAmount: 891_000_000n, minOut: 883_000_000n, raw: {} }).slippage, "0.89%");
+  assert.equal(lines({ outAmount: 891_000_000n, minOut: 883_000_000n, raw: { slippageBps: null } }).slippage, "0.89%");
+  assert.equal(lines({ outAmount: 1_000n, minOut: 1_000n }).slippage, "0%");
+  assert.equal(lines({ outAmount: 1_000n, minOut: 970n, raw: { slippageBps: 250 } }).slippage, "2.5%", "Jupiter's own figure first");
+  const unknown = (q) => tradeLines("buy", { inAmount: 1_000_000_000n, impact: 0, route: [{ amm: POOL }], ...q }, { pools: [POOL], sqrtPrice: null, symbol: "MOON" }).slippage;
+  assert.equal(unknown({ outAmount: 1_000n, minOut: 1_001n }), "3%", "a minimum above the price says nothing");
+  assert.equal(unknown({ outAmount: 0n, minOut: 0n }), "3%", "no price");
 });
 
 test("secondsTo: the lock's countdown", () => {
@@ -108,4 +117,16 @@ test("whyNot: a sell needs coins, and enough of them for the share picked", () =
   assert.deepEqual(whyNot({ ...SELL, holding: { raw: 3n }, pct: 25 }), { text: "Too little to sell 25%. Try 100%.", wait: false });
   assert.deepEqual(whyNot({ ...SELL, holding: { raw: 1n }, pct: 50 }), { text: "Too little to sell 50%. Try 100%.", wait: false });
   assert.equal(whyNot({ ...SELL, holding: { raw: 3n }, pct: 100 }), null);
+});
+
+test("whyNot: a sell keeps SOL back for the fee and the wrapped-SOL account Jupiter opens for it", () => {
+  assert.equal(SELL_RESERVE, 1_633_440n, "145_000 fee + 1_488_440 rent for 165 bytes");
+  const has = (lamports) => whyNot({ ...SELL, lamports });
+  assert.equal(has(Number(SELL_RESERVE)), null, "exactly enough");
+  assert.notEqual(has(Number(SELL_RESERVE) - 1), null);
+  assert.deepEqual(has(1_000_000), { text: "Your wallet has 0.001 SOL, and a sell needs about 0.00163 SOL for fees and rent.", wait: false });
+  assert.equal(has(null), null, "the SOL isn't read yet");
+  assert.deepEqual(whyNot({ ...SELL, holding: undefined, lamports: 0 }), { text: "Your wallet has 0 SOL, and a sell needs about 0.00163 SOL for fees and rent.", wait: false }, "the coin's balance not read yet doesn't skip the SOL check");
+  assert.deepEqual(whyNot({ ...SELL, holding: { raw: 0n }, lamports: 0 }), { text: "You don't hold any $MOON.", wait: false }, "nothing to sell comes first");
+  assert.deepEqual(whyNot({ ...SELL, holding: { raw: 3n }, pct: 25, lamports: 0 }), { text: "Too little to sell 25%. Try 100%.", wait: false });
 });

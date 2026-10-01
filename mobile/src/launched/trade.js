@@ -31,6 +31,16 @@ const U64_MAX = (1n << 64n) - 1n;
  */
 export const BUY_RESERVE = 1_513_840n + 1_488_440n + 145_000n;
 
+/**
+ * What a sell needs in the wallet (lamports): it spends coins, but the tx still costs SOL.
+ * Jupiter's swap-instructions for a sell of the trial coin (GS2x…, 348_894_380_365 raw for
+ * about 0.0098 SOL) from a fresh wallet on 2026-10-01: its setup opens the wallet's
+ * wrapped-SOL account for the proceeds (SPL Token, 165 bytes: 1_488_440), the swap fills
+ * it, its cleanup closes it back into the wallet, all in the one tx. The coin's account is
+ * already there. So: that rent while it's open, plus the same 145_000 fee as a buy.
+ */
+export const SELL_RESERVE = 1_488_440n + 145_000n;
+
 /** Typed SOL ("0.25", "1", "0,5") as lamports, or null when it isn't a positive amount
  *  with at most 9 decimals that fits a u64. */
 export function parseSol(text) {
@@ -63,24 +73,33 @@ export function pctText(f) {
  * known): a route only through them shows the 1% pool fee, any other route says its fees
  * are in the price. `sqrtPrice`: the pool's live price, for the impact (null when it isn't
  * live: then the impact is Jupiter's own). The slippage is the quote's own (Jupiter's
- * `slippageBps`, the one its minOut was made with), cut to whole bps so it never shows more
- * than that; SLIPPAGE_BPS, what swap.js asks for, when the quote doesn't say.
+ * `slippageBps`, the one its minOut was made with); when it doesn't say, the one its minimum
+ * leaves below its price. Either is cut to whole bps, so it never shows more than the quote
+ * has. SLIPPAGE_BPS, what swap.js asks for, only when neither is known.
  */
 export function tradeLines(side, q, { pools, sqrtPrice, symbol }) {
   const coin = (raw) => `${tokensText(raw)} $${symbol}`;
   const sol = (lamports) => `${solSig(lamports)} SOL`;
   const impact = impactOf(side, q, sqrtPrice);
   const fee = poolFee(side, q, pools);
-  const given = q.raw?.slippageBps;
-  const bps = typeof given === "number" && Number.isFinite(given) && given >= 0 ? Math.floor(given) : SLIPPAGE_BPS;
   return {
     get: side === "buy" ? coin(q.outAmount) : sol(q.outAmount),
     minimum: side === "buy" ? coin(q.minOut) : sol(q.minOut),
     impact: pctText(impact),
     high: impact >= HIGH_IMPACT,
     fee: fee == null ? "In the price (Jupiter's route)" : `1% to the pool · ${sol(fee)}`,
-    slippage: `${bps / 100}%`,
+    slippage: `${slippageOf(q) / 100}%`,
   };
+}
+
+/** Quote `q`'s slippage in whole bps, cut down: Jupiter's `slippageBps`, else what its minOut
+ *  leaves below its outAmount, else SLIPPAGE_BPS. */
+function slippageOf(q) {
+  const given = q.raw?.slippageBps;
+  if (typeof given === "number" && Number.isFinite(given) && given >= 0) return Math.floor(given);
+  const { outAmount: out, minOut } = q;
+  if (typeof out === "bigint" && typeof minOut === "bigint" && out > 0n && minOut >= 0n && minOut <= out) return Number(((out - minOut) * 10_000n) / out);
+  return SLIPPAGE_BPS;
 }
 
 /** Whole seconds until `at` (ms), at least 1, for the lock's countdown; 0 once it's there. */
@@ -102,7 +121,7 @@ export function lockEnds(row, seenAt) {
  * itself (the lock, another action), else something to change. In order: the lock (`secs`
  * left), another action going on (`busy` that isn't this sheet's own trade), a buy of
  * `amount` lamports the wallet's `lamports` can't cover with BUY_RESERVE, a sell with nothing
- * held (`holding`), or a `pct` of it that rounds to nothing.
+ * held (`holding`), a `pct` of it that rounds to nothing, or a wallet without SELL_RESERVE.
  */
 export function whyNot({ side, secs, amount, lamports, holding, pct, symbol, busy, trading }) {
   if (secs > 0) return { text: `Trading opens in ${secs} s, after the launch's snipe tax.`, wait: true };
@@ -114,8 +133,10 @@ export function whyNot({ side, secs, amount, lamports, holding, pct, symbol, bus
     if (amount == null || lamports == null || amount + BUY_RESERVE <= BigInt(lamports)) return null;
     return { text: `Your wallet has ${solSig(lamports)} SOL, and a buy needs about ${solSig(BUY_RESERVE)} SOL more for fees and rent.`, wait: false };
   }
-  if (!holding) return null;
-  if (holding.raw <= 0n) return { text: `You don't hold any $${symbol}.`, wait: false };
-  if (sellAmount(holding.raw, pct) === 0n) return { text: `Too little to sell ${pct}%. Try 100%.`, wait: false };
-  return null;
+  if (holding) {
+    if (holding.raw <= 0n) return { text: `You don't hold any $${symbol}.`, wait: false };
+    if (sellAmount(holding.raw, pct) === 0n) return { text: `Too little to sell ${pct}%. Try 100%.`, wait: false };
+  }
+  if (lamports == null || BigInt(lamports) >= SELL_RESERVE) return null;
+  return { text: `Your wallet has ${solSig(lamports)} SOL, and a sell needs about ${solSig(SELL_RESERVE)} SOL for fees and rent.`, wait: false };
 }
