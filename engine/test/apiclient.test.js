@@ -121,3 +121,12 @@ test("deadlines can be set: a reply whose body never comes is given up too; an a
   const no = async () => ({ ok: false, status: 400, json: async () => ({ error: "time is off" }) });
   await assert.rejects(makeApi("", no, { ms: 20 }).login({}), (e) => e instanceof ApiError && e.status === 400 && e.message === "time is off" && e.timedOut === undefined);
 });
+
+test("cosign sends the join's ref beside the tx", async () => {
+  const f = fakeFetch([[200, { sig: "x", confirmed: true }], [200, { sig: "y", confirmed: true }]]);
+  const api = makeApi("", f);
+  await api.cosign("AAAA", { ref: "Ref1111" });
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { tx: "AAAA", ref: "Ref1111" });
+  await api.cosign("BBBB", { ref: null });
+  assert.deepEqual(JSON.parse(f.calls[1].init.body), { tx: "BBBB" });
+});

@@ -58,7 +58,8 @@ export function makeApi(base = "", fetchFn = (url, init) => fetch(url, init), { 
     mint: async (body) => (await call("POST", "/api/mint", body)).json,
     /** { status, json: { sig, confirmed, kind, user, presale, mint? } }. A timeout here may
      *  still have been sent: flows.js reads it as outcome unknown. */
-    cosign: (tx) => call("POST", "/api/cosign", { tx }, cosignMs),
+    // ref: the wallet whose share link this join came from (refs.js), beside the tx
+    cosign: (tx, { ref = null } = {}) => call("POST", "/api/cosign", ref ? { tx, ref } : { tx }, cosignMs),
     launched: async () => (await call("GET", "/api/launched")).json.launched,
     balance: async (wallet) => Number((await call("GET", `/api/wallet/${wallet}/balance`)).json.lamports),
     login: async (body) => (await call("POST", "/api/login", body)).json,

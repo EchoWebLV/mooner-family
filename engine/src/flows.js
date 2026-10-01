@@ -283,11 +283,12 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
    *  simulation). Any other failure (no answer in time, a 5xx without that, from it or a
    *  proxy, a network error, a reply that isn't JSON) may come after the server sent it:
    *  outcome unknown, so a retry can't open a second presale or pay twice. */
-  async function signAndCosign(signTransaction, payer, ixs) {
+  async function signAndCosign(signTransaction, payer, ixs, { ref = null } = {}) {
+    // `ref` goes beside the tx, never in it: the gate signs the same tx either way
     const { blockhash } = await api.blockhash();
     const tx = unsignedTx({ ixs: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priority }), ...ixs], payer, blockhash });
     const signed = await signTransaction(tx);
-    const r = await api.cosign(b64(signed.serialize())).catch((e) => {
+    const r = await api.cosign(b64(signed.serialize()), { ref }).catch((e) => {
       const plain = e instanceof ApiError && ((e.status >= 400 && e.status < 500) || e.body?.sent === false);
       throw plain ? e : outcomeUnknown(sigOf(signed), "cosign");
     });
@@ -382,15 +383,16 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
 
   // ---- join and the ledger ----
 
-  /** join + delegate(seat), then commit the whole deposit in the ER. `waitMs`: how long a
+  /** join + delegate(seat), then commit the whole deposit in the ER. `ref`: the wallet whose
+   *  share link brought this join (refs.js refFor), or null. `waitMs`: how long a
    *  202 waits for the seat to show. */
-  async function joinPresale({ info, wallet, signTransaction, view, amount, onStep = (_what) => {}, waitMs = 90_000 }) {
+  async function joinPresale({ info, wallet, signTransaction, view, amount, ref = /** @type {string | null} */ (null), onStep = (_what) => {}, waitMs = 90_000 }) {
     if (!validSeat(amount, info.N)) throw new Error(`pick ${sol(info.N.MIN_SEAT)} to ${sol(info.N.MAX_SEAT)} SOL`);
     const presale = new PublicKey(view.presale);
     const sk = await keyFor(view.presale, wallet.toBase58());
     onStep("Sign in your wallet to put the SOL in");
     const ixs = joinIxs(info.pid, { user: wallet, gate: info.gate, presale, sessionKey: sk.publicKey, deposit: amount, validator: new PublicKey(view.validator) });
-    const r = await signAndCosign(signTransaction, wallet, ixs);
+    const r = await signAndCosign(signTransaction, wallet, ixs, { ref });
     if (!r.confirmed) await waitSent(r, "join", presale, (v) => v.seats?.some((s) => s.user === wallet.toBase58()), { what: "your seat", timeoutMs: waitMs });
     onStep("Counting you in");
     return setCommit({ info, wallet, signTransaction, view, amount, retries: 8, key: sk });

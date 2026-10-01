@@ -1984,3 +1984,19 @@ test("setCommit: inside the rotation lock the key read under the lock counts, no
   assert.deepEqual(s.info.er.sent.map((tx) => tags(tx, s.info.pid)), [[IX.SET_COMMIT]]);
   assert.ok(s.info.er.sent[0].feePayer.equals(f0.publicKey));
 });
+
+test("joinPresale: a share link's ref goes to the server beside the join, and none without one", async () => {
+  const info = fakeInfo();
+  const api = fakeApi(info);
+  const cosign = api.cosign;
+  const sent = [];
+  api.cosign = (b64, opts) => (sent.push(opts), cosign(b64));
+  const f = flows({ api, keys: memoryKeys() });
+  const sharer = Keypair.generate().publicKey.toBase58();
+  for (const ref of [sharer, undefined]) {
+    const w = fakeWallet();
+    const { view } = joinable(info);
+    await f.joinPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, view, amount: 200_000_000n, ...(ref && { ref }) });
+  }
+  assert.deepEqual(sent, [{ ref: sharer }, { ref: null }]);
+});
