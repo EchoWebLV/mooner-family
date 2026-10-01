@@ -3,8 +3,8 @@
 // Joining commits the whole deposit in the presale's MagicBlock ER (set_commit, signed by
 // a session key kept on this device: free, no popup). Getting it back is one step for the
 // user: set_commit 0 + leave in the ER, then settle_seat on Solana, which the wallet signs
-// and sends. Each app hands in its API client, its live socket and a key store. No node:
-// imports (Buffer is global: Node, or the app's polyfill).
+// and the app sends. Each app hands in its API client, its live socket and a key store.
+// No node: imports (Buffer is global: Node, or the app's polyfill).
 
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
@@ -13,7 +13,7 @@ import { DELEGATION_PROGRAM, describeTxError, ERRORS, failedWith } from "./const
 import * as I from "./ix.js";
 import { decodePresale, decodeSeat, PRESALE_LEN, SEAT_LEN, STATE } from "./layout.js";
 import { presalePda, seatPda } from "./pdas.js";
-import { connect, send, sendSigned, timedFetch, txLogs } from "./tx.js";
+import { connect, outcomeUnknown, send, sendSigned, sigOf, timedFetch, TxError } from "./tx.js";
 import { cutToRoom, joinIxs, mintMessageText, openIxs, unsignedTx, validSeat } from "./client.js";
 
 /** Solana's public RPC for each cluster the server runs on (/api/info `cluster`). */
@@ -215,8 +215,8 @@ async function erRefuses(conn, ixs, signer, pid) {
  * `keys`: { get(name), set(name, value) } (async, may throw: keys are kept in memory too,
  * so a store that fails costs a wallet signature only once the app restarts); `priority`:
  * micro-lamports per CU on entry txs; `rpc`: Solana, as a URL or a Connection (default: the
- * public RPC of the server's cluster): getBack reads the seat there, the wallet sends
- * settle_seat on it, and joinCost and openCost read rent there.
+ * public RPC of the server's cluster): getBack reads the seat there and sends settle_seat
+ * on it (the wallet signs), and joinCost and openCost read rent there.
  */
 export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = null }) {
   if (typeof keys?.get !== "function" || typeof keys?.set !== "function") throw new Error("makeFlows needs keys: { get(name), set(name, value) }");
@@ -276,12 +276,15 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
   const keyFor = async (presale, wallet) => (await sessionKey(presale, wallet)) ?? (await saveSessionKey(presale, wallet, Keypair.generate()));
 
   /** Signs an entry tx with the wallet and hands it to the server, which co-signs and sends
-   *  it. Returns the server's reply once it's confirmed (or sent, if slow). */
+   *  it. Returns the server's reply once it's confirmed (or sent, if slow). A cosign the
+   *  server didn't answer in time (apiclient.js) may still have been sent: outcome unknown. */
   async function signAndCosign(signTransaction, payer, ixs) {
     const { blockhash } = await api.blockhash();
     const tx = unsignedTx({ ixs: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priority }), ...ixs], payer, blockhash });
     const signed = await signTransaction(tx);
-    const r = await api.cosign(b64(signed.serialize()));
+    const r = await api.cosign(b64(signed.serialize())).catch((e) => {
+      throw e?.timedOut && e.status === 0 ? outcomeUnknown(sigOf(signed), "cosign") : e;
+    });
     return r.json;
   }
 
@@ -459,8 +462,10 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
    *  still in the pool comes back only from an OPEN presale (before its deadline) or a
    *  home one that's EXPIRED or FAILED; otherwise it throws a plain line and sends nothing.
    *  A seat Solana no longer has was settled already: it returns, unless the presale
-   *  launched and the seat may have had SOL in the pool, or that isn't known (then it says so). */
-  async function getBack({ info, wallet, signTransaction, sendTransaction, view, onStep = (_what) => {} }) {
+   *  launched and the seat may have had SOL in the pool, or that isn't known (then it says so).
+   *  The wallet only signs; the app sends (tx.js sendSigned). `sendTransaction` isn't used:
+   *  it's still taken so callers that pass it (the web's, the phone's) type-check. */
+  async function getBack({ info, wallet, signTransaction, sendTransaction: _unused, view, onStep = (_what) => {} }) {
     onStep("Checking your seat");
     const presale = new PublicKey(view.presale);
     const seat = seatPda(info.pid, presale, wallet);
@@ -579,12 +584,15 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
     onStep("Sending it to your wallet");
     const { blockhash, lastValidBlockHeight } = await api.blockhash();
     const ixs = [I.settleSeat(info.pid, { cranker: wallet, seat, user: wallet, presale })];
-    const tx = unsignedTx({ ixs, payer: wallet, blockhash });
-    const sig = await sendTransaction(tx, conn, { skipPreflight: false }).catch((e) => {
-      throw named(e, info.pid);
+    const signed = await signTransaction(unsignedTx({ ixs, payer: wallet, blockhash }));
+    // simulated first (a settle the program would refuse isn't sent), then sent again until
+    // it lands or its blockhash runs out; never signed again. One that can't be told either
+    // way is outcome unknown, as it is.
+    await sendSigned(conn, signed, { lastValidBlockHeight, preflight: true, ixs, pid: info.pid, what: "refund" }).catch((e) => {
+      if (e?.outcomeUnknown) throw e;
+      if (e instanceof TxError) throw new Error(`the refund failed: ${e.reason}`);
+      throw named(e, info.pid); // the preflight refused it: nothing went out
     });
-    const done = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    if (done.value.err) throw new Error(`the refund failed: ${describeTxError(done.value.err, ixs.map((i) => i.programId), info.pid, await txLogs(conn, sig))}`);
     // confirmed: the seat is closed. A seat with nothing committed closes without touching
     // the presale, so no push follows; the caller drops it from what it shows.
   }

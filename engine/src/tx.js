@@ -9,9 +9,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** `fetch(url, init)` that gives up after `ms` (FETCH_MS: 10 s), for a web3.js Connection's
  *  `fetch`: React Native's fetch on Android never gives up by itself, and web3.js has no
- *  deadline of its own. Resolves with the real Response (RN's fetch has read the whole body
- *  by then, so the deadline covers it; Node's reads it after). Past the deadline the request
- *  is aborted and this rejects with an Error with `timedOut` set, even if `base` never ends.
+ *  deadline of its own. Resolves with the real Response. In React Native fetch resolves once
+ *  it has read the whole body, so the deadline covers the body; in a browser (and in Node)
+ *  fetch resolves at the headers, so there it doesn't cover the body. Past the deadline the
+ *  request is aborted and this rejects with an Error with `timedOut` set, even if `base`
+ *  never ends.
  *  It always rejects with an Error: web3.js calls back only for `err instanceof Error` and
  *  leaves the request hanging otherwise. A timer, not AbortSignal.timeout: RN doesn't have it. */
 export function fetchWithin(ms = FETCH_MS, base = (url, init) => globalThis.fetch(url, init)) {
@@ -69,11 +71,15 @@ function sign({ ixs, payer, signers, alts, legacy, blockhash: bh }) {
 
 export const wireSize = (tx) => tx.serialize().length;
 
+/** A send's result: `sig`, `logs`, `what` (which send it was: "trade", "launch", …) and
+ *  `reason` (the message without "what (sig): " in front). */
 export class TxError extends Error {
   constructor(sig, err, logs, what) {
     super(`${what}${sig ? ` (${sig})` : ""}: ${err}`);
     this.sig = sig;
     this.logs = logs ?? [];
+    this.what = what;
+    this.reason = err;
   }
 }
 
@@ -82,9 +88,10 @@ export class TxError extends Error {
 export const OUTCOME_UNKNOWN = "We couldn't tell if it went through. Check your wallet before you try again.";
 
 /** The send's outcome isn't known: a TxError (so callers sort it with the other send
- *  results) with `outcomeUnknown` set and OUTCOME_UNKNOWN as its message. */
-function outcomeUnknown(sig) {
-  const e = new TxError(sig, "outcome unknown", [], "tx");
+ *  results) with `outcomeUnknown` set and OUTCOME_UNKNOWN as its message. `sig` and `what`
+ *  stay on it for logs. */
+export function outcomeUnknown(sig, what = "tx") {
+  const e = new TxError(sig, "outcome unknown", [], what);
   e.message = OUTCOME_UNKNOWN;
   e.outcomeUnknown = true;
   return e;
@@ -104,7 +111,7 @@ const refusedSend = (e) => typeof e?.transactionMessage === "string" || /^4\d\d 
 
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 /** The tx's id (its first signature) in base58, or null when it isn't signed. */
-function sigOf(tx) {
+export function sigOf(tx) {
   const s = tx.signatures?.[0];
   const bytes = s && "signature" in s ? s.signature : s; // legacy: { publicKey, signature }; v0: the bytes
   if (!bytes?.some((b) => b !== 0)) return null;
@@ -117,20 +124,23 @@ function sigOf(tx) {
 }
 
 /** Sends a signed tx and waits for "confirmed". The raw tx is re-sent while pending
- *  (Solana drops txs under load). Throws TxError, with our error names, if it failed.
- *  With `lastValidBlockHeight` it gives up only once the blockhash has expired, so a tx
- *  it calls dead can't land later; otherwise after `timeoutMs`. Each RPC call gets
- *  `callMs`. `stuckMs` bounds the wait for an RPC whose block height isn't seen to move.
+ *  (Solana drops txs under load), never signed again. Throws TxError, with our error names,
+ *  if it failed. With `lastValidBlockHeight` it gives up only once the blockhash has
+ *  expired, so a tx it calls dead can't land later; otherwise after `timeoutMs`. Each RPC
+ *  call gets `callMs`. `stuckMs` (300 s; swap.js's trades pass 120 s) bounds the whole wait.
  *
  *  Once the first send went out, or may have (it timed out, or failed without the RPC
  *  refusing it), a call that times out or fails says nothing about the tx: it's transient,
  *  and the loop goes on. What the loop can observe decides how it ends:
- *  - known absent: the RPC answered a "confirmed" block height above `lastValidBlockHeight`
- *    (the blockhash can't land anything any more), then answered a history search for the
- *    signature with no status. TxError "expired": a retry can't make it twice.
- *  - unknown: that history search didn't answer, or no block height above it was answered
- *    within `stuckMs`. The tx may have landed: an error with `outcomeUnknown`, `sig` and
- *    OUTCOME_UNKNOWN (the keeper re-reads the chain before it acts again).
+ *  - known absent: getEpochInfo("confirmed") answered a block height above
+ *    `lastValidBlockHeight` (the blockhash can't land anything any more) and the slot it
+ *    was read at; then a history search for the signature, answered at that slot or later,
+ *    had no status. TxError "expired": a retry can't make it twice. A history search that
+ *    fails, or comes from a node behind that slot (it may not have seen the tx yet), is
+ *    asked again at the next resend.
+ *  - unknown: no such pair of answers within `stuckMs`. The tx may have landed: an error
+ *    with `outcomeUnknown`, `sig`, `what` and OUTCOME_UNKNOWN (the keeper re-reads the
+ *    chain before it acts again).
  *  - definite as well: a status "confirmed" or "finalized" (its error, if any, is thrown),
  *    and a first send the RPC refused (refusedSend: thrown as it is; nothing went out).
  *  Without `lastValidBlockHeight` (ER txs, which cost nothing; the server's cosign) it
@@ -138,10 +148,16 @@ function sigOf(tx) {
 export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000, stuckMs = 300_000, callMs = FETCH_MS, lastValidBlockHeight, preflight = false } = {}) {
   const raw = tx.serialize();
   const ask = (p) => within(p, callMs);
+  // `preflight`: a send is simulated first, so a tx that would fail costs nothing. Until a
+  // send has returned the signature, each resend is simulated too (the first may never have
+  // reached the RPC). After that the tx is in, and a simulation could refuse it for having
+  // run already; a resend's refusal is ignored either way.
+  let answered = false;
+  const sendOpts = () => (preflight && !answered ? { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" } : { skipPreflight: true, maxRetries: 0 });
   let sig;
   try {
-    // `preflight`: the first send is simulated first, so a tx that would fail costs nothing
-    sig = await ask(conn.sendRawTransaction(raw, { skipPreflight: !preflight, maxRetries: 0, ...(preflight && { preflightCommitment: "confirmed" }) }));
+    sig = await ask(conn.sendRawTransaction(raw, sendOpts()));
+    answered = true;
   } catch (e) {
     sig = refusedSend(e) ? null : sigOf(tx); // not refused: it may be out, under its own signature
     if (!sig) throw e;
@@ -161,19 +177,22 @@ export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 
     if (landed(st)) return done(st);
     if (Date.now() - lastSend > resendMs) {
       lastSend = Date.now();
-      const height = lastValidBlockHeight == null ? null : await ask(conn.getBlockHeight("confirmed")).catch(() => null);
-      if (height != null && height > lastValidBlockHeight) {
+      // the "confirmed" block height, and the slot it was read at
+      const epoch = lastValidBlockHeight == null ? null : await ask(conn.getEpochInfo("confirmed")).catch(() => null);
+      if (epoch?.blockHeight != null && epoch.blockHeight > lastValidBlockHeight) {
         // one last look: it may have landed in the last block before expiry
-        const last = await ask(conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).then((r) => r.value).catch(() => null);
-        if (!last) throw outcomeUnknown(sig);
-        if (!last[0]) throw new TxError(sig, "expired: the blockhash ran out and the tx never landed", [], what);
-        if (landed(last[0])) return done(last[0]);
-        continue;
+        const last = await ask(conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).catch(() => null);
+        // no status counts only from a node that has seen that slot: one behind may not have the tx yet
+        if (last?.value && !last.value[0] && last.context?.slot >= epoch.absoluteSlot) throw new TxError(sig, "expired: the blockhash ran out and the tx never landed", [], what);
+        if (landed(last?.value?.[0])) return done(last.value[0]);
+        // no answer, a node behind, or a status short of "confirmed": look again next time (stuckMs bounds it)
+      } else {
+        // a resend's refusal ("already processed", a failed simulation) says nothing either way
+        await ask(conn.sendRawTransaction(raw, sendOpts())).then(() => (answered = true), () => {});
       }
-      await ask(conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 })).catch(() => {});
     }
     if (lastValidBlockHeight == null && Date.now() - t0 > timeoutMs) throw new TxError(sig, "not confirmed in time", [], what);
-    if (Date.now() - t0 > stuckMs) throw outcomeUnknown(sig);
+    if (Date.now() - t0 > stuckMs) throw outcomeUnknown(sig, what);
     await sleep(conn.rpcEndpoint.includes("magicblock") ? 100 : 400);
   }
 }

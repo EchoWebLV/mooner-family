@@ -12,6 +12,9 @@ import { explain, joinCost, joinFee, makeFlows, openCost, openFee, PUBLIC_RPC, P
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } from "../src/layout.js";
 import { presalePda, seatPda } from "../src/pdas.js";
 import { budget } from "../src/walletcheck.js";
+import { ApiError } from "../src/apiclient.js";
+import bs58 from "bs58";
+import { OUTCOME_UNKNOWN } from "../src/tx.js";
 
 const BH = "11111111111111111111111111111111";
 const VALIDATOR = "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57";
@@ -76,24 +79,30 @@ function fakeConn(pid, url = "https://devnet.magicblock.app") {
     txLogs: [], // what getTransaction logs
     sims: 0,
     reads: 0,
-    confirmed: [],
+    sendOpts: [], // each send's options, refused ones too
+    refusal: null, // what every send throws (a failed preflight): nothing goes out
+    status: { confirmationStatus: "confirmed", err: null }, // every tx's status (null: none yet)
+    height: 1, // the "confirmed" block height
     put: (key, owner, data) => accounts.set(key.toBase58(), { owner, data, lamports: 1, executable: false }),
     drop: (key) => accounts.delete(key.toBase58()),
     getSlot: async () => 1,
     getAccountInfo: async (k) => (c.reads++, accounts.get(k.toBase58()) ?? null),
     getLatestBlockhash: async () => ({ blockhash: BH, lastValidBlockHeight: 1 }),
-    async sendRawTransaction(raw) {
-      const tx = Transaction.from(raw);
+    async sendRawTransaction(raw, opts) {
+      c.sendOpts.push(opts);
+      if (c.refusal) throw c.refusal;
+      const v0 = raw[1 + 64 * raw[0]] & 0x80; // a versioned message's first byte has the top bit
+      const tx = v0 ? VersionedTransaction.deserialize(raw) : Transaction.from(raw);
       c.sent.push(tx);
-      for (const ix of tx.instructions) {
+      for (const ix of v0 ? [] : tx.instructions) {
         if (ix.programId.equals(pid) && ix.data[0] === IX.ROTATE_KEY) ix.data.subarray(1, 33).copy(accounts.get(ix.keys[1].pubkey.toBase58()).data, S.SESSION_KEY);
       }
       return `sig${c.sent.length}`;
     },
-    getSignatureStatuses: async () => ({ value: [{ confirmationStatus: "confirmed", err: null }] }),
+    getSignatureStatuses: async () => ({ context: { slot: 1 }, value: [c.status] }),
+    getEpochInfo: async () => ({ blockHeight: c.height, absoluteSlot: 1 }),
     simulateTransaction: async () => (c.sims++, { value: { err: c.simErr, logs: c.simLogs } }),
     getTransaction: async () => ({ meta: { logMessages: c.txLogs } }),
-    confirmTransaction: async (x) => (c.confirmed.push(x), { value: { err: null } }),
   };
   return c;
 }
@@ -525,6 +534,27 @@ test("openPresale: the wallet pays, the app's CU price, the saved session key is
   assert.equal(checkEntryTx(cosigned, { pid: info.pid, gate: info.gate, validators: [info.ers[0].validator], N: info.N }).kind, "open");
 });
 
+test("a cosign the server didn't answer in time may have been sent: outcome unknown, named by the signed tx; other failures stay theirs", async () => {
+  const info = fakeInfo();
+  const w = fakeWallet();
+  const late = Object.assign(new ApiError(0, "the server didn't answer in 90 s", null), { timedOut: true });
+  let fail = late;
+  const api = { ...fakeApi(info), cosign: async () => { throw fail; } };
+  const open = () => flows({ api }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n });
+  const e = await open().catch((x) => x);
+  assert.equal(e.outcomeUnknown, true);
+  assert.equal(e.message, OUTCOME_UNKNOWN);
+  assert.equal(explain(e), OUTCOME_UNKNOWN);
+  assert.equal(e.what, "cosign");
+  assert.equal(e.sig, bs58.encode(w.asked[0].signatures[0]), "the wallet's signature: the tx's id");
+  // the server refusing, or a blockhash read timing out, is a plain failure
+  fail = new ApiError(400, "the gate refused", { error: "the gate refused" });
+  await assert.rejects(open(), (x) => x === fail);
+  const slow = Object.assign(new ApiError(0, "the server didn't answer in 10 s", null), { timedOut: true });
+  const api2 = { ...fakeApi(info), blockhash: async () => { throw slow; } };
+  await assert.rejects(flows({ api: api2 }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n }), (x) => x === slow);
+});
+
 test("openPresale: 50,000 micro-lamports per CU when the app sets no price", async () => {
   const info = fakeInfo();
   const api = fakeApi(info);
@@ -719,23 +749,25 @@ function refundable({ home = false } = {}) {
   return { ...s, key, sock, rpc, run, steps, seen, reads, landHome, presaleIs, topic: `presale:${s.presale}`, withSeat, without: { ...s.view, seats: [] } };
 }
 
-const settled = (r) => r.w.sent.map(({ tx }) => tags(tx, r.info.pid));
+/** What went out on Solana: each tx's Mooner instructions. */
+const settled = (r) => r.rpc.sent.map((tx) => tags(tx, r.info.pid));
 
-test("getBack: a seat already home is only settled, on the app's Solana connection", async () => {
+test("getBack: a seat already home is only settled: the wallet signs, the app sends it on its Solana connection and it lands", async () => {
   const r = refundable({ home: true });
   await r.run();
   assert.deepEqual(settled(r), [[IX.SETTLE_SEAT]]);
-  assert.equal(r.w.sent[0].conn, r.rpc);
-  assert.equal(r.w.sent[0].opts?.skipPreflight, false, "a settle the program would refuse fails before it's sent");
+  assert.equal(r.w.sent.length, 0, "the wallet only signs");
+  assert.equal(r.w.asked.length, 1, "one signature: the settle");
+  assert.ok(Buffer.from(r.rpc.sent[0].serialize()).equals(Buffer.from(r.w.asked[0].serialize())), "the tx the wallet signed, on the app's Solana connection");
+  assert.deepEqual(r.rpc.sendOpts, [{ skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" }], "a settle the program would refuse fails before it's sent");
   // the wallet cranks its own seat and gets the SOL: no fee (settle_seat.rs)
-  const { message } = r.w.sent[0].tx;
+  const { message } = r.rpc.sent[0];
   const [ix] = message.compiledInstructions;
   const [cranker, seat, , user, presale] = ix.accountKeyIndexes.map((i) => message.staticAccountKeys[i]);
   assert.ok(cranker.equals(r.w.publicKey) && user.equals(r.w.publicKey));
   assert.ok(seat.equals(r.seat) && presale.equals(r.presale), "the wallet's own seat, in this presale");
-  assert.deepEqual(r.rpc.confirmed.map((c) => [c.signature, c.lastValidBlockHeight]), [["settle-sig", 7]]);
+  assert.equal(message.recentBlockhash, BH, "the server's blockhash");
   assert.equal(r.info.er.sent.length, 0);
-  assert.equal(r.w.asked.length, 0);
 });
 
 test("getBack: the session key takes the seat out of the ER with no popup when the ER would take it", async () => {
@@ -745,7 +777,7 @@ test("getBack: the session key takes the seat out of the ER with no popup when t
   const [leave] = g.info.er.sent;
   assert.deepEqual(tags(leave, g.info.pid), [IX.SET_COMMIT, IX.LEAVE]);
   assert.ok(leave.feePayer.equals(g.key.publicKey));
-  assert.equal(g.w.asked.length, 0);
+  assert.deepEqual(g.w.asked.map((tx) => tags(tx, g.info.pid)), [[IX.SETTLE_SEAT]], "no popup for the leave: the one signature is the settle");
   assert.deepEqual(settled(g), [[IX.SETTLE_SEAT]]);
   assert.deepEqual(g.steps, ["Checking your seat", "Taking your SOL out", "Bringing it back to Solana", "Sending it to your wallet"]);
   assert.equal(g.seen[0], 0, "the first step shows before anything is read");
@@ -758,7 +790,7 @@ test("getBack: Mooner's own refusal is the error, with no popup", async () => {
   await assert.rejects(r.run(), /CreatorCannotLower/);
   assert.equal(r.w.asked.length, 0);
   assert.equal(r.info.er.sent.length, 0);
-  assert.equal(r.w.sent.length, 0);
+  assert.equal(r.rpc.sent.length, 0);
 });
 
 test("getBack: a code another program raised in the ER isn't Mooner's refusal: the wallet signs", async () => {
@@ -767,7 +799,7 @@ test("getBack: a code another program raised in the ER isn't Mooner's refusal: t
   g.info.er.simErr = { InstructionError: [0, { Custom: 0 }] };
   g.info.er.simLogs = [`Program ${g.info.pid} invoke [1]`, `Program ${SYSTEM} invoke [2]`, `Program ${SYSTEM} failed: custom program error: 0x0`, `Program ${g.info.pid} failed: custom program error: 0x0`];
   await g.run();
-  assert.equal(g.w.asked.length, 1, "the wallet signed the leave");
+  assert.deepEqual(g.w.asked.map((tx) => tags(tx, g.info.pid)), [[IX.SET_COMMIT, IX.LEAVE], [IX.SETTLE_SEAT]], "the wallet signed the leave, then the settle");
   assert.ok(g.info.er.sent[0].feePayer.equals(g.w.publicKey));
   assert.deepEqual(settled(g), [[IX.SETTLE_SEAT]]);
 });
@@ -777,7 +809,7 @@ test("getBack: any other refusal falls back to the wallet", async () => {
   g.reads.push(g.withSeat("home"));
   g.info.er.simErr = "InsufficientFundsForFee";
   await g.run();
-  assert.equal(g.w.asked.length, 1);
+  assert.deepEqual(g.w.asked.map((tx) => tags(tx, g.info.pid)), [[IX.SET_COMMIT, IX.LEAVE], [IX.SETTLE_SEAT]]);
   const [leave] = g.info.er.sent;
   assert.deepEqual(tags(leave, g.info.pid), [IX.SET_COMMIT, IX.LEAVE]);
   assert.ok(leave.feePayer.equals(g.w.publicKey));
@@ -791,7 +823,7 @@ test("getBack: a view that misses the seat on its way home isn't taken for a ref
   const p = g.run();
   await until(() => g.sock.count(g.topic) === 1 && g.rpc.reads > 0);
   await tick();
-  assert.equal(g.w.sent.length, 0, "still waiting");
+  assert.equal(g.rpc.sent.length, 0, "still waiting");
   g.sock.push(g.topic, { type: "snapshot", data: g.withSeat("home") });
   await p;
   assert.deepEqual(settled(g), [[IX.SETTLE_SEAT]]);
@@ -805,7 +837,7 @@ test("getBack: a seat Solana no longer has was refunded already: no settle_seat"
   g.info.er.sendRawTransaction = async (raw) => (g.rpc.drop(g.seat), send(raw));
   await g.run();
   assert.deepEqual(g.info.er.sent.map((tx) => tags(tx, g.info.pid)), [[IX.SET_COMMIT, IX.LEAVE]]);
-  assert.equal(g.w.sent.length, 0);
+  assert.equal(g.rpc.sent.length, 0);
 });
 
 test("getBack: a view without the seat to begin with asks Solana before it gives up", async () => {
@@ -813,7 +845,7 @@ test("getBack: a view without the seat to begin with asks Solana before it gives
   const a = refundable();
   a.rpc.drop(a.seat);
   await a.run(a.without);
-  assert.equal(a.w.sent.length + a.w.asked.length + a.info.er.sent.length, 0);
+  assert.equal(a.rpc.sent.length + a.w.asked.length + a.info.er.sent.length, 0);
   assert.equal(a.rpc.reads, 1, "one read: a view without the seat has nothing to catch up on");
   // still there, on its way home: it waits for it, then settles
   const g = refundable();
@@ -866,9 +898,9 @@ test("a key store that can't save: the key kept in memory signs later commits an
   rpc.put(j.seat, DELEGATION_PROGRAM, Buffer.alloc(SEAT_LEN));
   j.api.presale = async () => ({ ...j.view, seats: [{ ...j.view.seats[0], where: "home", commit: "0" }] });
   await j.f.getBack({ info: j.info, wallet: j.w.publicKey, signTransaction: j.w.signTransaction, sendTransaction: j.w.sendTransaction, view: j.view });
-  assert.equal(j.w.asked.length, 1, "the entry tx only");
+  assert.equal(j.w.asked.length, 2, "the entry tx and the settle: no popup for the commits or the leave");
   assert.deepEqual(j.info.er.sent.map((tx) => tags(tx, j.info.pid)), [[IX.SET_COMMIT], [IX.SET_COMMIT], [IX.SET_COMMIT], [IX.LEAVE]]);
-  assert.equal(j.w.sent.length, 1, "settle_seat");
+  assert.equal(rpc.sent.length, 1, "settle_seat");
 });
 
 test("a key store that keeps nothing: the key kept in memory signs, with no popup", async () => {
@@ -1056,7 +1088,7 @@ test("waitFor and getBack's reads: their timers are cleared however they end", a
     c.landHome(300_000_000n);
     c.presaleIs(STATE.EXPIRED, { home: true });
     await c.run();
-    assert.equal(c.w.sent.length, 1);
+    assert.equal(c.rpc.sent.length, 1);
   } finally {
     globalThis.setTimeout = set;
     globalThis.clearTimeout = clear;
@@ -1081,7 +1113,7 @@ test("getBack: a seat home on Solana is settled though the view doesn't list it 
   // it lands home, and the feed's last push comes before the server's listing has it
   g.landHome();
   g.sock.push(g.topic, { type: "snapshot", data: g.without });
-  await until(() => g.w.sent.length === 1);
+  await until(() => g.rpc.sent.length === 1);
   await p;
   assert.deepEqual(settled(g), [[IX.SETTLE_SEAT]]);
 });
@@ -1091,7 +1123,7 @@ test("getBack: Solana says the seat is home: settled at once, whatever the view 
   const g = refundable();
   g.landHome();
   const p = g.run(); // the view says "er"
-  await until(() => g.w.sent.length === 1);
+  await until(() => g.rpc.sent.length === 1);
   await p;
   assert.deepEqual(settled(g), [[IX.SETTLE_SEAT]]);
   assert.equal(g.info.er.sent.length, 0);
@@ -1112,7 +1144,7 @@ test("getBack: a Solana read that fails isn't taken for a refund, and the timeou
   t.mock.timers.tick(120_000);
   await p;
   assert.match(out, /couldn't reach Solana to check your seat/);
-  assert.equal(g.w.sent.length, 0);
+  assert.equal(g.rpc.sent.length, 0);
   // Solana answers but the seat never shows: the plain timeout
   const h = refundable();
   h.info.er.drop(h.seat);
@@ -1128,7 +1160,7 @@ test("getBack: Solana doesn't answer and the view says home: settled at once", a
   const r = refundable({ home: true });
   r.rpc.getAccountInfo = async () => (r.rpc.reads++, Promise.reject(new Error("fetch failed")));
   const p = r.run();
-  await until(() => r.w.sent.length + r.sock.opened + r.info.er.reads > 0);
+  await until(() => r.rpc.sent.length + r.sock.opened + r.info.er.reads > 0);
   assert.equal(r.sock.opened + r.info.er.reads, 0, "no ER read, no wait");
   await p;
   assert.deepEqual(settled(r), [[IX.SETTLE_SEAT]]);
@@ -1159,23 +1191,28 @@ test("getBack: a Solana read that hangs counts as no answer, and an ER that hang
   await until(() => g.info.er.reads === 1);
   t.mock.timers.tick(10_000);
   assert.match(await p, /the presale's ER didn't answer; try again/);
-  assert.equal(g.w.sent.length + g.info.er.sent.length, 0);
+  assert.equal(g.rpc.sent.length + g.info.er.sent.length, 0);
 });
 
 test("getBack: Solana is the app's rpc, else the public RPC of the server's cluster", async (t) => {
   let owner, data;
   t.mock.method(Connection.prototype, "getAccountInfo", async () => ({ owner, data, lamports: 1, executable: false }));
-  t.mock.method(Connection.prototype, "confirmTransaction", async () => ({ value: { err: null } }));
+  let sentTo = []; // the endpoint of each send
+  t.mock.method(Connection.prototype, "sendRawTransaction", async function () {
+    sentTo.push(this.rpcEndpoint);
+    return "settle-sig";
+  });
+  t.mock.method(Connection.prototype, "getSignatureStatuses", async () => ({ context: { slot: 1 }, value: [{ confirmationStatus: "confirmed", err: null }] }));
   const settleOn = async (cluster, rpc) => {
+    sentTo = [];
     const s = seated({ key: Keypair.generate() });
     owner = s.info.pid;
     data = seatBytes({ user: s.w.publicKey, presale: s.presale, sessionKey: Keypair.generate().publicKey });
     const f = flows({ api: { blockhash: async () => ({ blockhash: BH, lastValidBlockHeight: 7 }) }, keys: s.keys, ...(rpc && { rpc }) });
     const view = { ...s.view, seats: [{ ...s.view.seats[0], where: "home" }] };
     await f.getBack({ info: { ...s.info, cluster }, wallet: s.w.publicKey, signTransaction: s.w.signTransaction, sendTransaction: s.w.sendTransaction, view });
-    const { conn } = s.w.sent[0];
-    assert.ok(conn instanceof Connection);
-    return conn.rpcEndpoint;
+    assert.equal(sentTo.length, 1);
+    return sentTo[0];
   };
   assert.equal(await settleOn("devnet"), "https://api.devnet.solana.com");
   assert.equal(await settleOn("mainnet"), "https://api.mainnet-beta.solana.com");
@@ -1187,7 +1224,7 @@ test("getBack: Solana is the app's rpc, else the public RPC of the server's clus
 
 const FILLED = "The pool filled: your SOL is in and turns into tokens at launch.";
 const BY_ITSELF = "It comes back to your wallet by itself.";
-const nothingSent = (r) => r.w.sent.length + r.w.asked.length + r.info.er.sent.length + r.info.er.sims;
+const nothingSent = (r) => r.rpc.sent.length + r.w.asked.length + r.info.er.sent.length + r.info.er.sims;
 const failure = (p) => p.then(() => "resolved", (e) => e.message);
 
 /** A seat that came home with SOL in the pool (the keeper's commit_seats), the presale in
@@ -1265,7 +1302,7 @@ test("getBack: the ER refuses set_commit 0 past the deadline: it comes back by i
   refuse(r.info.er, r.info.pid, 1); // PastDeadline
   r.w.reject = () => true; // no popup: one would end the run at once
   assert.equal(await failure(r.run()), BY_ITSELF);
-  assert.equal(r.w.sent.length + r.w.asked.length + r.info.er.sent.length, 0);
+  assert.equal(r.rpc.sent.length + r.w.asked.length + r.info.er.sent.length, 0);
 });
 
 test("getBack: a pool that fills between the check and the leave: it says so", async () => {
@@ -1273,7 +1310,7 @@ test("getBack: a pool that fills between the check and the leave: it says so", a
   r.info.er.simulateTransaction = async () => (r.presaleIs(STATE.FULL), { value: { err: { InstructionError: [0, { Custom: 0 }] }, logs: [`Program ${r.info.pid} failed: custom program error: 0x0`] } }); // BadState
   r.w.reject = () => true; // no popup: one would end the run at once
   assert.equal(await failure(r.run()), FILLED);
-  assert.equal(r.w.sent.length + r.w.asked.length + r.info.er.sent.length, 0);
+  assert.equal(r.rpc.sent.length + r.w.asked.length + r.info.er.sent.length, 0);
 });
 
 test("getBack: a seat that comes home with SOL in a pool that filled: it says so, nothing sent", async () => {
@@ -1306,15 +1343,48 @@ test("getBack: a seat that comes home with SOL in a pool that filled: it says so
 
 test("getBack: a refund that fails on chain is an error that names the program's error", async () => {
   const r = refundable({ home: true });
-  r.rpc.confirmTransaction = async (x) => (r.rpc.confirmed.push(x), { value: { err: { InstructionError: [0, { Custom: 6 }] } } });
+  r.rpc.status = { confirmationStatus: "confirmed", err: { InstructionError: [0, { Custom: 6 }] } };
   r.rpc.txLogs = [`Program ${r.info.pid} invoke [1]`, `Program ${r.info.pid} failed: custom program error: 0x6`];
   const e = await r.run().then(() => null, (e) => e);
   assert.equal(e?.message, "the refund failed: ix 0: NoRoom (6)");
   assert.equal(explain(e), "The pool is already full.");
+  assert.equal(e.outcomeUnknown, undefined);
+  assert.deepEqual(settled(r), [[IX.SETTLE_SEAT]], "sent once");
   // the same code with no logs isn't known to be Mooner's: no name
   const n = refundable({ home: true });
-  n.rpc.confirmTransaction = async () => ({ value: { err: { InstructionError: [0, { Custom: 6 }] } } });
+  n.rpc.status = { confirmationStatus: "confirmed", err: { InstructionError: [0, { Custom: 6 }] } };
   assert.equal((await n.run().then(() => null, (e) => e))?.message, `the refund failed: ix 0 (${n.info.pid}): custom 6`);
+});
+
+test("getBack: a refund Solana never says anything about: outcome unknown, sent again but never signed again; one whose blockhash ran out: the refund failed", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const drive = async (p) => {
+    let out = null;
+    p.then(() => (out = "landed"), (e) => (out = e));
+    for (let i = 0; i < 2_000 && !out; i++) {
+      await tick();
+      t.mock.timers.tick(500);
+    }
+    return out;
+  };
+  const r = refundable({ home: true });
+  r.rpc.status = null; // no status, ever; the block height stays under the blockhash's 7
+  const e = await drive(r.run());
+  assert.equal(e?.outcomeUnknown, true);
+  assert.equal(e.message, OUTCOME_UNKNOWN);
+  assert.equal(explain(e), OUTCOME_UNKNOWN);
+  assert.equal(e.what, "refund");
+  assert.ok(Date.now() >= 300_000, "the keeper's 300 s");
+  assert.equal(r.w.asked.length, 1, "signed once");
+  assert.ok(r.rpc.sent.length > 1, "sent again while it could still land");
+  assert.ok(r.rpc.sent.every((tx) => Buffer.from(tx.serialize()).equals(Buffer.from(r.rpc.sent[0].serialize()))), "the same tx each time");
+  // past block height 7 with no status at a node caught up: it can't land any more
+  const x = refundable({ home: true });
+  x.rpc.status = null;
+  x.rpc.height = 8;
+  const y = await drive(x.run());
+  assert.equal(y?.message, "the refund failed: expired: the blockhash ran out and the tx never landed");
+  assert.equal(y.outcomeUnknown, undefined);
 });
 
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -1415,22 +1485,23 @@ const refusedBy = (pid, hex, inner = []) =>
 test("getBack: a settle the preflight refuses: Mooner's own code reads as its error, another program's doesn't", async () => {
   const refused = async (error) => {
     const r = refundable({ home: true });
-    r.w.sendTransaction = async () => {
-      throw error(r.info.pid.toBase58());
-    };
+    r.rpc.refusal = error(r.info.pid.toBase58());
     const e = await r.run().then(() => null, (e) => e);
     assert.ok(e, "it failed");
-    assert.equal(r.rpc.confirmed.length, 0);
+    assert.equal(r.rpc.sent.length, 0, "nothing went out");
+    assert.equal(r.rpc.sendOpts.length, 1, "a refusal isn't sent again");
+    assert.equal(r.rpc.sendOpts[0].skipPreflight, false);
     return e;
   };
   assert.equal(explain(await refused((pid) => refusedBy(pid, "0xb"))), FILLED); // AlreadySettled
   assert.match(explain(await refused((pid) => refusedBy(pid, "0x9"))), /on its way back to Solana/); // NotHome
   assert.match((await refused((pid) => refusedBy(pid, "0x16"))).message, / \(WrongPresale\)$/, "22, not 1");
-  // logs kept on the error only, as tx.js does
-  const bare = (pid) => Object.assign(new Error("Transaction simulation failed: Error processing Instruction 0: custom program error: 0xb"), { logs: [`Program ${pid} failed: custom program error: 0xb`] });
+  // an RPC's refusal (it has web3.js's transactionMessage) with the logs on the error only
+  const msg = "Transaction simulation failed: Error processing Instruction 0: custom program error: 0xb";
+  const bare = (pid) => Object.assign(new Error(msg), { transactionMessage: msg, logs: [`Program ${pid} failed: custom program error: 0xb`] });
   assert.equal(explain(await refused(bare)), FILLED);
-  // a wallet that throws its own error, the logs only in its message
-  const inMessage = (pid) => new Error(`Simulation failed. Logs: ["Program ${pid} invoke [1]","Program ${pid} failed: custom program error: 0xb"]`);
+  // ...and one with the logs only in its message
+  const inMessage = (pid) => Object.assign(new Error(`Simulation failed. Logs: ["Program ${pid} invoke [1]","Program ${pid} failed: custom program error: 0xb"]`), { transactionMessage: msg });
   const m = await refused(inMessage);
   assert.equal(m.logs, undefined);
   assert.match(m.message, / \(AlreadySettled\)$/);

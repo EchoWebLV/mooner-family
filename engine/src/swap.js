@@ -64,7 +64,8 @@ export const sellQuote = (mint, raw, opts = {}) => quote({ input: mint, output: 
  *  (micro-lamports per CU) the tx pays exactly that; without, Jupiter picks ("auto").
  *  Returns { tx (VersionedTransaction), lastValidBlockHeight, simulationError (text or
  *  null: Jupiter ran it and it failed), units, priorityLamports }. Throws NO_ANSWER when
- *  Jupiter doesn't answer in time. */
+ *  Jupiter doesn't answer in time, and the no-route error when its last valid block height
+ *  isn't a whole number. */
 export async function buildSwap({ quote: q, wallet, priority = null, fetch = globalThis.fetch }) {
   const body = {
     quoteResponse: q.raw,
@@ -75,6 +76,9 @@ export async function buildSwap({ quote: q, wallet, priority = null, fetch = glo
   };
   const { r, j } = await jup(fetch, `${JUP}/swap`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok || !j?.swapTransaction) throw new Error(j?.error ?? `Jupiter said ${r.status}`);
+  // the send tells "it can't land any more" by this height: without a usable one it can't
+  // tell, so nothing gets signed
+  if (!Number.isSafeInteger(j.lastValidBlockHeight)) throw noRoute();
   return {
     tx: VersionedTransaction.deserialize(Buffer.from(j.swapTransaction, "base64")),
     lastValidBlockHeight: j.lastValidBlockHeight,
@@ -113,7 +117,9 @@ export async function swap({ quote: q, wallet, conn, signTransaction = null, sen
     // blockhash it could still land after that, and a retry would buy twice
     if (signed.message.recentBlockhash !== b.tx.message.recentBlockhash) throw new Error("Your wallet changed the trade's blockhash, so it wasn't sent. Try again.");
     onStep("Sending");
-    return sendSigned(conn, signed, { what: "trade", lastValidBlockHeight: b.lastValidBlockHeight, preflight: true });
+    // someone is waiting on the sheet: an RPC whose block height isn't seen to pass Jupiter's
+    // last valid one ends the wait as outcome unknown after 120 s, not the keeper's 300 s
+    return sendSigned(conn, signed, { what: "trade", lastValidBlockHeight: b.lastValidBlockHeight, preflight: true, stuckMs: 120_000 });
   }
   const sig = await sendTransaction(b.tx, conn);
   onStep("Sending");

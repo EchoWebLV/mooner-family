@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Keypair, PublicKey, SYSVAR_CLOCK_PUBKEY, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { Keeper } from "../server/keeper.js";
 import { Bot } from "../src/bot.js";
 import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, SYSTEM } from "../src/consts.js";
 import { POOL_DISC } from "../src/dbc.js";
@@ -130,8 +131,8 @@ test("sendSigned: after the blockhash runs out, one history look decides", async
   const conn = (history, height = 2000) => ({
     rpcEndpoint: "http://fake",
     sendRawTransaction: async () => "sig",
-    getBlockHeight: async () => height,
-    getSignatureStatuses: async (_, o) => ({ value: [o?.searchTransactionHistory ? history : null] }),
+    getEpochInfo: async () => ({ blockHeight: height, absoluteSlot: 9 }),
+    getSignatureStatuses: async (_, o) => ({ context: { slot: 9 }, value: [o?.searchTransactionHistory ? history : null] }),
   });
   const opts = { lastValidBlockHeight: 1000, resendMs: 0 };
   // it landed in the last block: that's success, not a hang
@@ -139,6 +140,26 @@ test("sendSigned: after the blockhash runs out, one history look decides", async
   await assert.rejects(sendSigned(conn(null), tx, opts), /expired/);
   // an RPC whose block height never moves ends too, saying it can't tell
   await assert.rejects(sendSigned(conn(null, 0), tx, { ...opts, stuckMs: 50 }), { outcomeUnknown: true, sig: "sig", message: OUTCOME_UNKNOWN });
+});
+
+test("keeper: a tick whose send can't tell if it landed logs which tx it was; the status keeps the words", async () => {
+  const conn = { rpcEndpoint: "http://fake", sendRawTransaction: async () => "sig", getEpochInfo: async () => ({ blockHeight: 0, absoluteSlot: 9 }), getSignatureStatuses: async () => ({ context: { slot: 9 }, value: [null] }) };
+  const unknown = await sendSigned(conn, { serialize: () => Buffer.alloc(1) }, { lastValidBlockHeight: 1000, resendMs: 0, stuckMs: 50, what: "launch" }).catch((e) => e);
+  assert.equal(unknown.message, OUTCOME_UNKNOWN);
+  const logs = [];
+  const errors = [unknown, new Error("rpc hiccup")];
+  const bot = { scan: async () => [], launch: async () => ({}), tick: async () => Promise.reject(errors.shift()) };
+  const keeper = new Keeper({ bot, store: { unopenedAll: () => [] }, pid, log: (m) => logs.push(m) });
+  keeper.running = true;
+  keeper.watch(presale);
+  await keeper.pass();
+  const k = presale.toBase58();
+  assert.ok(logs.includes(`[${k.slice(0, 6)}] tick failed (1 in a row): ${OUTCOME_UNKNOWN} (launch sig)`), logs.join("\n"));
+  assert.equal(keeper.status().presales[0].error, OUTCOME_UNKNOWN, "the status says it in words, as before");
+  // an error with no tx to name is logged as before
+  keeper.info.get(k).nextAt = 0;
+  await keeper.pass();
+  assert.equal(logs.at(-1), `[${k.slice(0, 6)}] tick failed (2 in a row): rpc hiccup`);
 });
 
 test("sendSigned and simulate: a code gets Mooner's name only when the logs say Mooner raised it", async () => {

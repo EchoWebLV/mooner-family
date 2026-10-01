@@ -116,7 +116,9 @@ export class Keeper {
       } catch (e) {
         s.fails++;
         Object.assign(s, { error: e.message, nextAt: Date.now() + Math.min(this.maxBackoffMs, 1000 * 2 ** s.fails), at: Date.now() });
-        this.log(`[${k.slice(0, 6)}] tick failed (${s.fails} in a row): ${e.message}`);
+        // a send that can't tell if it landed says so in words only: the log names the tx
+        const which = [e.what, e.sig].filter((x) => typeof x === "string" && x && !e.message.includes(x)).join(" ");
+        this.log(`[${k.slice(0, 6)}] tick failed (${s.fails} in a row): ${e.message}${which ? ` (${which})` : ""}`);
         if (e.logs?.length) this.log(e.logs.join("\n"));
       }
     }

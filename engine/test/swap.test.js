@@ -61,8 +61,8 @@ function fakeConn({ status = { confirmationStatus: "confirmed", err: null } } = 
     sent,
     rpcEndpoint: "https://rpc",
     sendRawTransaction: async (raw, opts) => (sent.push(opts), "SIG"),
-    getSignatureStatuses: async () => ({ value: [status] }),
-    getBlockHeight: async () => 1,
+    getSignatureStatuses: async () => ({ context: { slot: 1 }, value: [status] }),
+    getEpochInfo: async () => ({ blockHeight: 1, absoluteSlot: 1 }),
     confirmTransaction: async (args) => (sent.push(["confirm", args]), { value: { err: null } }),
   };
 }
@@ -177,6 +177,28 @@ test("swap (phone): checks, the wallet signs, sent with a preflight until it lan
   assert.deepEqual(steps, ["Checking the trade", "Sign the trade in your wallet", "Sending"]);
 });
 
+const tick = () => new Promise((r) => setImmediate(r));
+const never = () => new Promise(() => {});
+
+test("swap (phone): an RPC that never answers a block height ends the trade as outcome unknown after 120 s, not the keeper's 300 s", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  // the trade went out; no status and no block height ever come back
+  const conn = { ...fakeConn({ status: null }), getEpochInfo: never };
+  const signTransaction = async (tx) => (tx.sign([wallet]), tx);
+  let end = null;
+  swap({ quote: await q0(), wallet: wallet.publicKey, conn, signTransaction, fetch: fakeFetch([200, built(jupTx())]) }).then(() => (end = "resolved"), (e) => (end = e));
+  for (let i = 0; i < 2_000 && !end; i++) {
+    for (let j = 0; j < 5; j++) await tick();
+    t.mock.timers.tick(250);
+  }
+  const at = Date.now();
+  t.mock.timers.reset();
+  assert.equal(end?.outcomeUnknown, true, `ended with ${end?.message ?? end}`);
+  assert.equal(end.sig, "SIG");
+  // the bound is checked between calls: the height read under way (10 s at most) may run past it
+  assert.ok(at > 120_000 && at <= 120_000 + 10_000 + 1_000, `ended at ${at / 1000} s`);
+});
+
 test("sendSigned skips the preflight unless asked: the keeper's sends are unchanged", async () => {
   const conn = fakeConn();
   const tx = jupTx();
@@ -197,6 +219,19 @@ test("swap stops before the wallet: Jupiter's simulation failed, or another sign
   assert.equal(e2.message, "This trade asks for a signer besides your wallet, so it wasn't sent.");
   assert.equal(asked, false);
   assert.deepEqual(conn.sent, []);
+});
+
+test("swap stops before the wallet when Jupiter's last valid block height isn't a whole number: the send couldn't tell when it ran out", async () => {
+  for (const lastValidBlockHeight of ["430317386", null, undefined, 4.5, 2 ** 53]) {
+    const conn = fakeConn();
+    let asked = false;
+    const signTransaction = async (tx) => ((asked = true), tx.sign([wallet]), tx);
+    const e = await swap({ quote: await q0(), wallet: wallet.publicKey, conn, signTransaction, fetch: fakeFetch([200, built(jupTx(), { lastValidBlockHeight })]) }).catch((x) => x);
+    assert.equal(e.message, NO_ROUTE, `${lastValidBlockHeight}`);
+    assert.equal(explainSwap(e), NO_ROUTE_TEXT);
+    assert.equal(asked, false, "nothing was signed");
+    assert.deepEqual(conn.sent, []);
+  }
 });
 
 test("swap stops after the wallet when its signature doesn't cover the tx", async () => {

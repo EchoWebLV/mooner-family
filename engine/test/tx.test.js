@@ -16,27 +16,37 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tick = () => new Promise((r) => setImmediate(r));
 const never = () => new Promise(() => {});
 const timeout = () => Promise.reject(Object.assign(new Error("rpc.test didn't answer in 10 s"), { timedOut: true }));
-const statuses = (...value) => Promise.resolve({ value });
+// the slot the fake RPC's "confirmed" block height is read at
+const SLOT = 5_000;
+/** getSignatureStatuses' answer, as read at `slot`. */
+const statusesAt = (slot, ...value) => Promise.resolve({ context: { slot }, value });
+const statuses = (...value) => statusesAt(SLOT, ...value);
 const LANDED = { confirmationStatus: "confirmed", err: null };
 
-/** A fake RPC. The first send answers `first()`; later sends answer. `status`, `history`
- *  (the look with searchTransactionHistory), `height` and `logs` answer each call. `calls`
- *  lists what was asked. */
-function rpc({ first = async () => "SIG", status = () => statuses(null), history = status, height = async () => 2_000, logs = async () => null } = {}) {
+/** A fake RPC. The first send answers `first()`, the nth after it `later(n)`. `status`, `history`
+ *  (the look with searchTransactionHistory), `height` (the block height getEpochInfo gives,
+ *  at slot SLOT) and `logs` answer each call. `calls` lists what was asked. */
+function rpc({ first = async () => "SIG", later = async () => "SIG", status = () => statuses(null), history = status, height = async () => 2_000, logs = async () => null } = {}) {
   const calls = [];
   let sends = 0;
   return {
     calls,
     rpcEndpoint: "https://rpc.test",
-    sendRawTransaction: (raw, o) => (calls.push(["send", o]), sends++ === 0 ? first() : Promise.resolve("SIG")),
+    sendRawTransaction: (raw, o) => {
+      calls.push(["send", o]);
+      const n = sends++;
+      return n === 0 ? first() : later(n);
+    },
     getSignatureStatuses: ([sig], o) => (calls.push([o?.searchTransactionHistory ? "history" : "status", sig]), o?.searchTransactionHistory ? history() : status()),
-    getBlockHeight: () => (calls.push(["height"]), height()),
+    getEpochInfo: (c) => (calls.push(["height", c]), height().then((blockHeight) => ({ epoch: 1, slotIndex: 0, slotsInEpoch: 432_000, absoluteSlot: SLOT, blockHeight }))),
     getTransaction: () => (calls.push(["logs"]), logs()),
   };
 }
 const unsigned = { serialize: () => Buffer.alloc(1) };
 // the blockhash ran out at height 1,000; each call gets 20 ms
 const opts = { lastValidBlockHeight: 1_000, resendMs: 0, callMs: 20 };
+// and an RPC that tells nothing is given up on after 900 ms (polls are 400 ms apart)
+const stuck = { ...opts, stuckMs: 900 };
 const asked = (conn, what) => conn.calls.filter(([c]) => c === what);
 
 function signedV0() {
@@ -49,20 +59,49 @@ function signedV0() {
 
 // ---- sendSigned: what it can tell, and what it can't ----
 
-test("sendSigned: the tx went out and then nothing answers: outcome unknown once the blockhash runs out", async () => {
+test("sendSigned: the tx went out and then nothing answers: outcome unknown at stuckMs, history asked again meanwhile", async () => {
   const conn = rpc({ status: never, history: never });
-  const e = await sendSigned(conn, unsigned, opts).catch((x) => x);
+  const t0 = Date.now();
+  const e = await sendSigned(conn, unsigned, stuck).catch((x) => x);
   assert.equal(e.message, "We couldn't tell if it went through. Check your wallet before you try again.");
   assert.equal(e.message, OUTCOME_UNKNOWN);
   assert.equal(e.outcomeUnknown, true);
   assert.equal(e.sig, "SIG");
   assert.ok(e instanceof TxError, "a send result like the others: the server's cosign sorts it with them");
-  assert.equal(asked(conn, "history").length, 1, "it asked history once the blockhash ran out; no answer is not an answer");
+  assert.ok(Date.now() - t0 >= stuck.stuckMs, "not before stuckMs");
+  assert.ok(asked(conn, "history").length > 1, "a history read that doesn't answer is asked again: no answer is not an answer");
+});
+
+test("sendSigned: a history read from a node behind the block height's slot doesn't make it expired", async () => {
+  // behind each time: it can't tell
+  const behind = rpc({ status: never, history: () => statusesAt(SLOT - 1, null) });
+  const e1 = await sendSigned(behind, unsigned, stuck).catch((x) => x);
+  assert.equal(e1.outcomeUnknown, true);
+  assert.ok(asked(behind, "history").length > 1);
+  assert.deepEqual(asked(behind, "height")[0], ["height", "confirmed"], "the height is the confirmed one");
+  // behind once, then caught up: expired
+  let n = 0;
+  const later = rpc({ status: never, history: () => statusesAt(n++ === 0 ? SLOT - 1 : SLOT, null) });
+  const e2 = await sendSigned(later, unsigned, opts).catch((x) => x);
+  assert.match(e2.message, /expired: the blockhash ran out and the tx never landed/);
+  assert.equal(asked(later, "history").length, 2);
+  // one that landed counts whatever slot it was read at
+  const landedBehind = rpc({ status: never, history: () => statusesAt(SLOT - 1, LANDED) });
+  assert.equal(await sendSigned(landedBehind, unsigned, opts), "SIG");
+});
+
+test("sendSigned: one history read that fails, then one with no status: expired", async () => {
+  let n = 0;
+  const conn = rpc({ status: never, history: () => (n++ === 0 ? timeout() : statuses(null)) });
+  const e = await sendSigned(conn, unsigned, opts).catch((x) => x);
+  assert.match(e.message, /expired: the blockhash ran out and the tx never landed/);
+  assert.equal(e.outcomeUnknown, undefined);
+  assert.equal(asked(conn, "history").length, 2);
 });
 
 test("sendSigned: the tx went out and then every call times out: outcome unknown, not expired", async () => {
   const conn = rpc({ status: timeout, history: timeout });
-  const e = await sendSigned(conn, unsigned, opts).catch((x) => x);
+  const e = await sendSigned(conn, unsigned, stuck).catch((x) => x);
   assert.equal(e.outcomeUnknown, true);
   assert.equal(e.sig, "SIG");
   assert.equal(e.message, OUTCOME_UNKNOWN);
@@ -94,17 +133,37 @@ test("sendSigned: the first send goes unanswered: it may have gone out, so its s
   const conn = rpc({ first: never, status: () => statuses(polls++ < 2 ? null : LANDED), height: async () => 10 });
   assert.equal(await sendSigned(conn, tx, { ...opts, preflight: true }), id);
   assert.deepEqual(asked(conn, "status").map(([, s]) => s), [id, id, id]);
-  // the first send had the preflight; a resend can't (the first one may be in already)
-  assert.deepEqual(asked(conn, "send").map(([, o]) => o.skipPreflight), [false, true]);
+  // the first send had the preflight, and so does the resend: no send had answered yet
+  assert.deepEqual(asked(conn, "send").map(([, o]) => o.skipPreflight).slice(0, 2), [false, false]);
 
   // a legacy tx (the ER's) the same way; and a network error is no answer either
   const kp = Keypair.generate();
   const legacy = new Transaction({ feePayer: kp.publicKey, recentBlockhash: BH }).add(SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: kp.publicKey, lamports: 1 }));
   legacy.sign(kp);
   const lost = rpc({ first: () => Promise.reject(new TypeError("Network request failed")), status: never, history: never });
-  const e = await sendSigned(lost, legacy, opts).catch((x) => x);
+  const e = await sendSigned(lost, legacy, stuck).catch((x) => x);
   assert.equal(e.outcomeUnknown, true);
   assert.equal(e.sig, bs58.encode(legacy.signature));
+});
+
+test("sendSigned: with a preflight, resends keep it until a send returns a signature, then skip it; a resend's refusal is swallowed", async () => {
+  const tx = signedV0();
+  const PRE = { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" };
+  // a preflight of a tx that's in already: the RPC refuses it, which says nothing either way
+  const already = new SendTransactionError({ action: "simulate", signature: "", transactionMessage: "Transaction simulation failed: This transaction has already been processed", logs: [] });
+  // the first send times out; resends: a refusal, a timeout, then a signature
+  const answers = [null, () => Promise.reject(already), timeout, async () => "SIG"];
+  let polls = 0;
+  const conn = rpc({ first: never, later: (n) => (answers[n] ?? (async () => "SIG"))(), status: () => statuses(polls++ < 6 ? null : LANDED), height: async () => 10 });
+  assert.equal(await sendSigned(conn, tx, { ...opts, preflight: true }), bs58.encode(tx.signatures[0]));
+  const sent = asked(conn, "send").map(([, o]) => o);
+  assert.ok(sent.length >= 5, `${sent.length} sends`);
+  assert.deepEqual(sent.slice(0, 4), [PRE, PRE, PRE, PRE], "the first send and every resend until one answered");
+  assert.deepEqual(new Set(sent.slice(4).map((o) => JSON.stringify(o))), new Set([JSON.stringify({ skipPreflight: true, maxRetries: 0 })]), "after that the preflight is skipped");
+  // without a preflight nothing changes: every send skips it
+  const plain = rpc({ first: never, status: () => statuses(polls++ < 9 ? null : LANDED), height: async () => 10 });
+  await sendSigned(plain, tx, opts);
+  assert.ok(asked(plain, "send").every(([, o]) => o.skipPreflight === true && !("preflightCommitment" in o)));
 });
 
 test("sendSigned: what is known still ends it as before", async () => {
@@ -138,7 +197,9 @@ test("sendSigned: what is known still ends it as before", async () => {
 });
 
 test("explain and explainSwap pass the outcome-unknown text through unchanged", async () => {
-  const e = await sendSigned(rpc({ status: never, history: never }), unsigned, { ...opts, what: "trade" }).catch((x) => x);
+  const e = await sendSigned(rpc({ status: never, history: never }), unsigned, { ...stuck, what: "trade" }).catch((x) => x);
+  assert.equal(e.what, "trade", "which send it was stays on the error, for logs");
+  assert.equal(e.sig, "SIG");
   assert.equal(explain(e), OUTCOME_UNKNOWN);
   assert.equal(explainSwap(e), OUTCOME_UNKNOWN);
   // the text alone is kept as well, whatever else the error carries
