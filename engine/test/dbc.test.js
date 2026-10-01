@@ -6,6 +6,7 @@ import { PublicKey } from "@solana/web3.js";
 import { CURVE, decodePoolState, disc, encodeConfigParams, feeNumeratorAt, moonerConfigParams } from "../src/dbc.js";
 import { MOONER_DBC_CONFIG } from "../src/consts.js";
 import { poolAddresses } from "../src/pdas.js";
+import { GRAD_SOL } from "../src/views.js";
 
 const FIXTURE = new URL("../../programs/presale/litesvm/fixtures/dbc-config.json", import.meta.url);
 
@@ -36,6 +37,10 @@ test("the curve numbers are the ones in Mooner's mainnet DBC config", () => {
   assert.equal(d[130], 1); // exponential
   assert.equal(u128(392), CURVE.SQRT_START_PRICE);
   assert.equal(u128(424), CURVE.LIQUIDITY);
+});
+
+test("GRAD_SOL (what the screens say) is the curve's migration threshold", () => {
+  assert.equal(BigInt(GRAD_SOL) * 1_000_000_000n, CURVE.GRAD_QUOTE);
 });
 
 test("the snipe tax: 98.95%, 21.39%, 4.63%, then exactly the 1% floor", () => {

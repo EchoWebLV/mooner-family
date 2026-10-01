@@ -5,6 +5,8 @@
 
 /** Every Mooner coin's supply in whole tokens (engine/src/dbc.js: 1B, 6 decimals). */
 export const SUPPLY = 1_000_000_000;
+/** SOL in the curve when the pool moves to DAMM v2 (engine/src/dbc.js CURVE.GRAD_QUOTE). */
+export const GRAD_SOL = 80;
 const DECIMALS = 6;
 
 const big = (v) => BigInt(v ?? 0);

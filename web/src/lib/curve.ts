@@ -1,17 +1,19 @@
 // Mooner's Meteora DBC curve (engine/src/dbc.js CURVE): one constant-product segment, 1B
 // supply, 6 decimals, starts at 28 SOL market cap and graduates at 80 SOL in the curve.
 // A presale's SOL goes in as the pool's first buy at the 1% fee floor.
+import { GRAD_SOL as MIGRATION_SOL } from '../../../engine/src/views.js'
 import { LAMPORTS_PER_SOL, PRESALE_TARGET, TOTAL_SUPPLY } from './constants'
 import type { Lamports, Pool } from './types'
 
 // SOL per whole token at a Q64.64 sqrt price: the engine's, shared with the phone app.
 export { priceFromSqrt } from '../../../engine/src/views.js'
+// SOL in the curve when it graduates to its AMM pool: the engine's GRAD_SOL, shared with the
+// phone app.
+export { MIGRATION_SOL }
 
 const DECIMALS = 6
 const SQRT_START = 97610994635780032n
 const LIQUIDITY = 105571432261223416012914185700781n
-/** SOL in the curve when it graduates to its AMM pool. */
-export const MIGRATION_SOL = 80
 /**
  * About what reaches the first buy from a full pool: the launch's rent and fee (about 0.01
  * SOL) and each seat's token account and claim fee (about 0.0015 SOL a seat) come out first.
