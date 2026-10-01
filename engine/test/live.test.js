@@ -644,9 +644,12 @@ test("at start: a coin that migrated while the server was down gets its DAMM v2 
 
 test("coin:<mint>: stats when it's opened, again only after its pool changed and a statsMs passed", async () => {
   const calls = [];
+  // the minute before the read, by the clock the feed reads (Date.now: no `now` is handed
+  // in), so the candle is always inside the chart's CHART_MS
+  const minuteAgo = () => Math.floor(Date.now() / 60_000) * 60 - 60;
   const fetch = async (url) => {
     calls.push(url);
-    if (url.includes("/ohlcv/")) return { ok: true, status: 200, json: async () => ({ data: { attributes: { ohlcv_list: [[1790854740, 2e-8, 3e-8, 2e-8, 3e-8, 1]] } } }) };
+    if (url.includes("/ohlcv/")) return { ok: true, status: 200, json: async () => ({ data: { attributes: { ohlcv_list: [[minuteAgo(), 2e-8, 3e-8, 2e-8, 3e-8, 1]] } } }) };
     return { ok: true, status: 200, json: async () => ({ data: { attributes: { reserve_in_usd: "10", volume_usd: { h24: String(calls.length) } } } }) };
   };
   const s = await startLive({ feed: { fetch, statsMs: 300 } });
