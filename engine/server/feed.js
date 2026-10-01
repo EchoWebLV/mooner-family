@@ -493,7 +493,8 @@ export class Feed extends EventEmitter {
     if (topic.startsWith("wallet:")) {
       // unwatched until now: a change since went unheard, so the cached balance (up to 5 s
       // old, maybe GET /api/wallet/<w>/balance's) is dropped for the snapshot's read, and a
-      // read still out from before reads again
+      // read still out from before reads again. The hub lets in only a key that is 32 bytes
+      // (hub.js isTopic), so new PublicKey can't throw here.
       this.reads.forgetBalance(new PublicKey(topic.slice("wallet:".length)));
       this.changed(topic);
       this.watchWallet(topic);

@@ -229,6 +229,30 @@ test("the socket: topics, snapshots, bad requests", async () => {
   }
 });
 
+test("the socket: a key of 32 to 44 base58 characters that isn't 32 bytes is an unknown topic, like any bad one; nothing is joined, read or watched", async () => {
+  const key = "2".repeat(32); // TOPIC's shape, but `new PublicKey` throws on it
+  const topics = ["wallet", "presale", "coin", "chat"].map((kind) => `${kind}:${key}`);
+  for (const maxWallets of [2_000, 0]) {
+    // under the wallet limit first() watches the wallet; at it, the snapshot reads it
+    const hubLogs = [];
+    const s = await startLive({ hub: { log: (m) => hubLogs.push(m) }, feed: { maxWallets } });
+    const c = await s.client();
+    try {
+      c.sub(...topics, "sol");
+      for (const t of topics) assert.equal((await c.next((m) => m.error?.includes(t))).error, `unknown topic ${t}`, `maxWallets ${maxWallets}`);
+      await c.next(on("sol", "snapshot"));
+      await wait(250); // the feed's retryMs is 100: a failed read's tries would be in
+      assert.deepEqual(c.got, [], "no snapshot, missing or error after the refusals");
+      assert.deepEqual(topics.filter((t) => s.hub.has(t)), []);
+      assert.deepEqual([s.feed.wallets.size, s.feed.coins.size, s.feed.readsOut.size], [0, 0, 0]);
+      assert.deepEqual([hubLogs, s.logs.filter((l) => l.includes(key))], [[], []], "nothing thrown or read");
+    } finally {
+      c.close();
+      await s.close();
+    }
+  }
+});
+
 test("a presale change on Solana or an ER is pushed, paced, to its topic and the list", async () => {
   const s = await startLive();
   const { presale } = newPresale(s.l1, s.store);
@@ -736,8 +760,7 @@ test("wallet:<w>: a balance read out across the last unsub, a change while nobod
     await until(() => !s.hub.has(topic));
     assert.ok(!s.l1.accountSubs().includes(w.toBase58()), "nobody on it: no chain listener for it");
     s.l1.write(w, system, Buffer.alloc(0), 9_000);
-    s.feed.reads.forgetBalance(w); // the balance cache's 5 s are up
-    c.sub(topic);
+    c.sub(topic); // first(): the cached 5000 is dropped, and the read still out is marked to read again
     await until(() => heard().length); // the new sub's read: 9000
     go();
     await until(() => heard().length > 1);
@@ -836,6 +859,37 @@ test("a change while a socket's snapshot read is out, then it leaves and comes b
     await until(() => raised().length > 2);
     await wait(100);
     assert.deepEqual(raised(), ["5", "5", "5"], "never 0 after 5");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("a change to a presale nobody is on, with no read out: no change number is kept", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  try {
+    s.l1.write(presale, pid, presaleData(mint, { raised: 5n })); // marks presale:<key> and presales
+    assert.deepEqual([...s.feed.changes], []);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a change to a presale a socket is on, with no read out: no change number is kept, before or after the unsub", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  const topic = `presale:${presale.toBase58()}`;
+  const c = await s.client();
+  try {
+    c.sub(topic);
+    await c.next(on(topic, "snapshot"));
+    await until(() => !s.feed.readsOut.has(topic));
+    s.l1.write(presale, pid, presaleData(mint, { raised: 5n }));
+    assert.deepEqual([...s.feed.changes], [], "on the topic, but no read out: nothing to note");
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic));
+    assert.deepEqual([...s.feed.changes], [], "after the unsub");
   } finally {
     c.close();
     await s.close();

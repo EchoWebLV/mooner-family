@@ -7,12 +7,29 @@
 //   server -> { error }                    (a bad request; the socket stays open)
 //
 // Topics: presales, launched, profiles, sol, chat:global, chat:<presale>, presale:<presale>,
-// wallet:<wallet>, coin:<mint>.
+// wallet:<wallet>, coin:<mint>. A key that isn't a Solana address is an unknown topic.
 
+import { PublicKey } from "@solana/web3.js";
 import { WebSocketServer } from "ws";
 import { Limiter, clientIp, toJson } from "./http.js";
 
 export const TOPIC = /^(presales|launched|profiles|sol|chat:global|(chat|presale|wallet|coin):[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+
+/** A topic the hub takes: TOPIC's shape, and a key that is 32 bytes. 32 to 44 base58
+ *  characters can decode to more or fewer (32 times "2" does), and feed.js reads a topic's
+ *  key with `new PublicKey`, which throws on those (in first(), out of onFirst). Refused
+ *  here, such a topic gets the same reply as any bad one, and is never joined. */
+function isTopic(t) {
+  if (typeof t !== "string" || !TOPIC.test(t)) return false;
+  const key = t.split(":")[1];
+  if (!key || t === "chat:global") return true;
+  try {
+    new PublicKey(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const HUB_LIMITS = {
   socketsPerIp: 20,
@@ -90,7 +107,7 @@ export class Hub {
         return say({ error: 'send { op: "sub" | "unsub", topics: [...] }' });
       }
       for (const t of new Set(list)) {
-        if (typeof t !== "string" || !TOPIC.test(t)) {
+        if (!isTopic(t)) {
           say({ error: `unknown topic ${String(t).slice(0, 60)}` });
           continue;
         }
