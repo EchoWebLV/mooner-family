@@ -48,7 +48,7 @@ export class Pinata {
       image: imageUrl,
       ...(links.website && { external_url: links.website }),
       ...Object.fromEntries(Object.entries(links).filter(([, v]) => v)),
-      createdOn: "Mooner",
+      createdOn: "https://app.mooner.family", // the launchpad, as pump.fun writes its own URL
     };
     const uri = this.gateway + (await this.upload(Buffer.from(JSON.stringify(json)), `${symbol}.json`, "application/json"));
     await this.loads(uri, async (r) => (await r.json()).name === name);

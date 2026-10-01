@@ -61,7 +61,7 @@ export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 
   const done = async (st) => {
     if (st.err) {
       const logs = await txLogs(conn, sig);
-      throw new TxError(sig, describeTxError(st.err, ixs?.map((i) => i.programId), pid), logs, what);
+      throw new TxError(sig, describeTxError(st.err, ixs?.map((i) => i.programId), pid, logs), logs, what);
     }
     return sig;
   };
@@ -86,7 +86,8 @@ export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 
   }
 }
 
-async function txLogs(conn, sig) {
+/** A landed tx's logs ([] if the RPC doesn't have it after a few tries). */
+export async function txLogs(conn, sig) {
   for (let i = 0; i < 5; i++) {
     const t = await conn.getTransaction(sig, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }).catch(() => null);
     if (t) return t.meta?.logMessages ?? [];
@@ -118,7 +119,7 @@ export async function simulate(conn, { ixs, payer, alts = [], accounts = [], pid
   const v = res.value;
   return {
     err: v.err,
-    errText: v.err ? describeTxError(v.err, ixs.map((i) => i.programId), pid) : null,
+    errText: v.err ? describeTxError(v.err, ixs.map((i) => i.programId), pid, v.logs) : null,
     logs: v.logs ?? [],
     units: v.unitsConsumed ?? 0,
     accounts: (v.accounts ?? []).map((a) => (a ? { ...a, data: Buffer.from(a.data[0], "base64") } : null)),

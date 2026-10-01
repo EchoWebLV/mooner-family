@@ -8,16 +8,18 @@ import os from "node:os";
 import path from "node:path";
 import { AddressLookupTableAccount, Keypair, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import * as I from "../src/ix.js";
-import { DELEGATION_PROGRAM, MOONER_DBC_CONFIG } from "../src/consts.js";
-import { P, PRESALE_LEN, PRESALE_VERSION, STATE } from "../src/layout.js";
-import { presalePda, seatPda } from "../src/pdas.js";
+import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, numbers } from "../src/consts.js";
+import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } from "../src/layout.js";
+import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
+import { loginMessage, makeSocialRoutes } from "../server/social.js";
 import { Bot, launchAltKeys, launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "../server/auth.js";
-import { createServer } from "../server/http.js";
+import { createServer, webFile } from "../server/http.js";
+import * as C from "../src/client.js";
 import { makeRoutes, sniffImage } from "../server/api.js";
 import { Store } from "../server/store.js";
 import { Keeper } from "../server/keeper.js";
-import { loadConfig, openersFrom } from "../server/config.js";
+import { IPFS_GATEWAY, loadConfig, loadKey, openersFrom, openersFromList } from "../server/config.js";
 
 const pid = Keypair.generate().publicKey;
 const gateKey = Keypair.generate();
@@ -42,6 +44,7 @@ function fakeChain() {
     accounts,
     sent: [],
     simErr: null,
+    simLogs: null, // the simulation's logs (default: one line when it fails)
     confirm: true,
     rpcEndpoint: "http://fake",
     put(key, owner, data, lamports = 1_000_000) {
@@ -62,10 +65,13 @@ function fakeChain() {
     async getBalance() {
       return 50_000_000;
     },
+    async getLatestBlockhash() {
+      return { blockhash: BH, lastValidBlockHeight: 100 };
+    },
     async simulateTransaction(tx, opts) {
       assert.equal(opts.sigVerify, true, "the server simulates with signatures checked");
       const unsigned = tx.signatures.some((s) => s.every((b) => b === 0));
-      return { value: { err: unsigned ? "SignatureFailure" : chain.simErr, logs: chain.simErr ? ["Program log: nope"] : [] } };
+      return { value: { err: unsigned ? "SignatureFailure" : chain.simErr, logs: chain.simLogs ?? (chain.simErr ? ["Program log: nope"] : []) } };
     },
     async sendRawTransaction(raw) {
       chain.sent.push(raw);
@@ -86,33 +92,34 @@ function presaleData(mint, state = STATE.OPEN) {
   return d;
 }
 
-async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, pinUri } = {}) {
+async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, pinUri, pinError, web = null } = {}) {
   const l1 = fakeChain();
   const store = new Store(":memory:");
   const pinned = [];
   const pinner = {
     async pinToken(t) {
+      if (pinError) throw new Error(pinError);
       pinned.push(t);
       return { image: "https://ipfs.io/ipfs/bafkimage", uri: pinUri ?? `https://ipfs.io/ipfs/${"b".repeat(59)}` };
     },
   };
   const er = { rpcEndpoint: "https://devnet-as.magicblock.app/", getMultipleAccountsInfo: async (ks) => ks.map(() => null) };
   const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: er }, bot: botKey, dbcConfig: MOONER_DBC_CONFIG, canary: true, log: () => {} });
-  const allowed = new Set(openers.map((k) => k.publicKey.toBase58()));
+  const allowed = openers && new Set(openers.map((k) => k.publicKey.toBase58()));
   let skew = 0; // the server's clock runs ahead by this much (the read cache, the limits)
   const routes = makeRoutes({
     pid, l1, bot, gateKey, alt, dbcConfig: MOONER_DBC_CONFIG, store, pinner, openers: () => allowed, cluster: "devnet", canary: true, sendTimeoutMs,
     now: () => Date.now() + skew,
     ...(limits && { limits }),
   });
-  const server = createServer(routes, { log: () => {} });
+  const server = createServer(routes, { log: () => {}, web });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, p, body) => {
     const r = await fetch(base + p, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
     return { status: r.status, json: await r.json().catch(() => null) };
   };
-  return { l1, store, pinned, allowed, call, later: (ms) => (skew += ms), close: () => new Promise((r) => server.close(r)) };
+  return { l1, store, pinned, allowed, base, call, later: (ms) => (skew += ms), close: () => new Promise((r) => server.close(r)) };
 }
 
 function mintBody(wallet, over = {}, signer = wallet) {
@@ -138,20 +145,13 @@ function entryTx(payer, ixs) {
   return Buffer.from(tx.serialize()).toString("base64");
 }
 
-function openIxs(creator, mint) {
-  const presale = presalePda(pid, mint);
-  return [
-    I.openPresale(pid, { creator, gate: gateKey.publicKey, mint, feeDest: creator, sessionKey: creator, deposit: 50_000_000n, commit: 50_000_000n }),
-    I.delegate(pid, { payer: creator, target: presale, validator, kind: 0 }),
-    I.delegate(pid, { payer: creator, target: seatPda(pid, presale, creator), validator, kind: 1, presale }),
-  ];
+// the web app's builders (src/client.js), so the cosign tests check what it sends
+function openIxs(creator, mint, deposit = 50_000_000n) {
+  return C.openIxs(pid, { creator, gate: gateKey.publicKey, mint, feeDest: creator, sessionKey: creator, deposit, commit: 50_000_000n, validator });
 }
 
 function joinIxs(user, presale) {
-  return [
-    I.join(pid, { user, gate: gateKey.publicKey, presale, sessionKey: user, deposit: 20_000_000n }),
-    I.delegate(pid, { payer: user, target: seatPda(pid, presale, user), validator, kind: 1, presale }),
-  ];
+  return C.joinIxs(pid, { user, gate: gateKey.publicKey, presale, sessionKey: user, deposit: 20_000_000n, validator });
 }
 
 test("wallet signatures and image types", () => {
@@ -167,10 +167,23 @@ test("wallet signatures and image types", () => {
 });
 
 test("the longest name and symbol with a Pinata link fit the launch tx", () => {
-  const meta = { name: "x".repeat(32), symbol: "X".repeat(10), uri: `https://ipfs.io/ipfs/${"b".repeat(59)}` };
+  const meta = { name: "x".repeat(32), symbol: "X".repeat(10), uri: `${IPFS_GATEWAY}${"b".repeat(59)}` };
   const n = launchTxSize({ pid, dbcConfig: MOONER_DBC_CONFIG, alt, meta });
   assert.ok(n <= 1232, `${n} bytes`);
   assert.ok(launchTxSize({ pid, dbcConfig: MOONER_DBC_CONFIG, alt, meta: { ...meta, uri: "u".repeat(400) } }) > 1232);
+});
+
+test("mint: IPFS failing is a 502 that says so, and no key is issued", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator], pinError: "https://x/ipfs/bafy did not load" });
+  try {
+    const r = await s.call("POST", "/api/mint", mintBody(creator));
+    assert.equal(r.status, 502, JSON.stringify(r.json));
+    assert.equal(r.json.error, "IPFS: https://x/ipfs/bafy did not load; try again");
+    assert.equal(s.store.unopened(creator.publicKey).length, 0);
+  } finally {
+    await s.close();
+  }
 });
 
 test("mint: a listed wallet gets a key bound to it", async () => {
@@ -306,6 +319,41 @@ test("cosign: opens for listed wallets with their own mint, joins for anyone", a
   }
 });
 
+test("cosign: the creator's deposit leaves room for at least one other seat", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator] });
+  try {
+    const N = numbers(true); // the test server runs the canary numbers
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const big = await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint, N.TARGET - N.MIN_SEAT + 1n)) });
+    assert.equal(big.status, 403, JSON.stringify(big.json));
+    assert.match(big.json.error, /at most 0\.19 SOL, so others can join/);
+    assert.equal(s.l1.sent.length, 0, "nothing went out");
+    const ok = await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint, N.TARGET - N.MIN_SEAT)) });
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  } finally {
+    await s.close();
+  }
+});
+
+test("openers *: any wallet asks for a token and opens with it", async () => {
+  const s = await startServer({ openers: null });
+  try {
+    const creator = Keypair.generate();
+    const m = await s.call("POST", "/api/mint", mintBody(creator));
+    assert.equal(m.status, 201, JSON.stringify(m.json));
+    const mint = new PublicKey(m.json.mint);
+    const r = await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)) });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.kind, "open");
+    const other = Keypair.generate();
+    const stolen = await s.call("POST", "/api/cosign", { tx: entryTx(other, openIxs(other.publicKey, mint)) });
+    assert.equal(stolen.status, 403, "a mint still opens only for the wallet it was issued to");
+  } finally {
+    await s.close();
+  }
+});
+
 test("cosign: simulation failures, slow confirms, garbage, rate limits", async () => {
   const user = Keypair.generate();
   const presale = presalePda(pid, Keypair.generate().publicKey);
@@ -316,6 +364,15 @@ test("cosign: simulation failures, slow confirms, garbage, rate limits", async (
     assert.equal(r.status, 400);
     assert.deepEqual(r.json.logs, ["Program log: nope"]);
     assert.equal(s.l1.sent.length, 0, "a failing tx is never sent");
+    // the join's create_account short of SOL: System's 1 (the logs say who), not PastDeadline
+    const system = "11111111111111111111111111111111";
+    s.l1.simLogs = [`Program ${pid} invoke [1]`, `Program ${system} invoke [2]`, "Transfer: insufficient lamports 5, need 9", `Program ${system} failed: custom program error: 0x1`, `Program ${pid} failed: custom program error: 0x1`];
+    const short = await s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)) });
+    assert.equal(short.json.error, `the tx fails: ix 0 (${system}): insufficient lamports (custom 1)`);
+    s.l1.simLogs = [`Program ${pid} invoke [1]`, `Program ${pid} failed: custom program error: 0x1`];
+    const late = await s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)) });
+    assert.equal(late.json.error, "the tx fails: ix 0: PastDeadline (1)");
+    s.l1.simLogs = null;
     s.l1.simErr = null;
     s.l1.confirm = false;
     const slow = await s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)) });
@@ -373,6 +430,123 @@ test("presale reads: live from the chain, closed from the record", async () => {
     const health = await s.call("GET", "/api/health");
     assert.deepEqual([health.status, health.json.botLamports], [200, 50_000_000]);
     assert.equal((await s.call("POST", "/api/cosign", { tx: "A".repeat(10_000) })).status, 413, "body over the route's limit");
+  } finally {
+    await s.close();
+  }
+});
+
+function seatData(presale, user, deposit, commit) {
+  const d = Buffer.alloc(SEAT_LEN);
+  d[0] = SEAT_VERSION;
+  user.toBuffer().copy(d, S.USER);
+  presale.toBuffer().copy(d, S.PRESALE);
+  d.writeBigUInt64LE(deposit, S.DEPOSIT);
+  d.writeBigUInt64LE(commit, S.COMMIT);
+  return d;
+}
+
+test("reads: an open presale lists its wallets, launched tokens come with their pool", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator] });
+  try {
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const presale = presalePda(pid, mint);
+    s.l1.put(presale, pid, presaleData(mint, STATE.OPEN));
+    const [a, b, c] = [Keypair.generate().publicKey, Keypair.generate().publicKey, Keypair.generate().publicKey];
+    s.l1.put(seatPda(pid, presale, a), pid, seatData(presale, a, 30_000_000n, 30_000_000n));
+    s.l1.put(seatPda(pid, presale, b), pid, seatData(presale, b, 90_000_000n, 90_000_000n));
+    s.l1.put(seatPda(pid, presale, c), pid, seatData(presale, c, 50_000_000n, 0n));
+    const list = await s.call("GET", "/api/presales");
+    assert.deepEqual(list.json.presales[0].users, [
+      { user: b.toBase58(), commit: "90000000", creator: false },
+      { user: a.toBase58(), commit: "30000000", creator: false },
+    ], "biggest first, a seat at 0 isn't in");
+    assert.deepEqual((await s.call("GET", `/api/wallet/${a.toBase58()}/balance`)).json, { lamports: 50_000_000 });
+
+    assert.deepEqual((await s.call("GET", "/api/launched")).json.launched, []);
+    s.store.markOpened(mint, presale);
+    s.store.addLaunch(presale, mint, { sig: "LAUNCH", released: 9n, cost: 1n, tokens: 5n, units: 7 });
+    s.later(5_000);
+    const none = (await s.call("GET", "/api/launched")).json.launched;
+    assert.deepEqual([none.length, none[0].mint, none[0].token.symbol, none[0].launch.sig, none[0].pool], [1, mint.toBase58(), "MDOG", "LAUNCH", null]);
+    const fixture = JSON.parse(fs.readFileSync(new URL("./fixtures/dbc-pool.json", import.meta.url), "utf8"));
+    const pool = poolAddresses(MOONER_DBC_CONFIG, mint).pool;
+    s.l1.put(pool, DBC, Buffer.from(fixture.data, "base64"));
+    s.later(5_000);
+    const one = (await s.call("GET", "/api/launched")).json.launched[0];
+    assert.deepEqual(one.pool, { address: pool.toBase58(), quoteReserve: "197354828", sqrtPrice: "98247117170863603", migrated: false });
+  } finally {
+    await s.close();
+  }
+});
+
+async function startSocial({ presales = [], limits } = {}) {
+  const store = new Store(":memory:");
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const known = new Set(presales.map((k) => k.toBase58()));
+  const server = createServer(makeSocialRoutes({ store, isPresale: (k) => known.has(k), now, ...(limits && { limits }) }), { log: () => {} });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const call = async (method, p, body) => {
+    const r = await fetch(base + p, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
+    return { status: r.status, json: await r.json().catch(() => null) };
+  };
+  const login = (kp, time = Math.floor(now() / 1000), signer = kp) =>
+    call("POST", "/api/login", { wallet: kp.publicKey.toBase58(), time, signature: signBytes(signer, Buffer.from(loginMessage(kp.publicKey.toBase58(), time), "utf8")).toString("base64") });
+  return { store, call, login, later: (ms) => (skew += ms), close: () => new Promise((r) => server.close(r)) };
+}
+
+const PFP = { skin: "moon", eyes: "stars", head: "none", face: "grin", outfit: "hoodie", neck: "none", aura: "none", bg: "night" };
+
+test("social: sign in with a wallet, chat, save a picture", async () => {
+  const presale = Keypair.generate().publicKey;
+  const s = await startSocial({ presales: [presale] });
+  try {
+    const me = Keypair.generate();
+    assert.equal((await s.login(me, undefined, Keypair.generate())).status, 401, "signed by another wallet");
+    assert.equal((await s.login(me, Math.floor(Date.now() / 1000) - 3_600)).status, 400, "an old time");
+    const time = Math.floor(Date.now() / 1000);
+    const ok = await s.login(me, time);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.wallet, me.publicKey.toBase58());
+    assert.equal((await s.login(me, time)).status, 409, "the same signature twice");
+    const token = ok.json.token;
+
+    assert.equal((await s.call("POST", "/api/chat", { channel: "global", text: "gm" })).status, 401, "not signed in");
+    assert.equal((await s.call("POST", "/api/chat", { token: token.replace(/.$/, (c) => (c === "A" ? "B" : "A")), channel: "global", text: "gm" })).status, 401, "a forged token");
+    const sent = await s.call("POST", "/api/chat", { token, channel: "global", text: "  gm moon  " });
+    assert.deepEqual([sent.status, sent.json.text, sent.json.wallet], [201, "gm moon", me.publicKey.toBase58()]);
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: presale.toBase58(), text: "in" })).status, 201);
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: Keypair.generate().publicKey.toBase58(), text: "x" })).status, 404, "an unknown presale");
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: "global", text: "   " })).status, 400);
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: "global", text: "a\u0007b" })).status, 400);
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: "global", text: "x".repeat(281) })).status, 400);
+
+    const global = (await s.call("GET", "/api/chat/global")).json.messages;
+    assert.deepEqual(global.map((m) => m.text), ["gm moon"]);
+    assert.deepEqual((await s.call("GET", `/api/chat/global?after=${global[0].id}`)).json.messages, []);
+    assert.deepEqual((await s.call("GET", `/api/chat/${presale.toBase58()}`)).json.messages.map((m) => m.text), ["in"]);
+
+    assert.equal((await s.call("POST", "/api/profile", { token, pfp: { ...PFP, bg: "<script>" } })).status, 400);
+    assert.equal((await s.call("POST", "/api/profile", { token, pfp: PFP })).status, 200);
+    assert.deepEqual((await s.call("GET", "/api/profiles")).json.profiles, { [me.publicKey.toBase58()]: PFP });
+
+    s.later(8 * 24 * 3_600_000);
+    assert.equal((await s.call("POST", "/api/chat", { token, channel: "global", text: "late" })).status, 401, "a week later");
+  } finally {
+    await s.close();
+  }
+});
+
+test("social: chat slows down a fast wallet", async () => {
+  const s = await startSocial({ limits: { loginPerIp: [5, 60_000], chatPerWallet: [2, 10_000], chatPerIp: [30, 60_000], profilePerWallet: [5, 60_000] } });
+  try {
+    const { token } = (await s.login(Keypair.generate())).json;
+    const say = () => s.call("POST", "/api/chat", { token, channel: "global", text: "hi" });
+    assert.deepEqual([(await say()).status, (await say()).status, (await say()).status], [201, 201, 429]);
+    s.later(10_000);
+    assert.equal((await say()).status, 201);
   } finally {
     await s.close();
   }
@@ -506,7 +680,11 @@ test("reads: callers share one fetch for a moment, a failed fetch isn't kept", a
     assert.equal(gpa, perList, "three callers together, and one right after, made one listing");
     s.later(3_000);
     assert.equal((await s.call("GET", "/api/presales")).json.presales.length, 1);
-    assert.equal(gpa, 2 * perList);
+    const withFaces = gpa - perList; // the listing, plus the open presale's seats for its faces
+    assert.ok(withFaces > perList);
+    s.later(3_000);
+    await s.call("GET", "/api/presales");
+    assert.equal(gpa, perList + withFaces + perList, "the seats behind the faces are kept 10 s");
 
     const otherMint = Keypair.generate().publicKey;
     const other = presalePda(pid, otherMint);
@@ -515,6 +693,65 @@ test("reads: callers share one fetch for a moment, a failed fetch isn't kept", a
     assert.equal((await s.call("GET", `/api/presale/${other.toBase58()}`)).status, 200, "the 404 wasn't kept");
   } finally {
     await s.close();
+  }
+});
+
+test("client: the web app's commit rules match the program's", () => {
+  const N = { MIN_SEAT: 100n, MAX_SEAT: 1_000n, STEP: 10n };
+  assert.deepEqual([100n, 1_000n, 550n, 90n, 1_010n, 555n].map((a) => C.validSeat(a, N)), [true, true, true, false, false, false]);
+  // cutToRoom(amount, current, others, target)
+  assert.equal(C.cutToRoom(500n, 0n, 9_000n, 10_000n), 500n, "fits");
+  assert.equal(C.cutToRoom(500n, 0n, 9_800n, 10_000n), 200n, "cut to the room left");
+  assert.equal(C.cutToRoom(500n, 0n, 10_000n, 10_000n), null, "no room");
+  assert.equal(C.cutToRoom(100n, 300n, 10_000n, 10_000n), 100n, "a cut down always goes through");
+  const wallet = Keypair.generate().publicKey;
+  const a = { wallet, name: "N", symbol: "S", time: 7 };
+  assert.equal(
+    C.mintMessageText({ ...a, imageHash: crypto.createHash("sha256").update(PNG).digest("hex"), detailsHash: crypto.createHash("sha256").update(JSON.stringify(["d", "", "", ""])).digest("hex") }),
+    mintMessage({ ...a, image: PNG, details: ["d", "", "", ""] }),
+  );
+});
+
+test("web: the app's files, its routes, nothing outside it", async () => {
+  const web = fs.mkdtempSync(path.join(os.tmpdir(), "mooner-web-"));
+  const s = await startServer({ web });
+  try {
+    fs.mkdirSync(`${web}/assets`);
+    fs.writeFileSync(`${web}/index.html`, "<!doctype html>app");
+    fs.writeFileSync(`${web}/assets/app-1.js`, "js");
+    fs.mkdirSync(`${web}/sim/assets`, { recursive: true });
+    fs.writeFileSync(`${web}/sim/index.html`, "<!doctype html>sim");
+    fs.writeFileSync(`${web}/sim/assets/sim-1.js`, "simjs");
+    fs.writeFileSync(`${web}/.secret`, "no");
+    fs.writeFileSync(`${path.dirname(web)}/outside.txt`, "no");
+    const get = async (p) => {
+      const r = await fetch(s.base + p);
+      return { status: r.status, type: r.headers.get("content-type"), cache: r.headers.get("cache-control"), body: await r.text() };
+    };
+    let r = await get("/");
+    assert.deepEqual([r.status, r.body, r.cache, r.type], [200, "<!doctype html>app", "no-cache", "text/html; charset=utf-8"]);
+    r = await get("/presale/abc");
+    assert.deepEqual([r.status, r.body], [200, "<!doctype html>app"], "an app route gets index.html");
+    r = await get("/assets/app-1.js");
+    assert.deepEqual([r.status, r.body, r.cache], [200, "js", "public, max-age=31536000, immutable"]);
+    assert.equal((await get("/assets/none.js")).status, 404, "a missing file isn't the app");
+    for (const p of ["/sim", "/sim/", "/sim/presale/abc"]) assert.equal((await get(p)).body, "<!doctype html>sim", `${p} is the simulation`);
+    r = await get("/sim/assets/sim-1.js");
+    assert.deepEqual([r.status, r.body, r.cache], [200, "simjs", "public, max-age=31536000, immutable"]);
+    assert.equal((await get("/assets")).body, "<!doctype html>app", "a folder without its own index.html is the app");
+    assert.equal((await get("/.secret")).status, 404);
+    assert.equal((await get("/%2e%2e/outside.txt")).status, 404);
+    assert.equal((await get("/..%2foutside.txt")).status, 404);
+    assert.equal(webFile(web, "/../outside.txt"), null, "a dot segment is refused");
+    assert.equal(webFile(web, "/a/b"), path.join(web, "index.html"));
+    assert.equal((await get("/api/nope")).status, 404, "the API stays JSON");
+    assert.equal((await s.call("GET", "/api/nope")).json.error, "not found");
+    const bh = await s.call("GET", "/api/blockhash");
+    assert.deepEqual([bh.status, bh.json.blockhash], [200, BH]);
+  } finally {
+    await s.close();
+    fs.rmSync(web, { recursive: true });
+    fs.rmSync(`${path.dirname(web)}/outside.txt`, { force: true });
   }
 });
 
@@ -538,6 +775,19 @@ test("config: the deployment record, the openers file", () => {
     fs.writeFileSync(`${dir}/openers.txt`, "");
     fs.utimesSync(`${dir}/openers.txt`, new Date(), new Date(Date.now() + 5_000));
     assert.equal(openers().size, 0, "re-read after a change");
+
+    // on a host that configures by variables (Railway): the wallets and the keys themselves
+    const b = Keypair.generate().publicKey.toBase58();
+    assert.deepEqual([...openersFromList(` ${a}, ${b}\n`)()], [a, b]);
+    assert.equal(openersFromList("")().size, 0, "empty: nobody");
+    assert.equal(openersFromList(" * ")(), null, "*: any wallet");
+    assert.throws(() => openersFromList("not-a-wallet"), /base58/, "a typo stops the server");
+    assert.equal(loadConfig({ MOONER_DIR: dir, MOONER_OPENER_WALLETS: a }).openerWallets, a);
+    assert.equal(loadConfig({ MOONER_DIR: dir }).openerWallets, null);
+    const kp = Keypair.generate();
+    fs.writeFileSync(`${dir}/k.json`, JSON.stringify([...kp.secretKey]));
+    assert.equal(loadKey(`${dir}/k.json`).publicKey.toBase58(), kp.publicKey.toBase58(), "a key file");
+    assert.equal(loadKey(`\n${JSON.stringify([...kp.secretKey])}\n`).publicKey.toBase58(), kp.publicKey.toBase58(), "the key's JSON");
   } finally {
     fs.rmSync(dir, { recursive: true });
   }

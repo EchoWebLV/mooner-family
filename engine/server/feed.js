@@ -1,0 +1,290 @@
+// What the live socket (hub.js) carries, fed by chain subscriptions instead of polls:
+//   - our program on Solana and on each ER, and the delegation program's copies of our
+//     presales and seats on Solana: any change to a presale or a seat re-reads that
+//     presale once (paced) and pushes it to `presale:<key>` and `presales`
+//   - each launched token's DBC pool: pushed to `launched` as it trades
+//   - each watched wallet's SOL: `wallet:<wallet>`
+//   - SOL/USD from Pyth's price account: `sol`
+//   - chat messages and pictures as the server saves them: `chat:<channel>`, `profiles`
+// A socket that joins a topic gets its snapshot first, then the changes.
+
+import { PublicKey } from "@solana/web3.js";
+import { DELEGATION_PROGRAM } from "../src/consts.js";
+import { PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, SEAT_VERSION, decodePresale, decodeSeat } from "../src/layout.js";
+import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
+import { decodePoolState } from "../src/dbc.js";
+import { listItem } from "./api.js";
+import { allProfiles, chatRows } from "./social.js";
+
+/** Pyth's SOL/USD price account (push oracle, shard 0), the same address on every cluster. */
+export const PYTH_SOL_USD = new PublicKey("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE");
+const SOL_USD_FEED = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+
+/** A Pyth PriceUpdateV2 account: { usd, at } (at in ms), or null if it isn't SOL/USD. */
+export function decodeSolUsd(data) {
+  const b = Buffer.from(data ?? []);
+  if (b.length < 134) return null;
+  const o = b[40] === 1 ? 41 : 42; // verification level: Full is 1 byte, Partial 2
+  if (b.subarray(o, o + 32).toString("hex") !== SOL_USD_FEED) return null;
+  const usd = Number(b.readBigInt64LE(o + 32)) * 10 ** b.readInt32LE(o + 48);
+  return { usd, at: Number(b.readBigInt64LE(o + 52)) * 1000 };
+}
+
+const version = (v) => ({ memcmp: { offset: 0, bytes: Buffer.from([v]).toString("base64"), encoding: "base64" } });
+const tryDecode = (decode, data) => {
+  try {
+    return decode(data);
+  } catch {
+    return null;
+  }
+};
+
+export class Feed {
+  /**
+   * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
+   * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
+   * `db`: the server's SQLite (chat and pictures).
+   */
+  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, log = console.log }) {
+    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, log });
+    this.hub = null;
+    this.subs = []; // [conn, id, "program" | "account"]
+    this.wallets = new Map(); // topic -> listener id
+    this.pools = new Map(); // mint -> { row, data }
+    this.known = null; // presales in the keeper's last scan
+    this.sol = null;
+    this.paced = new Map();
+    this.heard = {}; // chain notifications of our accounts, by source (for /api/health)
+  }
+
+  // ---- lifecycle ----
+
+  /** Starts the chain subscriptions; `hub` is where changes go. */
+  async start(hub) {
+    this.hub = hub;
+    const opts = (filters) => ({ commitment: "confirmed", encoding: "base64", ...(filters && { filters }) });
+    const onOurs = (where) => ({ accountId, accountInfo }) => this.onOurAccount(accountId, accountInfo.data, where);
+    this.sub(this.l1, "program", this.l1.onProgramAccountChange(this.pid, onOurs("solana"), opts()));
+    this.sub(this.l1, "program", this.l1.onProgramAccountChange(DELEGATION_PROGRAM, onOurs("delegated"), opts([{ dataSize: PRESALE_LEN }, version(PRESALE_VERSION)])));
+    this.sub(this.l1, "program", this.l1.onProgramAccountChange(DELEGATION_PROGRAM, onOurs("delegated"), opts([{ dataSize: SEAT_LEN }, version(SEAT_VERSION)])));
+    for (const [v, er] of Object.entries(this.ers)) this.sub(er, "program", er.onProgramAccountChange(this.pid, onOurs(`er ${v.slice(0, 4)}`), opts()));
+    this.syncPools();
+
+    const a = await this.l1.getAccountInfo(this.solFeed).catch(() => null);
+    if (decodeSolUsd(a?.data)) {
+      this.onSol(a.data);
+      this.sub(this.l1, "account", this.l1.onAccountChange(this.solFeed, (acc) => this.onSol(acc.data), { commitment: "confirmed" }));
+    } else this.log(`no SOL/USD price account at ${this.solFeed.toBase58()}: the site shows no dollar values`);
+    return this;
+  }
+
+  async stop() {
+    for (const id of this.wallets.values()) await this.l1.removeAccountChangeListener(id).catch(() => {});
+    this.wallets.clear();
+    for (const [conn, id, kind] of this.subs.splice(0)) {
+      await (kind === "program" ? conn.removeProgramAccountChangeListener(id) : conn.removeAccountChangeListener(id)).catch(() => {});
+    }
+    for (const p of this.paced.values()) clearTimeout(p.timer);
+  }
+
+  sub(conn, kind, id) {
+    this.subs.push([conn, id, kind]);
+  }
+
+  publish(topic, msg) {
+    this.hub?.publish(topic, msg);
+  }
+
+  has(topic) {
+    return !!this.hub?.has(topic);
+  }
+
+  // ---- presales ----
+
+  /** A change to one of our accounts (or a delegated copy of one). */
+  onOurAccount(key, data, where) {
+    this.heard[where] = (this.heard[where] ?? 0) + 1;
+    if (data.length === PRESALE_LEN) {
+      if (where === "delegated") {
+        const p = tryDecode(decodePresale, data);
+        if (!p || !presalePda(this.pid, p.mint).equals(key)) return;
+      }
+      return this.touch(key);
+    }
+    if (data.length === SEAT_LEN) {
+      const s = tryDecode(decodeSeat, data);
+      if (!s || !seatPda(this.pid, s.presale, s.user).equals(key)) return;
+      return this.touch(s.presale);
+    }
+  }
+
+  /** Something about `presale` changed: read it again (at most once a `paceMs`) and push it. */
+  touch(presale) {
+    const k = presale.toBase58();
+    this.reads.forget(presale);
+    this.pace(`presale:${k}`, this.paceMs, () => this.pushPresale(presale));
+  }
+
+  async pushPresale(presale) {
+    const k = presale.toBase58();
+    this.reads.forget(presale);
+    if (!this.has(`presale:${k}`) && !this.has("presales")) return;
+    let v;
+    try {
+      v = await this.reads.presale(presale);
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      this.publish(`presale:${k}`, { type: "missing" });
+      this.publish("presales", { type: "remove", data: { presale: k } });
+      return;
+    }
+    this.publish(`presale:${k}`, { type: "snapshot", data: v });
+    if (v.where === "closed") this.publish("presales", { type: "remove", data: { presale: k } });
+    else this.publish("presales", { type: "upsert", data: listItem(v) });
+  }
+
+  /** The keeper's scan: presales it didn't see before are new, ones it no longer sees closed. */
+  scanned(keys) {
+    const now = new Map(keys.map((k) => [k.toBase58(), k]));
+    if (this.known) {
+      for (const [k, key] of now) if (!this.known.has(k)) this.touch(key);
+      for (const [k, key] of this.known) if (!now.has(k)) this.touch(key);
+    }
+    this.known = now;
+  }
+
+  // ---- launched tokens ----
+
+  /** The keeper recorded a launch: its presale changed and there's a pool to watch. */
+  launched(presale) {
+    this.touch(presale);
+    this.reads.forgetLaunched();
+    this.syncPools(true);
+  }
+
+  /** Watches the pool of every launch not watched yet; `push`: send each one's row now. */
+  syncPools(push = false) {
+    for (const row of this.store.launches()) {
+      if (this.pools.has(row.mint)) continue;
+      const pool = poolAddresses(this.dbcConfig, new PublicKey(row.mint)).pool;
+      this.pools.set(row.mint, { row, pool, data: null });
+      this.sub(this.l1, "account", this.l1.onAccountChange(pool, (acc) => this.onPool(row.mint, acc.data), { commitment: "confirmed" }));
+      if (push) this.l1.getAccountInfo(pool).then((a) => a && this.onPool(row.mint, a.data), () => {});
+    }
+  }
+
+  onPool(mint, data) {
+    const p = this.pools.get(mint);
+    if (!p) return;
+    p.data = data;
+    this.reads.forgetLaunched();
+    this.pace(`pool:${mint}`, this.poolPaceMs, async () => {
+      const s = decodePoolState(p.data);
+      if (!s) return;
+      const pool = { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated };
+      this.publish("launched", { type: "upsert", data: { ...p.row, pool } });
+    });
+  }
+
+  // ---- SOL ----
+
+  onSol(data) {
+    const s = decodeSolUsd(data);
+    if (!s || s.usd === this.sol?.usd) return;
+    this.sol = s;
+    this.publish("sol", { type: "snapshot", data: s });
+  }
+
+  watchWallet(topic) {
+    if (this.wallets.size >= this.maxWallets) return this.log(`${this.maxWallets} wallets watched: ${topic} gets no live balance`);
+    const wallet = new PublicKey(topic.slice("wallet:".length));
+    const id = this.l1.onAccountChange(
+      wallet,
+      (acc) => {
+        this.reads.forgetBalance(wallet);
+        this.publish(topic, { type: "snapshot", data: { lamports: acc.lamports } });
+      },
+      { commitment: "confirmed" },
+    );
+    this.wallets.set(topic, id);
+  }
+
+  // ---- chat and pictures (the social routes call these) ----
+
+  chat(row) {
+    this.publish(`chat:${row.channel}`, { type: "message", data: row });
+  }
+
+  profile(wallet, pfp) {
+    this.publish("profiles", { type: "upsert", data: { wallet, pfp } });
+  }
+
+  /** What the feed is watching and what it heard, for /api/health. */
+  status() {
+    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, sol: this.sol };
+  }
+
+  // ---- the hub's hooks ----
+
+  first(topic) {
+    if (topic.startsWith("wallet:")) this.watchWallet(topic);
+  }
+
+  last(topic) {
+    const id = this.wallets.get(topic);
+    if (id === undefined) return;
+    this.wallets.delete(topic);
+    this.l1.removeAccountChangeListener(id).catch(() => {});
+  }
+
+  /** A socket joined `topic`: its snapshot, to it alone. A failed read is tried again a
+   *  few times while someone is still on the topic. */
+  async snapshot(topic, send, tries = 3) {
+    try {
+      const [kind, arg] = topic.split(":");
+      if (topic === "presales") return send({ type: "snapshot", data: await this.reads.listPresales() });
+      if (topic === "launched") return send({ type: "snapshot", data: await this.reads.listLaunched() });
+      if (topic === "profiles") return send({ type: "snapshot", data: allProfiles(this.db) });
+      if (topic === "sol") return this.sol && send({ type: "snapshot", data: this.sol });
+      if (kind === "chat") return send({ type: "snapshot", data: chatRows(this.db, arg) });
+      if (kind === "wallet") return send({ type: "snapshot", data: { lamports: await this.reads.balance(new PublicKey(arg)) } });
+      if (kind === "presale") {
+        try {
+          return send({ type: "snapshot", data: await this.reads.presale(new PublicKey(arg)) });
+        } catch (e) {
+          if (e.status === 404) return send({ type: "missing" });
+          throw e;
+        }
+      }
+    } catch (e) {
+      this.log(`live ${topic}: ${e.message}`);
+      send({ type: "error", error: "couldn't read this right now" });
+      if (tries > 1) setTimeout(() => this.has(topic) && this.snapshot(topic, send, tries - 1), this.retryMs).unref?.();
+    }
+  }
+
+  // ---- pacing ----
+
+  /** Runs `fn` now, and once more `ms` after it if it was asked for again meanwhile. */
+  pace(key, ms, fn) {
+    const had = this.paced.get(key);
+    if (had) {
+      had.again = true;
+      return;
+    }
+    const slot = { again: false, timer: null };
+    this.paced.set(key, slot);
+    const run = async () => {
+      slot.again = false;
+      try {
+        await fn();
+      } catch (e) {
+        this.log(`live ${key}: ${e.message}`);
+      }
+      slot.timer = setTimeout(() => (slot.again ? run() : this.paced.delete(key)), ms);
+      slot.timer.unref?.();
+    };
+    run();
+  }
+}
+

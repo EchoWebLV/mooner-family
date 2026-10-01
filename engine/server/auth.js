@@ -2,6 +2,7 @@
 // (signMessage), and the server checks the ed25519 signature against the wallet address.
 
 import crypto from "node:crypto";
+import { mintMessageText } from "../src/client.js";
 
 const SPKI_ED25519 = Buffer.from("302a300506032b6570032100", "hex");
 export const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
@@ -21,13 +22,5 @@ export function signMessage(keypair, message) {
 /** The exact text a creator signs to ask for a token. The image and the rest of the
  *  details are covered by their hashes. */
 export function mintMessage({ wallet, name, symbol, image, details, time }) {
-  return [
-    "Mooner: create a token",
-    `wallet: ${wallet.toBase58()}`,
-    `name: ${name}`,
-    `symbol: ${symbol}`,
-    `image: ${sha256(image)}`,
-    `details: ${sha256(JSON.stringify(details))}`,
-    `time: ${time}`,
-  ].join("\n");
+  return mintMessageText({ wallet, name, symbol, imageHash: sha256(image), detailsHash: sha256(JSON.stringify(details)), time });
 }

@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Mooner presale engine: builders, decoders, the keeper bot, the gate server and the devnet canary",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "local": "node scripts/canary.js --cluster local",
@@ -12,6 +14,9 @@
     "server:check": "node --disable-warning=ExperimentalWarning server/main.js --check"
   },
   "dependencies": {
-    "@solana/web3.js": "1.99.0"
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
+    "@solana/web3.js": "1.99.0",
+    "ws": "8.21.3"
   }
 }

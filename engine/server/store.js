@@ -110,6 +110,19 @@ export class Store {
     return this.db.prepare("SELECT sig, released, cost, tokens, units, at FROM launches WHERE presale = ?").get(presale.toBase58()) ?? null;
   }
 
+  /** Every launch, newest first, with its token. */
+  launches(max = 200) {
+    return this.db
+      .prepare("SELECT l.presale AS l_presale, l.sig, l.released, l.cost, l.tokens, l.units, l.at, m.* FROM launches l JOIN mints m ON m.mint = l.mint ORDER BY l.at DESC LIMIT ?")
+      .all(max)
+      .map((r) => ({
+        presale: r.l_presale,
+        mint: r.mint,
+        token: publicToken(r),
+        launch: { sig: r.sig, released: r.released, cost: r.cost, tokens: r.tokens, units: r.units, at: r.at },
+      }));
+  }
+
   /** The token opened as `presale`, for a presale that has closed since. */
   tokenOfPresale(presale) {
     return publicToken(this.db.prepare("SELECT * FROM mints WHERE presale = ?").get(presale.toBase58()));

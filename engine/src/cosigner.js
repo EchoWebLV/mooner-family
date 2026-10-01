@@ -1,14 +1,17 @@
 // The gate co-signer (spec "Entry gate"). The server signs only entry txs of one exact
 // shape, so its key can't be used for anything else:
-//   open:  [compute budget]* open_presale + delegate(presale) + delegate(creator seat)
-//   join:  [compute budget]* join + delegate(seat)
+//   open:  [compute budget | Lighthouse]* open_presale + delegate(presale) + delegate(creator seat)
+//   join:  [compute budget | Lighthouse]* join + delegate(seat)
+// Lighthouse is what Phantom and Solflare add to a tx they sign. Its instructions can use
+// only the authority of the keys they're given, and the gate and mint keys can't be in
+// them (both are checked across every instruction), so they act for the user alone.
 // Opening and delegating in one tx means nobody can crank a commit-0 seat home (and take
 // its fee) before it reaches the ER. The server also holds each presale's mint key and
 // signs with it for opens, so the CA is known before the presale exists. A mint key signs
 // only for the wallet it was issued to, and only in the mint slot of open_presale.
 
 import { VersionedTransaction } from "@solana/web3.js";
-import { COMPUTE_BUDGET, IX } from "./consts.js";
+import { COMPUTE_BUDGET, IX, LIGHTHOUSE } from "./consts.js";
 import { presalePda, seatPda } from "./pdas.js";
 
 export class Refused extends Error {}
@@ -19,9 +22,11 @@ const refuse = (why) => {
 
 /** Checks an unsigned-by-us entry tx. `openers`: the wallets that may open a presale
  *  (null: anyone); joins are open to every wallet. `validators`: the ER validators the
- *  bot has endpoints for (`bot.validators`); a presale on any other would stall. Returns
- *  { kind: "open"|"join", user, presale, mint, validator }. Throws Refused. */
-export function checkEntryTx(tx, { pid, gate, openers = null, validators }) {
+ *  bot has endpoints for (`bot.validators`); a presale on any other would stall. `N`
+ *  (consts.js numbers): when given, an open's deposit can be at most TARGET - MIN_SEAT,
+ *  so at least one other seat always fits (the program lets the creator commit up to its
+ *  deposit). Returns { kind: "open"|"join", user, presale, mint, validator }. Throws Refused. */
+export function checkEntryTx(tx, { pid, gate, openers = null, validators, N = null }) {
   if (!validators?.length) throw new Error("checkEntryTx needs the bot's ER validators");
   const msg = tx.message;
   if (msg.addressTableLookups?.length) refuse("lookup tables are not allowed in entry txs");
@@ -35,7 +40,7 @@ export function checkEntryTx(tx, { pid, gate, openers = null, validators }) {
   const ours = [];
   for (const ci of msg.compiledInstructions) {
     const prog = keys[ci.programIdIndex];
-    if (prog.equals(COMPUTE_BUDGET)) continue;
+    if (prog.equals(COMPUTE_BUDGET) || prog.equals(LIGHTHOUSE)) continue;
     if (!prog.equals(pid)) refuse(`program ${prog.toBase58()} is not allowed`);
     const data = Buffer.from(ci.data);
     const accs = ci.accountKeyIndexes.map((i) => keys[i]);
@@ -68,6 +73,10 @@ export function checkEntryTx(tx, { pid, gate, openers = null, validators }) {
   let presale, mint, validator;
   if (entry.tag === IX.OPEN_PRESALE) {
     if (entry.data.length !== 1 + 80) refuse("bad open data");
+    // data: tag, fee_dest 32, session_key 32, deposit u64, commit u64
+    if (N && entry.data.readBigUInt64LE(65) > N.TARGET - N.MIN_SEAT) {
+      refuse(`the creator can put in at most ${Number(N.TARGET - N.MIN_SEAT) / 1e9} SOL, so others can join`);
+    }
     mint = entry.accs[3];
     presale = presalePda(pid, mint);
     const seat = seatPda(pid, presale, user);
@@ -104,9 +113,9 @@ export function checkEntryTx(tx, { pid, gate, openers = null, validators }) {
  * user)` must return the server's mint Keypair for that CA, and only if it was issued to
  * `user`. Returns { tx (base64), signed (the VersionedTransaction), ...checkEntryTx }.
  */
-export function cosign(b64, { pid, gateKey, openers, validators, mintSigner }) {
+export function cosign(b64, { pid, gateKey, openers, validators, mintSigner, N = null }) {
   const tx = VersionedTransaction.deserialize(Buffer.from(b64, "base64"));
-  const info = checkEntryTx(tx, { pid, gate: gateKey.publicKey, openers, validators });
+  const info = checkEntryTx(tx, { pid, gate: gateKey.publicKey, openers, validators, N });
   const signers = [gateKey];
   if (info.kind === "open") {
     const mk = mintSigner?.(info.mint, info.user);

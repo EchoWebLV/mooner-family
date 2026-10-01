@@ -8,11 +8,12 @@
 //   home, not OPEN, seats still in the ER  -> commit_seats (late joiners)
 //   home FULL past full_ts + GRACE         -> fail
 //   home FULL                              -> settle_seat every seat, then the launch tx
-//   home SETTLED                           -> claim every seat, then close
+//   home SETTLED                           -> once the pool's snipe tax is over, claim
+//                                             every seat, then close
 //   home EXPIRED / FAILED                  -> settle_seat (refund) every seat, then close
 // It closes a presale only once no seat of it is left, home or in the ER.
 
-import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SYSVAR_CLOCK_PUBKEY, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import {
   DELEGATION_PROGRAM, ER_VALIDATORS, IX_SYSVAR, LAUNCH_COST_CAP, LAUNCH_TX_FEE, SYSTEM, TOKEN, TOKEN22, TX_FEE, WSOL, numbers,
 } from "./consts.js";
@@ -24,6 +25,7 @@ import { send, simulate } from "./tx.js";
 
 const BATCH = { settle: 8, claim: 6, commit: 10 };
 const RECENT_MS = 30_000; // don't resend an ER commit while the last one is landing
+const TAX_MARGIN_S = 1; // claims wait this long past the snipe tax, by the chain's clock
 const chunks = (xs, n) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const tryDecode = (decode, data) => {
   try {
@@ -338,6 +340,11 @@ export class Bot {
         return { state, did };
       }
       case STATE.SETTLED: {
+        // DBC charges the snipe tax on sells too (its fee scheduler ignores the direction),
+        // so presale tokens are delivered only after it: nobody from the presale can sell
+        // into it. The web app has no claim of its own; claim is permissionless on chain.
+        const left = await this.snipeTaxLeft(p.mint);
+        if (left > 0) return { state, did, wait: left };
         const seats = await this.homeSeats(presale);
         const claimable = seats.filter((s) => s.settled && s.commit > 0n);
         const empty = seats.filter((s) => s.commit === 0n);
@@ -362,6 +369,18 @@ export class Bot {
       default:
         return { state, did };
     }
+  }
+
+  /** Seconds until the claims may go: the pool's snipe tax plus TAX_MARGIN_S, by the
+   *  chain's clock (the one the pool's fee reads). 0 when this config has no pool for
+   *  `mint`, i.e. it launched on another DBC config. */
+  async snipeTaxLeft(mint) {
+    const { pool } = poolAddresses(this.dbcConfig, mint);
+    const [pa, clock] = await this.l1.getMultipleAccountsInfo([pool, SYSVAR_CLOCK_PUBKEY]);
+    const s = pa && D.decodePoolState(pa.data);
+    if (!s || !clock) return 0;
+    const chainNow = clock.data.readBigInt64LE(32); // Clock.unix_timestamp
+    return Math.max(0, Number(s.activationPoint - chainNow) + D.CURVE.SNIPE_S + TAX_MARGIN_S);
   }
 
   /** Brings home the seats of `presale` still in the ER. Without an endpoint for its

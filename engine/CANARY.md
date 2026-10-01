@@ -252,8 +252,10 @@ This took 20 s. Each joiner lost 312,500 lamports: the join tx, MagicBlock's fee
 - **Unfunded payers for the other ER instructions.** `leave`, `commit_seats`,
   `commit_presale` and `expire` were sent by wallets that hold SOL (they were not charged).
 - **Priority fees on the launch.** Devnet ran with none.
-- **A full-size presale:** 10 SOL with enough seats to fill the batches of 8 settles, 6 claims
-  and 10 commits.
+- **A full-size presale:** enough seats to fill the batches of 8 settles, 6 claims and 10
+  commits (bot.js `BATCH`). Mainnet is 0.5 SOL for testing since 2026-09-30 (was 10 SOL): at
+  0.1 SOL seats that is at most 5 seats, so no mainnet presale fills a batch until the target
+  goes back up.
 
 ## Local (solana-test-validator, no ER): 13/13
 

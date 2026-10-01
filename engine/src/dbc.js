@@ -16,10 +16,13 @@ export const disc = (name) => createHash("sha256").update(`global:${name}`).dige
 
 // ---- Mooner's curve (launch.py "Mooner's test curve") ----
 // One constant-product segment: start FDV 28 SOL, graduates at 80 SOL, 1B supply, 6
-// decimals. Fee: linear anti-sniper schedule from ~99% to the 1% floor over 60 s; the
-// first swap in the pool-creating tx pays the floor. The sqrt prices are Q64.64 of
-// sqrt(lamports per raw token), computed once in launch.py (curve_params) with floats;
-// test/dbc.test.js checks every number against Mooner's mainnet config account.
+// decimals. Fee: a snipe tax shaped like pons v2's (99%, gone within seconds), on DBC's
+// exponential scheduler: 98.95% in the launch second, then x0.2162 each second (21.39% at
+// 1 s, 4.63% at 2 s) and exactly the 1% floor from 3 s on. DBC charges it on sells too;
+// the keeper delivers presale tokens only after it (bot.js). The first swap in the
+// pool-creating tx pays the floor. The sqrt prices are Q64.64 of sqrt(lamports per raw
+// token), computed once in launch.py (curve_params) with floats; test/dbc.test.js checks
+// every number against Mooner's mainnet config account.
 export const CURVE = {
   DECIMALS: 6,
   GRAD_QUOTE: 80_000_000_000n,
@@ -27,15 +30,31 @@ export const CURVE = {
   LIQUIDITY: 105571432261223416012914185700781n,
   MAX_SQRT_PRICE: 79226673521066979257578248091n,
   FEE_FLOOR: 10_000_000n, // 1% of FEE_DENOMINATOR 1e9
-  SNIPE_WINDOW_S: 60,
-  FEE_STEP: 16_333_333n, // (99% cap - floor) / window
-  FEE_CLIFF: 989_999_980n, // floor + step * window
+  SNIPE_S: 3, // seconds after the pool's activation until the floor
+  FEE_REDUCTION_BPS: 7838n, // each second keeps 1 - 7838/10000 of the fee
+  FEE_CLIFF: 989_539_134n, // the largest cliff <= 99% whose third second is exactly the floor
 };
+
+const ONE_Q64 = 1n << 64n;
+
+/** The fee numerator (of 1e9) DBC charges `seconds` after the pool's activation: the
+ *  exponential scheduler of fee_scheduler.rs / fee_math.rs, integer for integer. */
+export function feeNumeratorAt(seconds) {
+  const period = Math.min(Math.max(0, Math.floor(seconds)), CURVE.SNIPE_S);
+  let sq = ONE_Q64 - (CURVE.FEE_REDUCTION_BPS << 64n) / 10_000n;
+  let q = ONE_Q64;
+  for (let bit = 1; bit <= period; bit <<= 1) {
+    if (period & bit) q = (q * sq) >> 64n;
+    sq = (sq * sq) >> 64n;
+  }
+  return (q * CURVE.FEE_CLIFF) >> 64n;
+}
 
 export function moonerConfigParams() {
   const zeroVest = { vestingPercentage: 0, bpsPerPeriod: 0, numberOfPeriods: 0, cliffDurationFromMigrationTime: 0, frequency: 0 };
   return {
-    baseFee: { cliffFeeNumerator: CURVE.FEE_CLIFF, firstFactor: CURVE.SNIPE_WINDOW_S, secondFactor: 1n, thirdFactor: CURVE.FEE_STEP, baseFeeMode: 0 },
+    // FeeSchedulerExponential: number_of_period, period_frequency (s), reduction_factor (bps)
+    baseFee: { cliffFeeNumerator: CURVE.FEE_CLIFF, firstFactor: CURVE.SNIPE_S, secondFactor: 1n, thirdFactor: CURVE.FEE_REDUCTION_BPS, baseFeeMode: 1 },
     collectFeeMode: 0, // fees in SOL
     migrationOption: 1, // DAMM v2
     activationType: 1, // timestamp
@@ -175,3 +194,20 @@ export const syncNative = (account) =>
 
 export const closeAccount = ({ account, dest, owner }) =>
   new TransactionInstruction({ programId: TOKEN, keys: [w(account), w(dest), rs(owner)], data: Buffer.from([9]) });
+
+// ---- reading a pool (VirtualPool, 424 bytes; layout checked against a mainnet pool) ----
+
+export const POOL_DISC = Buffer.from("d5e005d16245775c", "hex");
+
+/** The parts of a DBC VirtualPool the site shows, or null if `data` isn't one. */
+export function decodePoolState(data) {
+  if (!data || data.length < 424 || !Buffer.from(data.subarray(0, 8)).equals(POOL_DISC)) return null;
+  const b = Buffer.from(data);
+  return {
+    baseReserve: b.readBigUInt64LE(232),
+    quoteReserve: b.readBigUInt64LE(240),
+    sqrtPrice: b.readBigUInt64LE(280) | (b.readBigUInt64LE(288) << 64n),
+    activationPoint: b.readBigUInt64LE(296), // unix seconds of the pool-creating block
+    migrated: b[305] === 1,
+  };
+}

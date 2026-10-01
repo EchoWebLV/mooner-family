@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import { verifySignature } from "./auth.js";
 import { HttpError, Limiter, limit } from "./http.js";
 import { parseKey } from "./api.js";
+import { loginMessage } from "../src/client.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chat (
@@ -39,8 +40,7 @@ const SESSION_MS = 7 * 24 * 3_600_000;
 const PFP_SLOTS = ["skin", "eyes", "head", "face", "outfit", "neck", "aura", "bg", "mouth"];
 const CHANNEL = /^(global|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 
-/** The exact text a wallet signs to sign in. */
-export const loginMessage = (wallet, time) => ["Mooner: sign in", `wallet: ${wallet}`, `time: ${time}`].join("\n");
+export { loginMessage };
 
 export const SOCIAL_LIMITS = {
   loginPerIp: [20, 600_000],

@@ -26,5 +26,5 @@ exec solana-test-validator --reset --quiet --ledger "$DIR/ledger" \
   --mint "$PAYER" \
   --upgradeable-program "$PID" "$PRESALE/target/canary/mooner_presale.so" "$PAYER" \
   --bpf-program dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN "$FIX/dbc.so" \
-  --account HnKg7Vb2aHPhX8LVy4gMXZ6dACGPHUPFkQeX82FB8LmF "$FIX/dbc-config.json" \
+  --account j7j5CfUSa9DGZCzKKxKBbCYvySiM14Hbr8V6uKbA6Be "$FIX/dbc-config.json" \
   --account So11111111111111111111111111111111111111112 "$FIX/wsol-mint.json"

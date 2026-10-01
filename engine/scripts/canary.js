@@ -8,7 +8,8 @@
 //   --server          devnet: run the real server (server/main.js) and go through it. Mint
 //                     keys come from POST /api/mint, opens and joins from POST /api/cosign,
 //                     and the server's keeper does the bot's half. Only the creator and E
-//                     are on its openers list; every joiner is not.
+//                     are on its openers list; every joiner is not. A socket on /api/ws
+//                     checks that the server pushes what the chain and the ER tell it.
 //
 // Happy path (canary TARGET 0.2 SOL):
 //   creator commits 0.05 at open; A commits 0.05 through an unfunded session key;
@@ -29,6 +30,7 @@ import { execFileSync, spawn } from "node:child_process";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import WebSocket from "ws";
 import {
   AddressLookupTableProgram, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, VersionedTransaction,
 } from "@solana/web3.js";
@@ -301,9 +303,34 @@ async function startServer() {
   step(`server up at ${srv.base} (log ${path.relative(ENGINE, logFile)})`);
   const info = await api("GET", "/api/info");
   check("the server's gate and bot are the Config's", info.json.gate === ctx.gateKey.toBase58() && info.json.bot === ctx.bot.publicKey.toBase58());
+  await openLive();
+  liveSub("presales", "launched");
+  check("the live socket answers with the presale list", Boolean(await pushed((m) => m.topic === "presales" && m.type === "snapshot", 0, 30_000)));
+}
+
+// the live socket: every push, with when it came
+const live = { ws: null, got: [] };
+
+async function openLive() {
+  live.ws = new WebSocket(`${srv.base.replace("http", "ws")}/api/ws`);
+  live.ws.on("message", (raw) => live.got.push({ at: Date.now(), ...JSON.parse(raw.toString()) }));
+  await new Promise((resolve, reject) => (live.ws.once("open", resolve), live.ws.once("error", reject)));
+}
+
+const liveSub = (...topics) => live.ws.send(JSON.stringify({ op: "sub", topics }));
+
+/** The first push at or after `since` that `pred` holds for; null after `ms`. */
+async function pushed(pred, since, ms = 20_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const m = live.got.find((x) => x.at >= since && pred(x));
+    if (m || Date.now() - t0 > ms) return m ?? null;
+    await sleep(200);
+  }
 }
 
 async function stopServer() {
+  live.ws?.close();
   const c = srv.child;
   if (!c || c.exitCode !== null) return;
   const exited = new Promise((r) => c.once("exit", r));
@@ -351,7 +378,17 @@ async function setup() {
   }
 
   if (useEr) {
-    const kp = keyAt("dbc-config");
+    let kp = keyAt("dbc-config");
+    // a devnet config made with an older fee (bytes 104-130: the base fee) is set aside,
+    // so the canary runs Mooner's current snipe tax; set_config and the ALT follow below
+    const fee = (d) => d.subarray(104, 131);
+    const fixture = Buffer.from(JSON.parse(fs.readFileSync(`${REPO}/programs/presale/litesvm/fixtures/dbc-config.json`, "utf8")).account.data[0], "base64");
+    const had = await l1.getAccountInfo(kp.publicKey);
+    if (had && !fee(had.data).equals(fee(fixture))) {
+      fs.renameSync(`${dir}/dbc-config-keypair.json`, `${dir}/dbc-config-${kp.publicKey.toBase58().slice(0, 8)}-old-keypair.json`);
+      log(`  the devnet DBC config ${kp.publicKey.toBase58()} has an older fee: making a new one`);
+      kp = keyAt("dbc-config");
+    }
     if (!(await l1.getAccountInfo(kp.publicKey))) {
       const sig = await send(l1, { ixs: [D.createConfig({ config: kp.publicKey, partner: payer.publicKey, payer: payer.publicKey })], payer, signers: [kp], what: "create DBC config" });
       step("create the DBC config (Mooner params)", sig, { config: kp.publicKey.toBase58() });
@@ -474,8 +511,11 @@ async function happy() {
   for (const [n, k] of HAPPY.map((n) => [n, keyAt(n)])) before[n] = String(await lamports(k.publicKey));
   log(`  mint (CA) ${mint.publicKey.toBase58()}`);
 
+  const tOpen = Date.now();
   const presale = await open(creator, mint, feeDest, SOL(0.05), SOL(0.05));
   saveRun(runDir, { path: "happy", mint: mint.publicKey.toBase58(), presale: presale.toBase58(), before });
+  const topic = `presale:${presale.toBase58()}`;
+  if (useServer) liveSub(topic, `wallet:${B.publicKey.toBase58()}`);
   const sA = Keypair.generate(); // unfunded session key
   await join(A, presale, sA.publicKey, SOL(0.05), "A");
   await join(B, presale, B.publicKey, SOL(0.03), "B");
@@ -483,7 +523,16 @@ async function happy() {
   await join(Dw, presale, Dw.publicKey, SOL(0.1), "D");
 
   const commit = (signer, user, amount) => I.setCommit(pid, { signer: signer.publicKey, seat: seatOf(presale, user), presale, amount });
+  if (useServer) await sleep(3_000); // the joins' pushes are done: what comes next is A's commit
+  const tA = Date.now();
   await ledger(sA, [commit(sA, A, SOL(0.05))], "A commits 0.05 with its unfunded session key", A);
+  if (useServer) {
+    // set_commit only touches the ER: a push for it can only come from the ER's subscription
+    const m = await pushed((x) => x.topic === topic && x.type === "snapshot" && BigInt(x.data.raised ?? 0) >= SOL(0.1), tA);
+    check("the server pushed A's commit, heard from the ER", Boolean(m), m ? `${m.at - tA} ms after A sent it` : "no push in 20 s");
+    const heard = (await api("GET", "/api/health")).json.live?.heard ?? {};
+    check("the server's ER subscription is hearing our accounts", Object.entries(heard).some(([k, n]) => k.startsWith("er ") && n > 0), JSON.stringify(heard));
+  }
   await ledger(B, [commit(B, B, SOL(0.03))], "B commits 0.03");
   await ledger(B, [commit(B, B, 0n)], "B withdraws to 0");
   const bSeat = seatOf(presale, B);
@@ -492,16 +541,26 @@ async function happy() {
     await waitHome(bSeat, "B's seat");
   }
   const bBefore = await lamports(B.publicKey);
+  const tB = Date.now();
   const bSig = await send(l1, { ixs: [I.settleSeat(pid, { cranker: B.publicKey, seat: bSeat, user: B.publicKey, presale })], payer: B, pid, what: "B settles its own seat" });
   step("B settles its own seat (refund, no fee)", bSig);
   const bAfter = await lamports(B.publicKey);
   check("B's seat is closed", !(await l1.getAccountInfo(bSeat)));
   check("B got its whole deposit back, less only the tx fee", bAfter - bBefore > SOL(0.03), `+${fmt(bAfter - bBefore)} SOL`);
+  if (useServer) {
+    const m = await pushed((x) => x.topic === `wallet:${B.publicKey.toBase58()}` && x.type === "snapshot" && BigInt(x.data.lamports) === bAfter, tB);
+    check("the server pushed B's new balance", Boolean(m), m ? `${m.at - tB} ms after B sent the refund` : "no push in 20 s");
+  }
 
   const sC = Keypair.generate();
   await ledger(C, [I.rotateKey(pid, { user: C.publicKey, seat: seatOf(presale, C), key: sC.publicKey })], "C rotates its session key");
   await ledger(sC, [commit(sC, C, SOL(0.04))], "C commits 0.04 with the new key", C);
+  const tD = Date.now();
   await ledger(Dw, [commit(Dw, Dw, SOL(0.1))], "D asks for 0.1");
+  if (useServer) {
+    const m = await pushed((x) => x.topic === topic && x.type === "snapshot" && x.data.state === "FULL", tD);
+    check("the server pushed the presale FULL", Boolean(m), m ? `${m.at - tD} ms after D sent it` : "no push in 20 s");
+  }
 
   const p = await readPresale(presale);
   check("the presale locked FULL at exactly the target", p.state === STATE.FULL && p.raised === N.TARGET, `${STATE_NAME[p.state]}, raised ${fmt(p.raised)}`);
@@ -512,6 +571,15 @@ async function happy() {
     check("the server shows it FULL with the four seats", v.state === "FULL" && BigInt(v.raised) === N.TARGET && v.seats.length === 4, `${v.state}, seats ${commits}`);
   }
   await finishHappy(mint, presale, before);
+  if (useServer) {
+    const k = presale.toBase58();
+    const up = await pushed((x) => x.topic === "launched" && x.type === "upsert" && x.data.mint === mint.publicKey.toBase58() && x.data.pool, tOpen, 1_000);
+    check("the server pushed the launched token with its pool", Boolean(up), up?.data.pool.address);
+    const gone = await pushed((x) => (x.topic === "presales" && x.type === "remove" && x.data.presale === k) || (x.topic === topic && x.data?.where === "closed"), tOpen, 30_000);
+    check("the server pushed the presale closed", Boolean(gone), gone && `${gone.topic} ${gone.type}`);
+    const states = [...new Set(live.got.filter((x) => x.topic === topic && x.type === "snapshot").map((x) => x.data.state))];
+    log(`  … states pushed on ${topic.slice(0, 16)}…: ${states.join(" → ")}`);
+  }
 }
 
 /** The bot's half of the happy path: home, settle, launch, claim, close; then the checks. */

@@ -1,12 +1,12 @@
 // Entry txs: their shape, their size, and what the gate co-signer accepts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AddressLookupTableAccount, Keypair, PublicKey, SystemProgram, VersionedTransaction } from "@solana/web3.js";
+import { AddressLookupTableAccount, Keypair, PublicKey, SystemProgram, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import * as I from "../src/ix.js";
 import { cosign, Refused } from "../src/cosigner.js";
 import { presalePda, seatPda } from "../src/pdas.js";
 import { build } from "../src/tx.js";
-import { MOONER_DBC_CONFIG } from "../src/consts.js";
+import { LIGHTHOUSE, MOONER_DBC_CONFIG, numbers } from "../src/consts.js";
 import { launchAltKeys, launchIxs } from "../src/bot.js";
 
 const pid = Keypair.generate().publicKey;
@@ -26,12 +26,12 @@ async function unsigned(payer, ixs, extra = []) {
   return tx;
 }
 
-function openIxs(creator, mint, { order = "ok", drop = null } = {}) {
+function openIxs(creator, mint, { order = "ok", drop = null, deposit = 400_000_000n, commit = 100_000_000n } = {}) {
   const presale = presalePda(pid, mint);
   const seat = seatPda(pid, presale, creator);
   const open = I.openPresale(pid, {
     creator, gate, mint, feeDest: Keypair.generate().publicKey, sessionKey: Keypair.generate().publicKey,
-    deposit: 1_000_000_000n, commit: 500_000_000n,
+    deposit, commit,
   });
   const dp = I.delegate(pid, { payer: creator, target: presale, validator, kind: 0 });
   const ds = I.delegate(pid, { payer: creator, target: seat, validator, kind: 1, presale });
@@ -41,7 +41,7 @@ function openIxs(creator, mint, { order = "ok", drop = null } = {}) {
 
 function joinIxs(user, presale) {
   return [
-    I.join(pid, { user, gate, presale, sessionKey: Keypair.generate().publicKey, deposit: 1_000_000_000n }),
+    I.join(pid, { user, gate, presale, sessionKey: Keypair.generate().publicKey, deposit: 400_000_000n }),
     I.delegate(pid, { payer: user, target: seatPda(pid, presale, user), validator, kind: 1, presale }),
   ];
 }
@@ -66,6 +66,45 @@ test("join + delegate seat fits one tx and gets co-signed", async () => {
   const out = cosign(b64(tx), { pid, gateKey, openers: new Set(), validators: [validator] });
   assert.equal(out.kind, "join");
   assert.ok(out.presale.equals(presale));
+});
+
+test("wallet guards (Lighthouse, which Phantom and Solflare add) pass; the gate and mint keys can't be in them", async () => {
+  const guard = (...keys) =>
+    new TransactionInstruction({ programId: LIGHTHOUSE, keys: keys.map((pubkey) => ({ pubkey, isSigner: false, isWritable: false })), data: Buffer.from([4, 0, 0]) });
+  const user = Keypair.generate();
+  const presale = presalePda(pid, Keypair.generate().publicKey);
+  const join = await unsigned(user, [...joinIxs(user.publicKey, presale), guard(user.publicKey)]);
+  assert.equal(cosign(b64(join), { pid, gateKey, validators: [validator] }).kind, "join");
+
+  const creator = Keypair.generate();
+  const mint = Keypair.generate();
+  const mintSigner = (m, u) => (m.equals(mint.publicKey) && u.equals(creator.publicKey) ? mint : undefined);
+  const open = await unsigned(creator, [...openIxs(creator.publicKey, mint.publicKey), guard(creator.publicKey), guard(creator.publicKey)]);
+  assert.equal(cosign(b64(open), { pid, gateKey, validators: [validator], mintSigner }).kind, "open", "Solflare adds two");
+
+  for (const [what, key] of [["the gate key", gate], ["the mint key", mint.publicKey]]) {
+    const tx = await unsigned(creator, [...openIxs(creator.publicKey, mint.publicKey), guard(key)]);
+    assert.throws(() => cosign(b64(tx), { pid, gateKey, validators: [validator], mintSigner }), Refused, `${what} in a guard`);
+  }
+});
+
+test("the co-signer caps the creator's deposit so at least one other seat fits", async () => {
+  const creator = Keypair.generate();
+  const mint = Keypair.generate();
+  const mintSigner = (m, u) => (m.equals(mint.publicKey) && u.equals(creator.publicKey) ? mint : undefined);
+  const open = async (deposit, N) => {
+    // a small commit: the cap is on the deposit, which bounds every later set_commit
+    const tx = await unsigned(creator, openIxs(creator.publicKey, mint.publicKey, { deposit, commit: 10_000_000n }));
+    return cosign(b64(tx), { pid, gateKey, validators: [validator], mintSigner, N });
+  };
+  for (const N of [numbers(false), numbers(true)]) {
+    const cap = N.TARGET - N.MIN_SEAT;
+    assert.equal((await open(cap, N)).kind, "open", `a deposit of TARGET - MIN_SEAT (${cap}) is fine`);
+    await assert.rejects(open(cap + 1n, N), (e) => e instanceof Refused && /at most/.test(e.message), `a deposit of ${cap + 1n} is refused`);
+    await assert.rejects(open(N.TARGET, N), Refused, "a deposit of the whole target is refused");
+  }
+  // without the numbers (mobile's pre-check) there is no cap to apply
+  assert.equal((await open(numbers(false).TARGET, undefined)).kind, "open");
 });
 
 test("the co-signer refuses anything else", async () => {

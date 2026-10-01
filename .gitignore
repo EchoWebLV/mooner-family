@@ -18,3 +18,6 @@ engine/.canary/
 # mainnet keys and deployment record (engine/scripts/mainnet.js)
 engine/.mainnet/
 engine/.rehearsal/
+
+# waitlist signups (site/server.mjs): emails and X handles
+site/.data/

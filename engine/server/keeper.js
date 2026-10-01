@@ -4,13 +4,15 @@
 // deadline. The API hands the keeper each open it confirms (`watch`), so a new presale
 // doesn't wait for a scan. A presale whose tick fails waits longer each time (up to a
 // minute) while the others go on. Every launch the bot sends is recorded in the store.
+// `onScan(keys)` hears each scan's presales and `onLaunch(presale)` each recorded launch
+// (the live feed pushes them).
 
 import { PublicKey } from "@solana/web3.js";
 import { presalePda } from "../src/pdas.js";
 
 export class Keeper {
-  constructor({ bot, store, pid, pollMs = 3_000, busyMs = 1_500, scanMs = 10_000, slowMs = 10_000, maxBackoffMs = 60_000, log = console.log }) {
-    Object.assign(this, { bot, store, pid, pollMs, busyMs, scanMs, slowMs, maxBackoffMs, log });
+  constructor({ bot, store, pid, pollMs = 3_000, busyMs = 1_500, scanMs = 10_000, slowMs = 10_000, maxBackoffMs = 60_000, log = console.log, onScan = () => {}, onLaunch = () => {} }) {
+    Object.assign(this, { bot, store, pid, pollMs, busyMs, scanMs, slowMs, maxBackoffMs, log, onScan, onLaunch });
     this.info = new Map(); // presale -> { state, did, wait, fails, error, nextAt, at }
     this.known = new Map(); // presale -> PublicKey
     this.running = false;
@@ -21,6 +23,7 @@ export class Keeper {
     bot.launch = async (presale, p) => {
       const r = await launch(presale, p);
       store.addLaunch(presale, p.mint, r);
+      this.onLaunch(presale);
       return r;
     };
   }
@@ -75,6 +78,7 @@ export class Keeper {
         this.scanError = null;
         this.syncOpened(keys);
         for (const k of keys) this.known.set(k.toBase58(), k);
+        this.onScan(keys);
       } catch (e) {
         this.scanError = e.message;
         this.log(`scan failed: ${e.message}`);

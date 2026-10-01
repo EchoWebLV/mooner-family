@@ -1,13 +1,15 @@
 // The keeper's safety checks against a fake RPC: counting seats before a close, the
-// crank's per-ix fallback, when a send gives up, and what a full presale does first.
+// crank's per-ix fallback, when a send gives up, what a full presale does first, and the
+// claims waiting out the pool's snipe tax.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Keypair, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SYSVAR_CLOCK_PUBKEY, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { Bot } from "../src/bot.js";
-import { DELEGATION_PROGRAM } from "../src/consts.js";
+import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, SYSTEM } from "../src/consts.js";
+import { POOL_DISC } from "../src/dbc.js";
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE, decodePresale } from "../src/layout.js";
-import { presalePda, seatPda } from "../src/pdas.js";
-import { sendSigned } from "../src/tx.js";
+import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
+import { sendSigned, simulate } from "../src/tx.js";
 
 const pid = Keypair.generate().publicKey;
 const presale = presalePda(pid, Keypair.generate().publicKey);
@@ -139,6 +141,31 @@ test("sendSigned: after the blockhash runs out, one history look decides", async
   await assert.rejects(sendSigned(conn(null, 0), tx, { ...opts, stuckMs: 50 }), /outcome unknown/);
 });
 
+test("sendSigned and simulate: a code gets Mooner's name only when the logs say Mooner raised it", async () => {
+  const tx = { serialize: () => Buffer.alloc(1) };
+  const ixs = [{ programId: pid }];
+  const custom1 = { InstructionError: [0, { Custom: 1 }] };
+  const system = [`Program ${pid} invoke [1]`, `Program ${SYSTEM} invoke [2]`, `Program ${SYSTEM} failed: custom program error: 0x1`, `Program ${pid} failed: custom program error: 0x1`];
+  const ours = [`Program ${pid} invoke [1]`, `Program ${pid} failed: custom program error: 0x1`];
+  const failed = (logs) => ({
+    rpcEndpoint: "http://fake",
+    sendRawTransaction: async () => "sig",
+    getSignatureStatuses: async () => ({ value: [{ confirmationStatus: "confirmed", err: custom1 }] }),
+    getTransaction: async () => ({ meta: { logMessages: logs } }),
+  });
+  const err = (logs) => sendSigned(failed(logs), tx, { ixs, pid, what: "join" }).then(() => null, (e) => e);
+  const e1 = await err(system);
+  assert.equal(e1.message, `join (sig): ix 0 (${SYSTEM}): insufficient lamports (custom 1)`);
+  assert.deepEqual(e1.logs, system);
+  assert.equal((await err(ours)).message, "join (sig): ix 0: PastDeadline (1)");
+  // the simulation's logs, the same way
+  const sim = (logs) => ({ simulateTransaction: async () => ({ value: { err: custom1, logs } }) });
+  const payer = Keypair.generate().publicKey;
+  const ix = new TransactionInstruction({ programId: pid, keys: [], data: Buffer.alloc(1) });
+  assert.equal((await simulate(sim(system), { ixs: [ix], payer, pid })).errText, `ix 0 (${SYSTEM}): insufficient lamports (custom 1)`);
+  assert.equal((await simulate(sim(ours), { ixs: [ix], payer, pid })).errText, "ix 0: PastDeadline (1)");
+});
+
 // ---- a full presale: the launch comes before any listing ----
 
 const validator = new PublicKey("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57");
@@ -215,4 +242,48 @@ test("other states still bring late seats home first", async () => {
   const f = fullBot({ state: STATE.LAUNCHING, settled: 4n });
   await f.bot.atHome(presale, f.p());
   assert.deepEqual(f.calls, ["list ER seats"]);
+});
+
+// ---- a settled presale: the claims wait out the snipe tax ----
+
+test("snipe tax left: by the chain's clock, 3 s of tax plus a 1 s margin", async () => {
+  const c = fakeChain();
+  const mint = Keypair.generate().publicKey;
+  const A = 1_800_000_000n;
+  const clockAt = (t) => {
+    const d = Buffer.alloc(40);
+    d.writeBigInt64LE(t, 32); // Clock.unix_timestamp
+    c.put(SYSVAR_CLOCK_PUBKEY, SYSTEM, d);
+  };
+  const bot = new Bot({ pid, l1: c.conn, bot: Keypair.generate(), dbcConfig: MOONER_DBC_CONFIG, log: () => {} });
+  clockAt(A);
+  assert.equal(await bot.snipeTaxLeft(mint), 0, "no pool on this config: nothing to wait for");
+  const pool = Buffer.alloc(424);
+  POOL_DISC.copy(pool);
+  pool.writeBigUInt64LE(A, 296); // activation_point
+  c.put(poolAddresses(MOONER_DBC_CONFIG, mint).pool, DBC, pool);
+  const left = [];
+  for (const dt of [0n, 1n, 3n, 4n, 60n]) {
+    clockAt(A + dt);
+    left.push(await bot.snipeTaxLeft(mint));
+  }
+  assert.deepEqual(left, [4, 3, 1, 0, 0]);
+});
+
+test("settled, the snipe tax still on: no listing, no claim, wait", async () => {
+  const f = fullBot({ state: STATE.SETTLED, settled: 4n });
+  f.bot.snipeTaxLeft = async () => (f.calls.push("tax"), 2);
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list ER seats", "tax"]);
+  assert.equal(r.wait, 2);
+});
+
+test("settled, the snipe tax over: the claims go", async () => {
+  const f = fullBot({ state: STATE.SETTLED, settled: 4n });
+  f.bot.snipeTaxLeft = async () => (f.calls.push("tax"), 0);
+  f.bot.homeSeats = async () => (f.calls.push("list home seats"), [0, 1].map(() => ({ settled: true, commit: 1n, user: Keypair.generate().publicKey })));
+  f.bot.dbcConfig = MOONER_DBC_CONFIG;
+  const r = await f.bot.atHome(presale, f.p());
+  assert.deepEqual(f.calls, ["list ER seats", "tax", "list home seats", "claim x2"]);
+  assert.deepEqual(r.did, ["claim x2"]);
 });

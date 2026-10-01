@@ -7,17 +7,20 @@
 
 import fs from "node:fs";
 import { parseArgs } from "node:util";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { decodeConfig } from "../src/layout.js";
 import { configPda } from "../src/pdas.js";
 import { connect } from "../src/tx.js";
 import { Bot, launchAltKeys } from "../src/bot.js";
-import { loadConfig, loadEnv, loadKey, openersFrom } from "./config.js";
+import { loadConfig, loadEnv, loadKey, openersFrom, openersFromList } from "./config.js";
 import { Store } from "./store.js";
 import { NoPin, Pinata } from "./pinata.js";
 import { Keeper } from "./keeper.js";
-import { makeRoutes } from "./api.js";
+import { makeReads, makeRoutes } from "./api.js";
+import { makeSocialRoutes } from "./social.js";
 import { createServer } from "./http.js";
+import { Hub } from "./hub.js";
+import { Feed } from "./feed.js";
 
 const { values: args } = parseArgs({ options: { check: { type: "boolean", default: false } } });
 const stamp = () => new Date().toISOString().slice(11, 19);
@@ -79,8 +82,9 @@ async function prepare(cfg) {
     log("no PINATA_JWT: devnet tokens get a placeholder link");
   } else throw new Error("set PINATA_JWT in engine/.env (token images and metadata go to IPFS)");
 
-  const openers = openersFrom(cfg.openersFile);
-  log(`${openers().size} wallet(s) may open (${cfg.openersFile})${openers().size ? "" : ": nobody can open a presale yet"}`);
+  const openers = cfg.openerWallets === null ? openersFrom(cfg.openersFile) : openersFromList(cfg.openerWallets);
+  const who = openers() === null ? "any wallet" : `${openers().size} wallet(s)`;
+  log(`${who} may open (${cfg.openerWallets === null ? cfg.openersFile : "MOONER_OPENER_WALLETS"})${openers()?.size === 0 ? ": nobody can open a presale yet" : ""}`);
   const botLamports = await l1.getBalance(botKey.publicKey);
   log(`bot balance ${sol(botLamports)} SOL`);
 
@@ -117,12 +121,28 @@ if (args.check) {
   process.exit(0);
 }
 
-const keeper = new Keeper({ bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`) }).start();
+const reads = makeReads({ pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, store: ctx.store, dbcConfig: cfg.dbcConfig });
+const feed = new Feed({ reads, l1: ctx.l1, ers: ctx.bot.ers, pid: cfg.pid, dbcConfig: cfg.dbcConfig, store: ctx.store, db: ctx.store.db, log: (m) => log(`live ${m}`) });
+const keeper = new Keeper({
+  bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`),
+  onScan: (keys) => feed.scanned(keys), onLaunch: (presale) => feed.launched(presale),
+}).start();
 const routes = makeRoutes({
   pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, gateKey: ctx.gate, alt: ctx.alt, dbcConfig: cfg.dbcConfig, store: ctx.store,
-  pinner: ctx.pinner, openers: ctx.openers, cluster: cfg.cluster, canary: cfg.canary, keeper,
+  pinner: ctx.pinner, openers: ctx.openers, cluster: cfg.cluster, canary: cfg.canary, keeper, feed, reads,
+}).concat(makeSocialRoutes({
+  store: ctx.store, isPresale: (key) => !!ctx.store.tokenOfPresale(new PublicKey(key)),
+  onChat: (row) => feed.chat(row), onProfile: (wallet, pfp) => feed.profile(wallet, pfp),
+}));
+const web = fs.existsSync(`${cfg.web}/index.html`) ? cfg.web : null;
+log(web ? `web app from ${web}` : `no web app at ${cfg.web} (npm run build in web/): API only`);
+const server = createServer(routes, { cors: cfg.cors, trustProxy: cfg.trustProxy, log, web });
+const hub = new Hub(server, {
+  trustProxy: cfg.trustProxy, log,
+  onFirst: (t) => feed.first(t), onLast: (t) => feed.last(t), onSub: (t, send) => feed.snapshot(t, send),
 });
-const server = createServer(routes, { cors: cfg.cors, trustProxy: cfg.trustProxy, log });
+await feed.start(hub);
+log("live updates on /api/ws");
 server.listen(cfg.port, cfg.host, () => log(`listening on http://${cfg.host}:${server.address().port}`));
 
 let stopping = false;
@@ -130,8 +150,10 @@ async function shutdown(sig) {
   if (stopping) return;
   stopping = true;
   log(`${sig}: stopping`);
+  hub.close();
   server.close();
   await keeper.stop();
+  await feed.stop();
   ctx.store.close();
   process.exit(0);
 }

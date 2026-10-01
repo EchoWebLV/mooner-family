@@ -3,22 +3,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cutToRoom, failedRefund, feeShare, tokenShare, validSeat } from "../src/math.js";
 
-test("seat sizes: 0.1-1 SOL in 0.01 steps", () => {
+test("seat sizes: 0.1-0.5 SOL in 0.01 steps", () => {
   assert.ok(validSeat(100_000_000n));
-  assert.ok(validSeat(1_000_000_000n));
-  assert.ok(validSeat(550_000_000n));
+  assert.ok(validSeat(500_000_000n));
+  assert.ok(validSeat(270_000_000n));
   assert.ok(!validSeat(90_000_000n));
-  assert.ok(!validSeat(1_010_000_000n));
+  assert.ok(!validSeat(510_000_000n));
   assert.ok(!validSeat(105_000_000n));
+  assert.ok(!validSeat(0n));
   assert.ok(validSeat(10_000_000n, true), "canary min 0.01");
   assert.ok(validSeat(51_000_000n, true), "canary step 0.001");
 });
 
 test("the last commit is cut to the room left", () => {
-  assert.equal(cutToRoom(1_000_000_000n, 0n, 9_400_000_000n), 600_000_000n);
-  assert.equal(cutToRoom(500_000_000n, 0n, 9_000_000_000n), 500_000_000n);
-  assert.equal(cutToRoom(1_000_000_000n, 0n, 10_000_000_000n), null);
-  assert.equal(cutToRoom(0n, 300_000_000n, 10_000_000_000n), 0n, "lowering always fits");
+  assert.equal(cutToRoom(500_000_000n, 0n, 200_000_000n), 300_000_000n, "0.2 in by others: 0.5 is cut to the 0.3 left");
+  assert.equal(cutToRoom(200_000_000n, 300_000_000n, 400_000_000n), 200_000_000n, "lowering is never cut");
+  assert.equal(cutToRoom(300_000_000n, 0n, 200_000_000n), 300_000_000n, "fits");
+  assert.equal(cutToRoom(500_000_000n, 0n, 500_000_000n), null, "no room to raise");
+  assert.equal(cutToRoom(0n, 300_000_000n, 500_000_000n), 0n, "lowering always fits");
   assert.equal(cutToRoom(100_000_000n, 0n, 140_000_000n, true), 60_000_000n, "canary target 0.2");
 });
 
@@ -39,11 +41,11 @@ test("failed refunds never exceed what the presale holds", () => {
 });
 
 test("token shares sum to the total", () => {
-  const commits = [1_000_000_000n, 3_000_000_000n, 6_000_000_000n];
+  const commits = [100_000_000n, 150_000_000n, 250_000_000n]; // sum to the 0.5 SOL target
   const total = 123_456_789_012n;
   let claimed = 0n;
   commits.forEach((c, i) => {
-    claimed += tokenShare(total, claimed, c, 10_000_000_000n, i === commits.length - 1);
+    claimed += tokenShare(total, claimed, c, 500_000_000n, i === commits.length - 1);
   });
   assert.equal(claimed, total);
 });

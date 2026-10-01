@@ -8,17 +8,21 @@
 //   MOONER_DIR           keys, record, database, openers list (engine/.mainnet)
 //   MOONER_PROGRAM, MOONER_DBC_CONFIG, MOONER_ALT            (from <dir>/deployment.json)
 //   MOONER_GATE_KEY, MOONER_BOT_KEY                          (<dir>/gate-keypair.json, bot-)
+//                        a keypair file, or the file's JSON itself (a host's secret variable)
 //   MOONER_DB            SQLite file                          (<dir>/server.db)
 //   MOONER_OPENERS       wallets that may open, one per line  (<dir>/openers.txt)
+//   MOONER_OPENER_WALLETS the same wallets in a variable, comma or space separated (instead of the file);
+//                        * = any wallet may open
 //   MOONER_CANARY        1 = the canary build's numbers (devnet only)
 //   MOONER_HOST, MOONER_PORT                                  (127.0.0.1, 8787)
 //   MOONER_CORS          Access-Control-Allow-Origin          (*)
+//   MOONER_WEB           the built web app, served at /         (<repo>/web/dist)
 //   MOONER_TRUST_PROXY   1 = take the client IP from X-Forwarded-For (behind a proxy)
 //   MOONER_PRIORITY      launch priority price, micro-lamports (100000, capped by the bot)
 //   MOONER_POLL_MS       keeper pause when there's nothing to do (3000)
 //   MOONER_SCAN_MS       time between the keeper's full scans   (10000)
 //   PINATA_JWT           Pinata API key; required on mainnet
-//   MOONER_IPFS_GATEWAY  prefix of the token links            (https://ipfs.io/ipfs/)
+//   MOONER_IPFS_GATEWAY  prefix of the token links            (IPFS_GATEWAY)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,6 +30,11 @@ import { fileURLToPath } from "node:url";
 import { Keypair, PublicKey } from "@solana/web3.js";
 
 export const ENGINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// The Pinata account's dedicated gateway: it serves only what that account pinned, so it
+// goes with PINATA_JWT. ipfs.io stopped serving HTTP on 2026-09-21 (429/403 for every CID),
+// and a token's metadata link can't be changed after launch.
+export const IPFS_GATEWAY = "https://blush-lazy-haddock-40.mypinata.cloud/ipfs/";
 
 const RPC = { mainnet: "https://api.mainnet-beta.solana.com", devnet: "https://api.devnet.solana.com" };
 // the three validators MagicBlock runs (ER_VALIDATORS); the same keys on both clusters
@@ -42,7 +51,8 @@ const ER = {
   },
 };
 
-export const loadKey = (f) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(f, "utf8"))));
+/** A keypair from its file, or from the file's JSON (a secret-key array) given directly. */
+export const loadKey = (f) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(f.trim().startsWith("[") ? f : fs.readFileSync(f, "utf8"))));
 
 export function loadEnv(file = `${ENGINE}/.env`) {
   try {
@@ -78,15 +88,17 @@ export function loadConfig(env = process.env) {
     botKeyFile: env.MOONER_BOT_KEY ?? `${dir}/bot-keypair.json`,
     dbFile: env.MOONER_DB ?? `${dir}/server.db`,
     openersFile: env.MOONER_OPENERS ?? `${dir}/openers.txt`,
+    openerWallets: env.MOONER_OPENER_WALLETS ?? null,
     host: env.MOONER_HOST ?? "127.0.0.1",
     port: Number(env.MOONER_PORT ?? 8787),
     cors: env.MOONER_CORS ?? "*",
+    web: path.resolve(env.MOONER_WEB ?? `${ENGINE}/../web/dist`),
     trustProxy: env.MOONER_TRUST_PROXY === "1",
     priority: Number(env.MOONER_PRIORITY ?? 100_000),
     pollMs: Number(env.MOONER_POLL_MS ?? 3_000),
     scanMs: Number(env.MOONER_SCAN_MS ?? 10_000),
     pinataJwt: env.PINATA_JWT || null,
-    gateway: env.MOONER_IPFS_GATEWAY ?? "https://ipfs.io/ipfs/",
+    gateway: env.MOONER_IPFS_GATEWAY ?? IPFS_GATEWAY,
   };
 }
 
@@ -100,8 +112,18 @@ export function openersFrom(file) {
     if (m !== mtime) {
       mtime = m;
       const lines = m ? fs.readFileSync(file, "utf8").split("\n") : [];
-      set = new Set(lines.map((l) => l.replace(/#.*/, "").trim()).filter(Boolean).map((w) => new PublicKey(w).toBase58()));
+      set = walletSet(lines.map((l) => l.replace(/#.*/, "")));
     }
     return set;
   };
 }
+
+/** The openers list from a variable: wallets separated by commas or whitespace, or "*"
+ *  for any wallet (null: nothing is checked). */
+export function openersFromList(text) {
+  if (text.trim() === "*") return () => null;
+  const set = walletSet(text.split(/[\s,]+/));
+  return () => set;
+}
+
+const walletSet = (words) => new Set(words.map((w) => w.trim()).filter(Boolean).map((w) => new PublicKey(w).toBase58()));

@@ -6,16 +6,21 @@
 //   GET  /api/info                   program, keys, ER endpoints, the presale numbers
 //   POST /api/mint                   { wallet, name, symbol, description, links, image, time, signature }
 //   POST /api/cosign                 { tx }  (base64, signed by the user) -> sent, { sig, confirmed }
-//   GET  /api/presales               every live presale
+//   GET  /api/presales               every live presale (open ones list the wallets in them)
+//   GET  /api/launched               every launched token with its pool's price and progress
 //   GET  /api/presale/:presale       one presale with its seats (or its record once closed)
 //   GET  /api/token/:mint            a token the server issued
 //   GET  /api/wallet/:wallet/tokens  the tokens a wallet asked for
-//   GET  /api/health                 keeper status, bot balance
+//   GET  /api/wallet/:wallet/balance its SOL, in lamports
+//   GET  /api/health                 keeper status, bot balance, what the live feed heard
+//   GET  /api/blockhash              a recent Solana blockhash, for the txs a wallet signs
+//   GET  /api/ws                     WebSocket: all of the above as it changes (hub.js, feed.js)
 
 import { Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { DELEGATION_PROGRAM, describeTxError, numbers } from "../src/consts.js";
 import { F_CLAIMED, PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, STATE_NAME, decodePresale, decodeSeat } from "../src/layout.js";
-import { configPda, presalePda } from "../src/pdas.js";
+import { configPda, poolAddresses, presalePda } from "../src/pdas.js";
+import { decodePoolState } from "../src/dbc.js";
 import { TxError, sendSigned } from "../src/tx.js";
 import { cosign } from "../src/cosigner.js";
 import { launchTxSize } from "../src/bot.js";
@@ -34,6 +39,7 @@ export const DEFAULT_LIMITS = {
   mintPerWallet: [5, 3_600_000],
   cosignPerIp: [30, 60_000],
   cosignPerWallet: [10, 60_000],
+  balancePerIp: [120, 60_000],
 };
 
 /** The image type from its first bytes; the name a client gives it doesn't count. */
@@ -89,23 +95,30 @@ function parseLinks(v) {
   return out;
 }
 
+export async function accountsOf(conn, keys) {
+  const out = [];
+  for (let i = 0; i < keys.length; i += 100) out.push(...(await conn.getMultipleAccountsInfo(keys.slice(i, i + 100))));
+  return out;
+}
+
+/** The wallets committed to an open presale, biggest first: the faces on its card. */
+export const facesOf = (seats) =>
+  seats
+    .filter((s) => s.commit > 0n)
+    .sort((a, b) => (b.commit > a.commit) - (b.commit < a.commit))
+    .map((s) => ({ user: s.user, commit: s.commit, creator: s.creator }));
+
+/** A presale as the list shows it: no seats, but the faces while it's open. */
+export function listItem(v) {
+  const { seats, ...rest } = v;
+  return rest.state === "OPEN" && seats ? { ...rest, users: facesOf(seats) } : rest;
+}
+
 /**
- * Builds the routes. `bot` is the keeper's Bot: its validators, ER connections, bot key
- * and seat listings. `openers()` returns the current Set of wallets that may open.
+ * Presales, launched tokens and balances as users see them, read from Solana and the ERs.
+ * Shared by the HTTP routes and the live feed (feed.js), so both hit the same cache.
  */
-export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, now = Date.now }) {
-  const N = numbers(canary);
-  const L = Object.fromEntries(Object.entries(limits).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
-  const usedSigs = new Map(); // signature -> when, for the replay window
-
-  // ---- reads ----
-
-  async function accountsOf(conn, keys) {
-    const out = [];
-    for (let i = 0; i < keys.length; i += 100) out.push(...(await conn.getMultipleAccountsInfo(keys.slice(i, i + 100))));
-    return out;
-  }
-
+export function makeReads({ pid, l1, bot, store, dbcConfig, now = Date.now }) {
   /** A delegated account is our presale only if it sits at our PDA for its mint. */
   function delegatedPresale(key, a) {
     if (a.data.length !== PRESALE_LEN || a.data[0] !== PRESALE_VERSION) return null;
@@ -152,17 +165,19 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
   });
 
   async function seatsOf(presale, p) {
-    const seats = new Map();
-    for (const s of await bot.homeSeats(presale)) seats.set(s.key.toBase58(), { ...s, where: "home" });
+    // The delegated listing and its ER read go first, as in bot.js seatsLeft, so a seat that
+    // moves home while they run is still found by the home listing. One in both shows home:
+    // homeSeats re-reads each seat's owner on Solana, and that read is the last one. (A seat
+    // can go back: its user may delegate it again while the presale is OPEN, entry.rs.)
     const er = bot.ers[p.validator.toBase58()];
     const away = er ? await bot.listDelegatedSeats(presale) : [];
-    if (away.length) {
-      const accs = await accountsOf(er, away);
-      away.forEach((key, i) => {
-        const a = accs[i];
-        if (a?.owner.equals(pid) && a.data.length === SEAT_LEN) seats.set(key.toBase58(), { key, ...decodeSeat(a.data), where: "er" });
-      });
-    }
+    const accs = away.length ? await accountsOf(er, away) : [];
+    const seats = new Map();
+    for (const s of await bot.homeSeats(presale)) seats.set(s.key.toBase58(), { ...s, where: "home" });
+    away.forEach((key, i) => {
+      const a = accs[i];
+      if (!seats.has(key.toBase58()) && a?.owner.equals(pid) && a.data.length === SEAT_LEN) seats.set(key.toBase58(), { key, ...decodeSeat(a.data), where: "er" });
+    });
     return [...seats.values()].map(({ key, user, deposit, commit, settled, creator, flags, where }) => ({
       seat: key, user, deposit, commit, settled, claimed: (flags & F_CLAIMED) !== 0, creator, where,
     }));
@@ -182,7 +197,27 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     return promise;
   }
 
-  const listPresales = () => cached("list", 3_000, async () => (await readPresales(await bot.scan())).map(view));
+  // an open presale lists the wallets in it (the faces on its card); the seats are two
+  // getProgramAccounts each, so they're kept a little longer than the list
+  async function withUsers(v, p) {
+    if (v.state !== "OPEN") return v;
+    const seats = await cached(`faces:${v.presale.toBase58()}`, 10_000, () => seatsOf(v.presale, p)).catch(() => null);
+    return seats ? { ...v, users: facesOf(seats) } : v;
+  }
+
+  const listPresales = () => cached("list", 3_000, async () => Promise.all((await readPresales(await bot.scan())).map((r) => withUsers(view(r), r.p))));
+
+  /** Launched tokens with their pools, newest first. A pool that can't be read is null. */
+  const listLaunched = () =>
+    cached("launched", 5_000, async () => {
+      const rows = store.launches();
+      const pools = rows.map((r) => poolAddresses(dbcConfig, new PublicKey(r.mint)).pool);
+      const accs = await accountsOf(l1, pools);
+      return rows.map((r, i) => {
+        const s = decodePoolState(accs[i]?.data);
+        return { ...r, pool: s && { address: pools[i], quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated } };
+      });
+    });
 
   async function onePresale(key) {
     const [r] = await readPresales([key]);
@@ -192,6 +227,33 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     return { presale: key, where: "closed", state: "CLOSED", token, launch: store.launch(key), seats: [] };
   }
 
+  return {
+    listPresales,
+    listLaunched,
+    /** One presale with its seats, or its record once closed; 404 if there's neither. */
+    presale: (key) => cached(`presale:${key.toBase58()}`, 2_000, () => onePresale(key)),
+    balance: (wallet) => cached(`balance:${wallet.toBase58()}`, 5_000, () => l1.getBalance(wallet, "confirmed")),
+    blockhash: () => cached("blockhash", 2_000, () => l1.getLatestBlockhash("confirmed")),
+    /** Something changed on chain: the next read of this presale (and the list) is fresh. */
+    forget(presale) {
+      const k = presale.toBase58();
+      for (const c of [`presale:${k}`, `faces:${k}`, "list"]) cache.delete(c);
+    },
+    forgetLaunched: () => cache.delete("launched"),
+    forgetBalance: (wallet) => cache.delete(`balance:${wallet.toBase58()}`),
+  };
+}
+
+/**
+ * Builds the routes. `bot` is the keeper's Bot: its validators, ER connections, bot key
+ * and seat listings. `openers()` returns the current Set of wallets that may open (null:
+ * any wallet).
+ * `feed` (feed.js) hears about each entry the server sends, before the chain says so.
+ */
+export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, feed = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, now = Date.now, reads = makeReads({ pid, l1, bot, store, dbcConfig, now }) }) {
+  const N = numbers(canary);
+  const L = Object.fromEntries(Object.entries({ ...DEFAULT_LIMITS, ...limits }).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
+  const usedSigs = new Map(); // signature -> when, for the replay window
   let botBalance = { at: 0, value: null };
 
   // ---- writes ----
@@ -199,7 +261,8 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
   async function mint({ body, ip }) {
     limit(L.mintPerIp, ip, "token requests");
     const wallet = parseKey(body.wallet, "wallet");
-    if (!openers().has(wallet.toBase58())) throw new HttpError(403, "this wallet can't open presales yet (closed beta)");
+    const allowed = openers();
+    if (allowed && !allowed.has(wallet.toBase58())) throw new HttpError(403, "this wallet can't open presales yet (closed beta)");
     const name = text(body.name, "name", { min: 1, maxBytes: 32 });
     if (typeof body.symbol !== "string" || !/^[A-Za-z0-9]{1,10}$/.test(body.symbol)) bad("symbol must be 1 to 10 letters or digits");
     const symbol = body.symbol;
@@ -234,7 +297,9 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       }
     }
 
-    const pinned = await pinner.pinToken({ name, symbol, description, links, image, imageType });
+    const pinned = await pinner.pinToken({ name, symbol, description, links, image, imageType }).catch((e) => {
+      throw new HttpError(502, `IPFS: ${e.message}; try again`);
+    });
     const size = launchTxSize({ pid, dbcConfig, alt, meta: { name, symbol, uri: pinned.uri } });
     if (size > PACKET) bad(`the name, symbol and link make the launch tx ${size} bytes (max ${PACKET})`);
     const key = Keypair.generate();
@@ -251,7 +316,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       bad("tx is not a transaction");
     }
     const out = cosign(body.tx, {
-      pid, gateKey, openers: openers(), validators: bot.validators,
+      pid, gateKey, openers: openers(), validators: bot.validators, N,
       mintSigner: (m, u) => store.mintKey(m, u),
     });
     limit(L.cosignPerWallet, out.user.toBase58(), "requests from this wallet");
@@ -261,7 +326,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     const programs = tx.message.compiledInstructions.map((ci) => keys[ci.programIdIndex]);
     const sim = await l1.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" });
     if (sim.value.err) {
-      throw new HttpError(400, `the tx fails: ${describeTxError(sim.value.err, programs, pid)}`, { logs: sim.value.logs ?? [] });
+      throw new HttpError(400, `the tx fails: ${describeTxError(sim.value.err, programs, pid, sim.value.logs)}`, { logs: sim.value.logs ?? [] });
     }
     let sig;
     let confirmed = true;
@@ -277,6 +342,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       store.markOpened(out.mint, out.presale, now());
       keeper?.watch(out.presale); // before its next scan
     }
+    if (confirmed) feed?.touch(out.presale);
     const json = { sig, confirmed, kind: out.kind, user: out.user, presale: out.presale, ...(out.mint && { mint: out.mint }) };
     return { status: confirmed ? 200 : 202, json };
   }
@@ -311,20 +377,24 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     })),
     { method: "POST", path: /^\/api\/mint$/, body: 3_000_000, handler: mint },
     { method: "POST", path: /^\/api\/cosign$/, body: 8_192, handler: cosignRoute },
-    get(/^\/api\/presales$/, async () => ({ json: { presales: await listPresales() } })),
-    get(new RegExp(`^/api/presale/${KEY}$`), async ({ params }) => {
-      const key = parseKey(params.key, "presale");
-      return { json: await cached(`presale:${key.toBase58()}`, 2_000, () => onePresale(key)) };
-    }),
+    get(/^\/api\/presales$/, async () => ({ json: { presales: await reads.listPresales() } })),
+    get(/^\/api\/launched$/, async () => ({ json: { launched: await reads.listLaunched() } })),
+    get(new RegExp(`^/api/presale/${KEY}$`), async ({ params }) => ({ json: await reads.presale(parseKey(params.key, "presale")) })),
     get(new RegExp(`^/api/token/${KEY}$`), async ({ params }) => {
       const token = store.token(parseKey(params.key, "mint"));
       if (!token) throw new HttpError(404, "not a token this server issued");
       return { json: token };
     }),
     get(new RegExp(`^/api/wallet/${KEY}/tokens$`), async ({ params }) => ({ json: { tokens: store.tokensOf(parseKey(params.key, "wallet")) } })),
+    get(new RegExp(`^/api/wallet/${KEY}/balance$`), async ({ params, ip }) => {
+      const wallet = parseKey(params.key, "wallet");
+      limit(L.balancePerIp, ip, "balance checks");
+      return { json: { lamports: await reads.balance(wallet) } };
+    }),
+    get(/^\/api\/blockhash$/, async () => ({ json: await reads.blockhash() })),
     get(/^\/api\/health$/, async () => {
       if (now() - botBalance.at > 15_000) botBalance = { at: now(), value: await l1.getBalance(bot.bot.publicKey) };
-      return { json: { ok: true, cluster, botLamports: botBalance.value, keeper: keeper?.status() ?? null } };
+      return { json: { ok: true, cluster, botLamports: botBalance.value, keeper: keeper?.status() ?? null, live: feed?.status() ?? null } };
     }),
   ];
 }
