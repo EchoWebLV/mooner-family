@@ -4,8 +4,9 @@
 // open landed, a new coin would lock a second deposit. It clears when a try succeeds, when the
 // program says the presale is already there (engine/src/opening.js alreadyOpen), when the
 // presale shows up, when a first try plainly fails, or when the creator starts over
-// (canStartOver). Storage can throw (private mode, a full quota): every call here is caught,
-// and a copy in memory, kept for as long as the page is open, stands in for it.
+// (canStartOver). Storage can throw (private mode, a full quota) or be emptied under the page:
+// every call here is caught, and a copy in memory, kept for as long as the page is open, stands
+// in for it.
 
 import { alreadyOpen } from "../../../engine/src/opening.js";
 import { validSeat } from "../../../engine/src/client.js";
@@ -17,9 +18,9 @@ const local = () => globalThis.localStorage;
 const KEY = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/; // base58, as a Solana address
 const SYMBOL = /^[A-Za-z0-9]{1,10}$/; // what the server takes (api.js mint)
 
-// as flows.js keeps session keys: every record saved here, read when storage throws or when
-// this page's last save didn't reach it. A save that did reach it leaves storage the record:
-// none there then means another tab cleared it, and that clear stands.
+// as flows.js keeps session keys: every record saved here, read when storage has none for the
+// wallet (it throws, or was emptied) or this page's last save didn't reach it. Another tab's
+// clear of the coin drops it (forgetOpening, from that tab's storage event).
 const kept = new Map(); // wallet -> record
 const unsaved = new Set(); // wallets whose last save here didn't reach storage
 
@@ -36,14 +37,16 @@ function coinOf(r) {
 }
 
 /** The coin kept for `wallet`, or null: none, broken JSON, another wallet's, or not a coin.
- *  From storage, or from memory when storage throws or this page's save didn't reach it.
- *  `storage` gives localStorage (tests pass their own). */
+ *  From storage, or from memory when storage has none for the wallet (it throws, or was
+ *  emptied) or this page's save didn't reach it. `storage` gives localStorage (tests pass
+ *  their own). */
 export function readOpening(wallet, storage = local) {
   if (!wallet) return null;
   if (!unsaved.has(wallet)) {
     try {
       const r = JSON.parse(storage().getItem(openingKey(wallet)) ?? "null");
-      return r?.wallet === wallet ? coinOf(r) : null;
+      const c = r?.wallet === wallet ? coinOf(r) : null;
+      if (c) return c;
     } catch {
       // no storage: the copy in memory
     }
@@ -82,6 +85,21 @@ export function clearOpening(wallet, presale, storage = local) {
   }
 }
 
+/** Another tab removed `wallet`'s record (`removed`: its storage event's oldValue): this
+ *  page's memory copy goes too if it is that coin, so that tab's Start over or success stands. */
+export function forgetOpening(wallet, removed) {
+  let r = null;
+  try {
+    r = JSON.parse(removed ?? "null");
+  } catch {
+    return;
+  }
+  if (r?.presale != null && kept.get(wallet)?.presale === r.presale) {
+    kept.delete(wallet);
+    unsaved.delete(wallet);
+  }
+}
+
 /** What a failed open means for the coin; `retrying`: it was a retry of the kept coin.
  *  "open": the program says the presale is there, so an earlier open landed (clear it, go
  *  to the presale). "pending": it may have landed (outcome unknown), or a retry failed some
@@ -91,24 +109,45 @@ export function afterFailedOpen(e, pid, retrying) {
   return retrying || e?.outcomeUnknown === true ? "pending" : "failed";
 }
 
+/** @typedef {{ mint: string, presale: string, symbol: string, commit: number, at: number | null }} Coin */
+
 /** Runs `open` (it signs and sends the open of `coin`) with the coin kept for `wallet` from
- *  before anything is signed, as signed `now`: a reload or a closed tab mid-open still finds
- *  it. `coin.at`: the record's, on a retry. Gives { ok: true, value } with the coin still kept
- *  (the store clears it as the presale shows), or { ok: false, error, verdict }
- *  (afterFailedOpen): "failed" clears it; "pending" keeps it, with the `at` it had if this try
- *  failed plainly (nothing from it can land); "open" leaves it to the store. A coin that can't
- *  be kept isn't opened.
- *  @returns {Promise<{ ok: true, value: any } | { ok: false, error: unknown, verdict: string }>} */
-export async function openKept(wallet, coin, open, { pid = null, retrying = false, now = Date.now(), storage = local } = {}) {
-  if (!saveOpening(wallet, { ...coin, at: now }, storage)) {
+ *  before anything is signed, as of `clock()`: a reload or a closed tab mid-open still finds
+ *  it. `coin.at`: the record's, on a retry. Another coin kept for the wallet (another tab's,
+ *  since this page read none) stays, and `coin` isn't opened: { ok: false, error, verdict:
+ *  "other", kept }. Gives { ok: true, value } with the coin still kept (the store clears it as
+ *  the presale shows), or { ok: false, error, verdict } (afterFailedOpen): "failed" clears it;
+ *  "pending" keeps it, as of when the unknown was reported, or with the `at` it had if this try
+ *  failed plainly (nothing from it can land); "open" leaves it to the store. Each of these
+ *  writes only over this try's own save (or, for an unknown, none): another tab's since, a
+ *  newer try of the coin or another coin, stands. A coin that can't be kept isn't opened.
+ *  @returns {Promise<{ ok: true, value: any } | { ok: false, error: unknown, verdict: string, kept?: Coin }>} */
+export async function openKept(wallet, coin, open, { pid = null, retrying = false, clock = Date.now, storage = local } = {}) {
+  const there = readOpening(wallet, storage);
+  if (there && there.presale !== coin.presale) {
+    const error = new Error(`$${there.symbol} is still pending for this wallet, so $${coin.symbol} wasn't opened`);
+    return { ok: false, error, verdict: "other", kept: there };
+  }
+  const at = clock();
+  if (!saveOpening(wallet, { ...coin, at }, storage)) {
     return { ok: false, error: new Error("Couldn't keep the coin to open"), verdict: "failed" };
   }
   try {
     return { ok: true, value: await open() };
   } catch (error) {
     const verdict = afterFailedOpen(error, pid, retrying);
-    if (verdict === "failed") clearOpening(wallet, coin.presale, storage);
-    else if (verdict === "pending" && error?.outcomeUnknown !== true) saveOpening(wallet, coin, storage);
+    const now = readOpening(wallet, storage);
+    const own = now?.presale === coin.presale && now.at === at;
+    // another tab's save since: this page's copy follows it, not this try's (a coin never sent,
+    // or an older `at`), for when storage is emptied later
+    if (!own && now) kept.set(wallet, now);
+    if (verdict === "failed") {
+      if (own) clearOpening(wallet, coin.presale, storage);
+    } else if (verdict === "pending" && error?.outcomeUnknown === true) {
+      if (own || !now) saveOpening(wallet, { ...coin, at: clock() }, storage);
+    } else if (verdict === "pending") {
+      if (own) saveOpening(wallet, coin, storage);
+    }
     return { ok: false, error, verdict };
   }
 }

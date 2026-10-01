@@ -9,7 +9,9 @@ import { api } from '@/real/api.js'
 import * as chain from '@/real/chain.js'
 import * as live from '@/real/live.js'
 import { candlesOf, quote, swap, tokenBalance, tradesOf, WSOL } from '@/real/market'
-import { canStartOver, checkBeforeRetry, clearOpening, openedNote, openingKey, openKept, readOpening, saveOpening, seatFit, shows } from '@/real/opening.js'
+import {
+  canStartOver, checkBeforeRetry, clearOpening, forgetOpening, openedNote, openingKey, openKept, readOpening, saveOpening, seatFit, shows,
+} from '@/real/opening.js'
 import { COMMIT_STEP, MAX_CHAT_LENGTH, MAX_COMMIT, MAX_CREATOR_COMMIT, MIN_COMMIT, PRESALE_TARGET, setSolUsd, SOL_USD, TOAST_MS } from './constants'
 import { priceFromSqrt } from './curve'
 import { fmtSol } from './format'
@@ -109,8 +111,8 @@ export interface AppState {
   /** The connected wallet's coin whose open may have gone through, or null. */
   opening: Opening | null
   /** The pending coin can be left for a new one (startOver): the last retry found no presale
-   *  for it, its last open was signed long enough before that it can't land (canStartOver),
-   *  and that retry sent nothing that can. */
+   *  for it, sent nothing that can land, and its last open, as storage holds it then, was
+   *  signed long enough before that it can't land either (canStartOver). */
   mayStartOver: boolean
   setWallet(w: WalletLink | null): void
   /** <WalletBridge> hands over the wallet picker. */
@@ -513,8 +515,13 @@ export function createAppStore(): AppStore {
         return
       }
       const onStorage = (e: StorageEvent) => {
+        if ((e.key !== null && e.key !== openingKey(wallet)) || me() !== wallet) return
+        // another tab cleared the coin (its Start over, or its presale showed): this page's copy
+        // goes too. storage.clear() (no key) keeps it: a wipe can't be told from another tab's
+        // clear, and keeping the lock is the safe side
+        if (e.key !== null && e.newValue === null) forgetOpening(wallet, e.oldValue)
         // an open running here decides for itself
-        if ((e.key === null || e.key === openingKey(wallet)) && me() === wallet && trying !== wallet) resync(wallet)
+        if (trying !== wallet) resync(wallet)
       }
       window.addEventListener('storage', onStorage)
       storageOff = () => window.removeEventListener('storage', onStorage)
@@ -699,29 +706,40 @@ export function createAppStore(): AppStore {
       return { ok: true, tokenId: coin.presale, note: opened(wallet, coin, false) }
     }
 
-    /** A try that leaves the coin pending: watched again, as storage has it (openKept may have
-     *  moved its `at`). `leave`: the creator may start over now (mayStartOver). */
-    function keep(wallet: string, coin: Opening, error: string, leave = false): LaunchResult {
+    /** A try that leaves a coin pending: the one storage holds now (openKept may have moved its
+     *  `at`, another tab may have tried it or kept another), watched again. `read`: the read
+     *  before this retry of `coin` (checkBeforeRetry), given only when nothing from the try can
+     *  land; Start over is judged on the record as storage has it now (canStartOver). */
+    function keep(wallet: string, coin: Opening, error: string, read: string | null = null): LaunchResult {
       const kept = readOpening(wallet) ?? saveOpening(wallet, coin) ?? coin
       if (me() === wallet) {
         watchOpening(wallet, kept)
-        if (leave && get().opening?.presale === kept.presale) set({ mayStartOver: true })
+        const leave = kept.presale === coin.presale && get().opening?.presale === kept.presale && canStartOver(kept, read, Date.now())
+        if (leave) set({ mayStartOver: true })
       }
       return { ok: false, error, pending: kept }
     }
 
     /** An open that failed (openKept's verdict). Done if the program says the presale is there
      *  or it showed while this ran; nothing more if a first try plainly failed (openKept
-     *  dropped the coin); otherwise kept. `leave`: as keep, if nothing from this try can land. */
-    async function settle(f: { error: unknown; verdict: string }, wallet: string, coin: Opening, leave: boolean): Promise<LaunchResult> {
+     *  dropped the coin); another coin kept for the wallet: that one pending; otherwise kept.
+     *  `read`: as keep's, if nothing from this try can land. */
+    async function settle(
+      f: { error: unknown; verdict: string; kept?: Opening },
+      wallet: string,
+      coin: Opening,
+      read: string | null,
+    ): Promise<LaunchResult> {
       const shown = () => views.has(coin.presale) || launched.has(coin.presale)
       if (f.verdict === 'open') {
         await readPresale(coin.presale).catch(() => {}) // for the toast: open, or done since
         return done(wallet, coin)
       }
+      if (f.verdict === 'other' && f.kept) return keep(wallet, f.kept, chain.explain(f.error))
       if (f.verdict === 'pending' && shown()) return done(wallet, coin)
       if (f.verdict === 'failed') return fail(chain.explain(f.error))
-      return keep(wallet, coin, chain.explain(f.error), leave && (f.error as { outcomeUnknown?: unknown } | null)?.outcomeUnknown !== true)
+      const unknown = (f.error as { outcomeUnknown?: unknown } | null)?.outcomeUnknown === true
+      return keep(wallet, coin, chain.explain(f.error), unknown ? null : read)
     }
 
     /** What's wrong with a kept commit the presale numbers no longer take (real/opening.js seatFit). */
@@ -740,20 +758,20 @@ export function createAppStore(): AppStore {
       openingOff = null
       set({ mayStartOver: false })
       trying = wallet
-      let old = false
+      let read: string | null = null
       try {
         const was = await checkBeforeRetry(() => readPresale(coin.presale))
         if (was === 'open') return done(wallet, coin)
         if (was === 'unknown') return keep(wallet, coin, "Couldn't check the presale. Try again in a moment.")
-        // no presale yet: its last open signed long enough ago can't land any more
-        old = canStartOver(coin, was, Date.now())
+        // no presale yet: keep() judges whether its last open is too old to land any more
+        read = was
         const extra = await openCost().then((c) => Number(c.total), () => null)
         if (coin.commit + (extra ?? 0) > get().world.walletLamports) {
-          return keep(wallet, coin, notEnoughSol('opening the presale', coin.commit, extra), old)
+          return keep(wallet, coin, notEnoughSol('opening the presale', coin.commit, extra), read)
         }
         const info = await chain.loadInfo()
         const fit = seatFit(coin.commit, info.N)
-        if (fit !== 'ok') return keep(wallet, coin, seatLine(coin.commit, fit), old)
+        if (fit !== 'ok') return keep(wallet, coin, seatLine(coin.commit, fit), read)
         const r = await withSteps(async (onStep) => {
           onStep(`Sign to open the $${coin.symbol} presale again`)
           return openKept(
@@ -763,12 +781,12 @@ export function createAppStore(): AppStore {
             { pid: info.pid.toBase58(), retrying: true },
           )
         })
-        if (!r.ok) return await settle(r, wallet, coin, old)
+        if (!r.ok) return await settle(r, wallet, coin, read)
         await readPresale(coin.presale).catch(() => {})
         return done(wallet, coin)
       } catch (e) {
         // before anything was signed (the server's numbers, a step still running)
-        return keep(wallet, coin, chain.explain(e), old)
+        return keep(wallet, coin, chain.explain(e), read)
       } finally {
         trying = null
       }
@@ -995,7 +1013,7 @@ export function createAppStore(): AppStore {
             return { coin, res }
           })
           if (!r.res.ok) {
-            const out = await settle(r.res, wallet, r.coin, false)
+            const out = await settle(r.res, wallet, r.coin, null)
             // a first try that plainly failed left nothing; another tab may have kept one since
             if (!out.ok && !('pending' in out) && me() === wallet) watchOpening(wallet, readOpening(wallet))
             return out
@@ -1014,6 +1032,10 @@ export function createAppStore(): AppStore {
         const wallet = me()
         const o = get().opening
         if (!wallet || !o || !get().mayStartOver || trying === wallet) return
+        // again on the record as storage has it now: another tab may have tried the coin since
+        // (mayStartOver stands for the server's 404 for it, from the last retry here)
+        const now = readOpening(wallet)
+        if (now?.presale !== o.presale || !canStartOver(now, 'retry', Date.now())) return set({ mayStartOver: false })
         clearOpening(wallet, o.presale)
         watchOpening(wallet, readOpening(wallet))
       },
