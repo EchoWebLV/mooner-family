@@ -48,8 +48,8 @@ export class Feed extends EventEmitter {
    * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
    * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
    * `db`: the server's SQLite (chat and pictures). `dammTries`: reads of the DAMM v2 pool
-   * after a migration, `retryMs` apart, before the feed gives up on it until the next
-   * restart.
+   * after a migration, `retryMs` apart; if none finds it, the feed looks again the next time
+   * the DBC pool changes (or at the next start).
    */
   constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, dammTries = 10, log = console.log }) {
     super({ captureRejections: true });
@@ -57,7 +57,7 @@ export class Feed extends EventEmitter {
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
     this.wallets = new Map(); // topic -> listener id
-    this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, retry }
+    this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, dammData, finding, retry }
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
@@ -87,6 +87,7 @@ export class Feed extends EventEmitter {
   }
 
   async stop() {
+    this.stopped = true;
     for (const id of this.wallets.values()) await this.l1.removeAccountChangeListener(id).catch(() => {});
     this.wallets.clear();
     for (const [conn, id, kind] of this.subs.splice(0)) {
@@ -198,7 +199,7 @@ export class Feed extends EventEmitter {
       const p = list[i];
       p.data ??= a.data;
       p.migrated ??= s.migrated;
-      if (s.migrated) this.findDamm(p.row.mint);
+      if (s.migrated) this.lookDamm(p.row.mint);
     });
   }
 
@@ -218,7 +219,7 @@ export class Feed extends EventEmitter {
       if (!s) return;
       const was = p.migrated;
       p.migrated = s.migrated;
-      if (s.migrated && !p.damm) this.findDamm(mint);
+      if (s.migrated && !p.damm) this.lookDamm(mint);
       const row = this.pushPool(p);
       if (s.migrated && was === false) {
         this.log(`$${p.row.token?.symbol} (${mint}) migrated to DAMM v2`);
@@ -248,11 +249,19 @@ export class Feed extends EventEmitter {
     return row;
   }
 
+  /** Starts findDamm without awaiting it: what it throws is logged, never left as an
+   *  unhandled rejection (which would end the server). */
+  lookDamm(mint, tries) {
+    this.findDamm(mint, tries).catch((e) => this.log(`live damm ${mint}: ${e?.message ?? e}`));
+  }
+
   /** Finds the DAMM v2 pool `mint` migrated into and subscribes to it. The pool may land a
-   *  moment after the flag, so it's read again `retryMs` apart, `dammTries` times. */
+   *  moment after the flag, so it's read again `retryMs` apart, `dammTries` times; a new
+   *  lookup replaces a retry still waiting. Start it with lookDamm. */
   async findDamm(mint, tries = this.dammTries) {
     const p = this.pools.get(mint);
     if (!p || p.damm || p.finding) return;
+    clearTimeout(p.retry);
     p.finding = true;
     let found = null;
     try {
@@ -261,8 +270,9 @@ export class Feed extends EventEmitter {
       this.log(`live damm ${mint}: ${e.message}`);
     }
     p.finding = false;
+    if (this.stopped) return;
     if (!found) {
-      if (tries > 1) (p.retry = setTimeout(() => this.findDamm(mint, tries - 1), this.retryMs)).unref?.();
+      if (tries > 1) (p.retry = setTimeout(() => this.lookDamm(mint, tries - 1), this.retryMs)).unref?.();
       else this.log(`no DAMM v2 pool found for ${mint}: its price stays the one at migration`);
       return;
     }

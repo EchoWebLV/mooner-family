@@ -113,8 +113,8 @@ function pythData(price, expo = -8, at = 1_790_000_000) {
 }
 
 /** `before({ l1, store })` runs before the feed starts: what was there while the server was
- *  down. */
-async function startLive({ paceMs = 60, hub: hubOpts = {}, before = () => {} } = {}) {
+ *  down. `feed`: more Feed options (they win over the ones here). */
+async function startLive({ paceMs = 60, hub: hubOpts = {}, feed: feedOpts = {}, before = () => {} } = {}) {
   const l1 = fakeChain("l1");
   const er = fakeChain("er");
   l1.put(PYTH_SOL_USD, Keypair.generate().publicKey, pythData(12_000_000_000n));
@@ -122,7 +122,7 @@ async function startLive({ paceMs = 60, hub: hubOpts = {}, before = () => {} } =
   const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: er }, bot: Keypair.generate(), dbcConfig: MOONER_DBC_CONFIG, canary: true, log: () => {} });
   const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG, damm: (mint) => feed.dammOf(mint) });
   const logs = [];
-  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, log: (m) => logs.push(m) });
+  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, log: (m) => logs.push(m), ...feedOpts });
   before({ l1, store });
   const routes = makeSocialRoutes({ store, isPresale: () => true, onChat: (r) => feed.chat(r), onProfile: (w, p) => feed.profile(w, p) });
   const server = createServer(routes, { log: () => {} });
@@ -491,9 +491,9 @@ test("a pool that migrates: one migrated event, then the coin's price from its D
     s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n));
     const traded = await c.next((m) => on("launched", "upsert")(m) && m.data.pool.sqrtPrice === "200000000000000000");
     assert.equal(traded.data.pool.damm, coin.damm.toBase58());
-    // the DBC pool again (still migrated): no second event
+    // the DBC pool again (still migrated): its fresh row, at the DAMM v2 price, and no second event
     s.l1.write(coin.pool, DBC, dbcPool(true));
-    await c.next(on("launched", "upsert"));
+    await c.next((m) => on("launched", "upsert")(m) && m.data.pool.damm && m.data.pool.sqrtPrice === "200000000000000000");
     assert.deepEqual(events, [coin.mint.toBase58()]);
 
     // a new socket's snapshot has the DAMM v2 price too
@@ -553,6 +553,107 @@ test("at start: a coin that migrated while the server was down gets its DAMM v2 
     c.close();
     await s.close();
   }
+});
+
+/** Counts the feed's DAMM v2 lookups of `coin` (a read whose first key is its pool), and
+ *  lets a test hold them: `hold(promise)` makes each one wait for it first. */
+function countLooks(l1, coin) {
+  const read = l1.getMultipleAccountsInfo;
+  const looks = { n: 0, gate: null, hold: (p) => (looks.gate = p) };
+  l1.getMultipleAccountsInfo = async (ks) => {
+    if (ks[0]?.equals(coin.damm)) {
+      looks.n++;
+      await looks.gate;
+    }
+    return read(ks);
+  };
+  return looks;
+}
+
+test("no DAMM v2 pool after dammTries looks: given up once, nothing watched; the DBC pool's next change looks again", async () => {
+  const s = await startLive({ feed: { dammTries: 2 } });
+  const coin = launchedCoin(s.l1, s.store);
+  const looks = countLooks(s.l1, coin);
+  const gaveUp = `no DAMM v2 pool found for ${coin.mint.toBase58()}: its price stays the one at migration`;
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    assert.equal((await c.next(on("launched", "upsert"))).data.pool.damm, null);
+    assert.equal(looks.n, 1);
+    // another lookup while the first one's retry waits takes its place: one chain, not two
+    s.feed.lookDamm(coin.mint.toBase58());
+    for (let i = 0; i < 50 && !s.logs.includes(gaveUp); i++) await wait(20);
+    await wait(150); // longer than retryMs: nothing more comes
+    assert.equal(looks.n, 3, "the first look, then dammTries for the lookup that replaced it");
+    assert.equal(s.logs.filter((l) => l === gaveUp).length, 1, "given up once");
+    assert.ok(!s.l1.accountSubs().includes(coin.damm.toBase58()), "nothing watched");
+    assert.equal(s.feed.status().damm, 0);
+
+    // the pool is there later: the DBC pool's next change looks again and finds it
+    s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    const found = await c.next((m) => on("launched", "upsert")(m) && m.data.pool.damm);
+    assert.equal(found.data.pool.sqrtPrice, "185460299076988380");
+    assert.ok(s.l1.accountSubs().includes(coin.damm.toBase58()), "watched now");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("a throw in the DAMM v2 lookup after the read is logged, not an unhandled rejection; the feed keeps going", async () => {
+  const s = await startLive();
+  const coin = launchedCoin(s.l1, s.store);
+  const subscribe = s.l1.onAccountChange;
+  s.l1.onAccountChange = (key, cb, cfg) => {
+    if (key.equals(coin.damm)) throw new Error("socket closed");
+    return subscribe(key, cb, cfg);
+  };
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on("unhandledRejection", onUnhandled);
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+    s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    assert.equal((await c.next(on("launched", "upsert"))).data.pool.migrated, true);
+    await wait(20);
+    assert.ok(s.logs.includes(`live damm ${coin.mint.toBase58()}: socket closed`), "logged");
+    assert.deepEqual(unhandled, []);
+    // still going: the DBC pool's next change is pushed
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    assert.equal((await c.next(on("launched", "upsert"))).data.mint, coin.mint.toBase58());
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    c.close();
+    await s.close();
+  }
+});
+
+test("a DAMM v2 lookup still running at stop subscribes to nothing after it", async () => {
+  const s = await startLive();
+  const coin = launchedCoin(s.l1, s.store);
+  s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+  const looks = countLooks(s.l1, coin);
+  let release;
+  looks.hold(new Promise((r) => (release = r)));
+  s.feed.launched(coin.presale);
+  s.l1.write(coin.pool, DBC, dbcPool(true));
+  for (let i = 0; i < 50 && looks.n === 0; i++) await wait(20);
+  assert.equal(looks.n, 1, "the lookup is running");
+  await s.close();
+  release();
+  await wait(20);
+  assert.ok(!s.l1.accountSubs().includes(coin.damm.toBase58()), "nothing subscribed after stop");
+  assert.equal(s.feed.status().damm, 0);
 });
 
 test("migrated: a coin launched before the start, not migrated yet, fires when its pool flips", async () => {

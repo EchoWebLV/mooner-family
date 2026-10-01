@@ -58,5 +58,8 @@ test("findDammPool: Mooner's config first, the others in the same read; only a r
   // the same bytes under another owner, or for another mint, aren't it
   accounts.set(pubkey.toBase58(), { owner: DBC, data });
   assert.equal(await findDammPool(conn, MINT), null);
+  const OTHER = new PublicKey(Buffer.alloc(32, 7));
+  accounts.set(dammPoolAddress(MIGRATION_CONFIGS[2], OTHER, WSOL).toBase58(), { owner: DAMM_V2, data });
+  assert.equal(await findDammPool(conn, OTHER), null, "a DAMM v2 pool at OTHER's address, but its token A is MINT");
   assert.equal(await findDammPool({ getMultipleAccountsInfo: async (k) => k.map(() => null) }, MINT), null);
 });
