@@ -749,6 +749,33 @@ test("wallet:<w>: a balance read out across the last unsub, a change while nobod
   }
 });
 
+test("wallet:<w>: the first sub reads the balance from the chain, not one cached before anyone watched it", async () => {
+  const s = await startLive();
+  const w = Keypair.generate().publicKey;
+  const system = new PublicKey("11111111111111111111111111111111");
+  s.l1.put(w, system, Buffer.alloc(0), 5_000);
+  const topic = `wallet:${w.toBase58()}`;
+  const c = await s.client();
+  let fetched = 0;
+  const getBalance = s.l1.getBalance;
+  s.l1.getBalance = (...args) => (fetched++, getBalance(...args));
+  try {
+    assert.equal(await s.feed.reads.balance(w), 5_000); // GET /api/wallet/<w>/balance: cached 5 s
+    s.l1.write(w, system, Buffer.alloc(0), 9_000); // nobody on the topic: no chain listener, the cache keeps 5000
+    assert.equal(await s.feed.reads.balance(w), 5_000, "the cache still has the old balance");
+    c.sub(topic);
+    await until(() => c.got.some(on(topic, "snapshot")));
+    await wait(100);
+    assert.deepEqual(c.got.filter(on(topic)).map((m) => m.data?.lamports), [9_000]);
+    // the GET shares that cache: it gets the snapshot's read, and the sub cost one fetch more
+    assert.equal(await s.feed.reads.balance(w), 9_000);
+    assert.equal(fetched, 2, "the GET's first read, then the sub's");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
 test("a socket that leaves while its snapshot read is out, and comes back after a change: the old read is read again, not sent after the new state", async () => {
   const s = await startLive();
   const { presale, mint } = newPresale(s.l1, s.store);

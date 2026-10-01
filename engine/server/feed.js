@@ -491,8 +491,10 @@ export class Feed extends EventEmitter {
 
   first(topic) {
     if (topic.startsWith("wallet:")) {
-      // unwatched since its last socket left: a change then went unheard, so a read still
-      // out from before reads again
+      // unwatched until now: a change since went unheard, so the cached balance (up to 5 s
+      // old, maybe GET /api/wallet/<w>/balance's) is dropped for the snapshot's read, and a
+      // read still out from before reads again
+      this.reads.forgetBalance(new PublicKey(topic.slice("wallet:".length)));
       this.changed(topic);
       this.watchWallet(topic);
     }
