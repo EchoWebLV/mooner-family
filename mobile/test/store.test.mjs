@@ -668,13 +668,82 @@ test("trade: a fresh price below the minimum the sheet showed goes back to the s
   assert.equal(store.getState().busy, null);
 });
 
-test("trade: a fresh price that still reaches the minimum the sheet showed goes ahead", async () => {
-  const { store, calls } = rig();
+// A market whose quotes come from `answer(slippageBps)`; it notes the slippage each quote asked for.
+function quoting(answer) {
+  const asked = [];
+  return {
+    asked,
+    market: {
+      quote: async (side, mint, amount, slippageBps) => {
+        asked.push(slippageBps);
+        return { side, inAmount: amount, route: [], ...answer(slippageBps) };
+      },
+    },
+  };
+}
+
+test("trade: a fresh quote whose own minimum reaches the one the sheet showed is swapped as it is", async () => {
+  const { asked, market } = quoting(() => ({ outAmount: 1_000n, minOut: 970n }));
+  const { store, calls } = rig({ market });
   await store.getState().setWallet(W);
-  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer, { atLeast: 7n });
+  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer, { atLeast: 970n });
   assert.equal(r.ok, true);
   assert.equal(r.value.sig, "SIG");
-  assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap", "holding"]);
+  assert.deepEqual(asked, [undefined], "one quote, at the default slippage");
+  assert.deepEqual(calls.map((c) => c[0]), ["swap", "holding"]);
+  assert.equal(calls[0][1].minOut, 970n, "the swap enforces the minimum the sheet showed");
+});
+
+test("trade: a fresh price above the shown minimum but with a looser minimum is quoted again tighter and that one is swapped", async () => {
+  const { asked, market } = quoting((bps) => (bps == null ? { outAmount: 1_000n, minOut: 970n } : { outAmount: 1_000n, minOut: 1_000n - (1_000n * BigInt(bps)) / 10_000n }));
+  const { store, calls } = rig({ market });
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 990n });
+  assert.equal(r.ok, true);
+  assert.deepEqual(asked, [undefined, 100], "(1000 - 990) / 1000 = 100 bps");
+  assert.deepEqual(calls.map((c) => c[0]), ["swap", "holding"]);
+  const swapped = calls[0][1];
+  assert.equal(swapped.minOut, 990n);
+  assert.ok(swapped.minOut >= 990n, "the tx can't give less than the sheet showed");
+});
+
+test("trade: the slippage left over is floored, so the tight quote's minimum can't fall below the shown one", async () => {
+  const { asked, market } = quoting((bps) => (bps == null ? { outAmount: 999n, minOut: 900n } : { outAmount: 999n, minOut: 999n - (999n * BigInt(bps)) / 10_000n }));
+  const { store } = rig({ market });
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 990n });
+  assert.equal(r.ok, true);
+  assert.deepEqual(asked, [undefined, 90], "(999 - 990) * 10000 / 999 = 90.09…, floored to 90");
+});
+
+test("trade: under 0.5% left between the fresh price and the shown minimum goes back to the sheet, not quoted again", async () => {
+  const { asked, market } = quoting(() => ({ outAmount: 1_000n, minOut: 970n }));
+  const { store, calls } = rig({ market });
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer, { atLeast: 996n });
+  assert.deepEqual(r, {
+    ok: false,
+    moved: true,
+    value: { quote: { side: "buy", inAmount: 100_000_000n, route: [], outAmount: 1_000n, minOut: 970n } },
+    error: "The price moved. Check the new numbers and press again.",
+  });
+  assert.deepEqual(asked, [undefined], "40 bps: too tight to quote again");
+  assert.deepEqual(calls.map((c) => c[0]), [], "no swap: nothing to sign");
+  assert.equal(store.getState().busy, null);
+});
+
+test("trade: a tight quote that still comes up short goes back to the sheet with that quote, unsigned", async () => {
+  const { asked, market } = quoting((bps) => (bps == null ? { outAmount: 1_000n, minOut: 970n } : { outAmount: 995n, minOut: 985n }));
+  const { store, calls } = rig({ market });
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer, { atLeast: 990n });
+  assert.equal(r.ok, false);
+  assert.equal(r.moved, true);
+  assert.equal(r.error, "The price moved. Check the new numbers and press again.");
+  assert.deepEqual(r.value.quote, { side: "sell", inAmount: 2_500_000n, route: [], outAmount: 995n, minOut: 985n }, "the sheet shows the tight quote");
+  assert.deepEqual(asked, [undefined, 100]);
+  assert.deepEqual(calls.map((c) => c[0]), [], "no swap: nothing to sign");
+  assert.equal(store.getState().busy, null);
 });
 
 test("trade: with no minimum, any fresh price goes ahead", async () => {
@@ -682,4 +751,13 @@ test("trade: with no minimum, any fresh price goes ahead", async () => {
   const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
   assert.equal(r.ok, true);
   assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap"]);
+});
+
+test("trade: with no minimum, one quote at the default slippage, swapped as it is", async () => {
+  const { asked, market } = quoting(() => ({ outAmount: 1_000n, minOut: 500n }));
+  const { store, calls } = rig({ market });
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
+  assert.equal(r.ok, true);
+  assert.deepEqual(asked, [undefined]);
+  assert.equal(calls[0][1].minOut, 500n);
 });

@@ -44,6 +44,17 @@ test("quote: a buy spends SOL, a sell spends the coin", async () => {
   assert.match(fetch.calls[1].url, new RegExp(`inputMint=${MINT}&outputMint=${WSOL}&amount=5&`));
 });
 
+test("quote: a slippage given goes to Jupiter; none given is the engine's 3%", async () => {
+  const fetch = fakeFetch([200, QUOTE], [200, { ...QUOTE, inputMint: MINT, outputMint: WSOL }], [200, QUOTE]);
+  const m = makeMarket({ conn: {}, priority: 100_000, fetch });
+  await m.quote("buy", MINT, 10_000_000n, 120);
+  await m.quote("sell", MINT, 5n, 75);
+  await m.quote("buy", MINT, 10_000_000n);
+  assert.match(fetch.calls[0].url, /&slippageBps=120$/);
+  assert.match(fetch.calls[1].url, /&slippageBps=75$/);
+  assert.match(fetch.calls[2].url, /&slippageBps=300$/);
+});
+
 test("quote: a side other than buy or sell asks Jupiter nothing", async () => {
   const fetch = fakeFetch();
   const m = makeMarket({ conn: {}, priority: 100_000, fetch });

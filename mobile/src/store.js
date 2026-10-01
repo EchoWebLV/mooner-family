@@ -12,6 +12,9 @@ import { explainSwap } from "../../engine/src/swap.js";
 const CHAT_KEEP = 200;
 /** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
 export const PRICE_MOVED = "The price moved. Check the new numbers and press again.";
+/** Under this much slippage (0.5%) between a fresh price and the sheet's minimum, a trade
+ *  goes back to the sheet instead of quoting again that tight. */
+export const MIN_REQUOTE_BPS = 50;
 const loginName = (w) => `mooner:login:${w}`;
 const mineName = (w) => `mooner:mine:${w}`;
 const without = (o, k) => {
@@ -342,17 +345,27 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   /** Buys or sells coin `mint` at a fresh quote (the price may have moved since the sheet's).
    *  Returns { ok, value: { sig, quote } } or { ok: false, error } once the swap is confirmed;
    *  the balance read it starts lands in `holdings` on its own. `opts.atLeast` (BigInt): the
-   *  minimum the sheet showed. A fresh quote that doesn't reach it stops before anything is
-   *  signed: { ok: false, moved: true, value: { quote }, error: PRICE_MOVED }, so the sheet
-   *  can show the new numbers. */
+   *  minimum the sheet showed ("At least"), and the swap enforces it: what gets signed is a
+   *  quote whose own minOut (the tx's otherAmountThreshold) is at least that. A fresh quote
+   *  whose minOut is looser is quoted again with the slippage left between its price and
+   *  `atLeast`, floored. When the fresh price is below `atLeast`, under MIN_REQUOTE_BPS
+   *  above it, or the tighter quote still falls short, nothing is signed:
+   *  { ok: false, moved: true, value: { quote }, error: PRICE_MOVED }, so the sheet can show
+   *  the new numbers. */
   async function trade(side, mint, amount, signer, { atLeast = null } = {}) {
     const r = await run(
       mint,
       side,
       async (onStep) => {
         onStep("Getting a price from Jupiter");
-        const q = await market.quote(side, mint, amount);
+        let q = await market.quote(side, mint, amount);
         if (atLeast != null && q.outAmount < atLeast) return { moved: true, quote: q };
+        if (atLeast != null && !(q.minOut >= atLeast)) {
+          const bps = Number(((q.outAmount - atLeast) * 10_000n) / q.outAmount);
+          if (bps < MIN_REQUOTE_BPS) return { moved: true, quote: q };
+          q = await market.quote(side, mint, amount, bps);
+          if (!(q.minOut >= atLeast)) return { moved: true, quote: q };
+        }
         const sig = await market.swap(q, signer, onStep);
         readHolding(mint); // catches its own errors; a hung read mustn't hold the lock
         return { sig, quote: q };
