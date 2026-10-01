@@ -12,7 +12,7 @@ export async function signIn({ api, wallet, signMessage, now = () => Date.now() 
   const message = new TextEncoder().encode(loginMessage(address, time));
   const reply = await signMessage(message);
   const got = pickSignature(message, Uint8Array.from(reply), wallet);
-  if (!got) throw new Error("The wallet's signature didn't check out. Try again.");
+  if (!got) throw new Error("The wallet's signature didn't check out. Try another wallet.");
   const r = await api.login({ wallet: address, time, signature: Buffer.from(got.signature).toString("base64") });
   return { token: r.token, exp: r.exp };
 }
