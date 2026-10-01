@@ -41,11 +41,15 @@ async function getJson(fetch, url) {
 
 const num = (v) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
+/** A candle the chart can draw: its time and four prices are finite numbers above 0. */
+export const drawable = (k) => [k.t, k.o, k.h, k.l, k.c].every((v) => Number.isFinite(v) && v > 0);
+
 /** Candles oldest first with strictly rising times: a time listed twice (GeckoTerminal
- *  does that) becomes one candle. Each is { t (ms), o, h, l, c }. */
+ *  does that) becomes one candle. Each is { t (ms), o, h, l, c }. A candle that isn't
+ *  drawable is dropped first, so a bad copy of a minute can't spoil a good one. */
 export function mergeCandles(rows) {
   const out = [];
-  for (const c of [...rows].sort((a, b) => a.t - b.t)) {
+  for (const c of rows.filter(drawable).sort((a, b) => a.t - b.t)) {
     const last = out[out.length - 1];
     if (last && last.t === c.t) out[out.length - 1] = { t: c.t, o: last.o, h: Math.max(last.h, c.h), l: Math.min(last.l, c.l), c: c.c };
     else out.push(c);

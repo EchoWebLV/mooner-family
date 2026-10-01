@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import WebSocket from "ws";
 import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, WSOL } from "../src/consts.js";
 import { DAMM_V2, MIGRATION_CONFIGS, dammPoolAddress } from "../src/damm.js";
@@ -114,7 +114,8 @@ function pythData(price, expo = -8, at = 1_790_000_000) {
 }
 
 /** `before({ l1, store })` runs before the feed starts: what was there while the server was
- *  down. `feed`: more Feed options (fetch, statsMs, ...; they win over the ones here). */
+ *  down. `feed`: more Feed options (fetch, statsMs, ...; they win over the ones here). Coin
+ *  stats read the chain over the fake l1 too (`statsConn`), so nothing goes out. */
 async function startLive({ paceMs = 60, hub: hubOpts = {}, feed: feedOpts = {}, before = () => {} } = {}) {
   const l1 = fakeChain("l1");
   const er = fakeChain("er");
@@ -123,7 +124,7 @@ async function startLive({ paceMs = 60, hub: hubOpts = {}, feed: feedOpts = {}, 
   const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: er }, bot: Keypair.generate(), dbcConfig: MOONER_DBC_CONFIG, canary: true, log: () => {} });
   const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG, damm: (mint) => feed.dammOf(mint) });
   const logs = [];
-  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, fetch: noFetch, log: (m) => logs.push(m), ...feedOpts });
+  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, fetch: noFetch, statsConn: l1, log: (m) => logs.push(m), ...feedOpts });
   before({ l1, store });
   const routes = makeSocialRoutes({ store, isPresale: () => true, onChat: (r) => feed.chat(r), onProfile: (w, p) => feed.profile(w, p) });
   const server = createServer(routes, { log: () => {} });
@@ -606,6 +607,7 @@ test("coin:<mint>: stats when it's opened, again only after its pool changed and
     c.sub(other);
     assert.equal((await c.next(on(other))).type, "missing");
     assert.equal(calls.length, 6);
+    assert.equal(s.feed.status().coins, 0, "a mint that isn't a coin isn't counted");
 
     // at most 4 coins per socket
     const e = await s.client();
@@ -631,6 +633,221 @@ test("coin:<mint>: nothing is read after stop", async () => {
   s.feed.statsSoon(coin.mint.toBase58());
   await wait(50);
   assert.deepEqual(calls, []);
+});
+
+// ---- coin stats: the feed's cache and timers, on a fake clock ----
+
+/**
+ * A Feed with no server for one launched coin. `join()` and `leave()` do what the hub does
+ * when a socket subscribes to `coin:<mint>` or leaves it; `join()` gives what that socket was
+ * sent. `published`: every push the feed made, to anyone. Each market read of the coin is
+ * counted (`market.reads`) and its 24h volume is its number; `market.hold()` keeps reads out
+ * until the function it returns is called. `change()` is a pool change. Timers are mocked:
+ * `advance(ms, clockMs = ms)` runs them `ms` on and moves the feed's clock `clockMs`.
+ */
+function statsFeed(t, { statsMs = 1_000, rpc: rpcOver = {} } = {}) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = 1_790_854_800_000;
+  const market = {
+    reads: 0,
+    gate: null,
+    hold() {
+      let go;
+      market.gate = new Promise((r) => (go = r));
+      return () => ((market.gate = null), go());
+    },
+  };
+  const fetch = async (url) => {
+    const candles = url.includes("/ohlcv/");
+    if (candles) market.reads++;
+    const n = market.reads;
+    await market.gate;
+    return { ok: true, status: 200, json: async () => (candles ? { data: { attributes: { ohlcv_list: [] } } } : { data: { attributes: { volume_usd: { h24: String(n) } } } }) };
+  };
+  const rpc = {
+    async getTokenLargestAccounts() {
+      throw new Error("not here");
+    },
+    async getTokenSupply() {
+      throw new Error("not here");
+    },
+    ...rpcOver,
+  };
+  const store = new Store(":memory:");
+  const logs = [];
+  const feed = new Feed({ reads: {}, l1: rpc, statsConn: rpc, ers: {}, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, fetch, statsMs, now: () => clock, log: (m) => logs.push(m) });
+  const mint = Keypair.generate().publicKey.toBase58();
+  feed.pools.set(mint, { row: { mint, presale: Keypair.generate().publicKey.toBase58() }, pool: Keypair.generate().publicKey, damm: null });
+  const topic = `coin:${mint}`;
+  let subs = 0;
+  const published = [];
+  feed.hub = { publish: (to, m) => published.push({ topic: to, ...m }), has: (to) => to === topic && subs > 0, sockets: 0 };
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  };
+  return {
+    feed, mint, market, published, logs, flush,
+    join() {
+      if (subs++ === 0) feed.first(topic);
+      const sent = [];
+      return feed.snapshot(topic, (m) => sent.push(m)).then(() => sent);
+    },
+    leave() {
+      if (--subs === 0) feed.last(topic);
+    },
+    change: () => feed.statsSoon(mint),
+    async advance(ms, clockMs = ms) {
+      clock += clockMs;
+      t.mock.timers.tick(ms);
+      await flush();
+    },
+    volumes: () => published.map((m) => m.data.volume24hUsd),
+  };
+}
+
+test("coin stats: open, leave and open again within statsMs is one read; the second socket gets the cached snapshot", async (t) => {
+  const f = statsFeed(t);
+  const [a] = await f.join();
+  f.leave();
+  await f.advance(999);
+  const [b] = await f.join();
+  f.leave();
+  assert.equal(f.market.reads, 1);
+  assert.deepEqual([a.type, b.type, b.data.volume24hUsd], ["snapshot", "snapshot", 1]);
+  assert.deepEqual(b.data, a.data);
+});
+
+test("coin stats: open, leave and open again while the first read is out: one read in flight, both sockets get it", async (t) => {
+  const f = statsFeed(t);
+  const go = f.market.hold();
+  const a = f.join();
+  await f.flush();
+  f.leave();
+  const b = f.join();
+  await f.flush();
+  assert.equal(f.market.reads, 1, "one read in flight");
+  go();
+  const [[x], [y]] = await Promise.all([a, b]);
+  assert.deepEqual([x.data.volume24hUsd, y.data.volume24hUsd, f.market.reads], [1, 1, 1]);
+});
+
+test("coin stats: a pool change while a read is out is read again after it settles, statsMs after it, and pushed", async (t) => {
+  const f = statsFeed(t);
+  const go = f.market.hold();
+  const a = f.join();
+  await f.flush();
+  f.change(); // the pool trades while the first read is out
+  await f.advance(50);
+  go();
+  await a;
+  await f.flush();
+  assert.deepEqual([f.market.reads, f.published.length], [1, 0], "the change isn't answered with the read that started before it");
+  await f.advance(999);
+  assert.equal(f.market.reads, 1, "not before statsMs after the first read");
+  await f.advance(1);
+  assert.equal(f.market.reads, 2);
+  assert.deepEqual(f.volumes(), [2], "the push carries the new read");
+});
+
+test("coin stats: a timer that fires a hair before statsMs by the clock still reads", async (t) => {
+  const f = statsFeed(t);
+  await f.join();
+  f.change();
+  await f.advance(1_000, 999);
+  assert.equal(f.market.reads, 2);
+  assert.deepEqual(f.volumes(), [2]);
+});
+
+test("coin stats: a socket's read that settles before a change's timer runs: the timer waits statsMs after that read", async (t) => {
+  const f = statsFeed(t);
+  await f.join(); // read 1
+  f.change(); // a read set for statsMs after read 1
+  await f.advance(0, 1_000); // the clock gets there before the timer runs
+  await f.join(); // a second socket: the cache is statsMs old, so it reads
+  assert.equal(f.market.reads, 2);
+  await f.advance(1_000, 0); // the timer runs
+  assert.equal(f.market.reads, 2, "not a second read at the same time");
+  await f.advance(999);
+  assert.equal(f.market.reads, 2, "not before statsMs after read 2");
+  await f.advance(1);
+  assert.deepEqual([f.market.reads, f.volumes()], [3, [3]], "then read and pushed to everyone on it");
+});
+
+test("coin stats: the topic empties while a read is out: nothing is pushed, and the read is kept for the next socket", async (t) => {
+  const f = statsFeed(t);
+  await f.join();
+  await f.advance(1_000);
+  const go = f.market.hold();
+  f.change();
+  await f.advance(1);
+  assert.equal(f.market.reads, 2, "the change's read is out");
+  f.leave();
+  go();
+  await f.flush();
+  assert.deepEqual(f.published, [], "no push to a topic nobody is on");
+  const [b] = await f.join();
+  assert.deepEqual([b.data.volume24hUsd, f.market.reads], [2, 2], "the read that was out, kept");
+});
+
+test("coin stats: a read still out at stop pushes nothing", async (t) => {
+  const f = statsFeed(t);
+  await f.join();
+  await f.advance(1_000);
+  const go = f.market.hold();
+  f.change();
+  await f.advance(1);
+  assert.equal(f.market.reads, 2);
+  await f.feed.stop();
+  go();
+  await f.flush();
+  assert.deepEqual(f.published, []);
+});
+
+test("coin stats: a change nobody is on reads nothing; the next socket gets the cache at once and a read at statsMs", async (t) => {
+  const f = statsFeed(t);
+  await f.join();
+  f.leave();
+  await f.advance(100);
+  f.change();
+  await f.advance(400);
+  assert.equal(f.market.reads, 1, "nobody on it: not read");
+  const [b] = await f.join();
+  assert.deepEqual([b.data.volume24hUsd, f.market.reads], [1, 1], "the cache, at once");
+  await f.advance(499);
+  assert.equal(f.market.reads, 1, "not before statsMs after the last read");
+  await f.advance(1);
+  assert.deepEqual([f.market.reads, f.volumes()], [2, [2]], "then read and pushed");
+
+  // the pool still since, the cache older than statsMs: the next socket gets a read
+  f.leave();
+  await f.advance(2_000);
+  const [c] = await f.join();
+  assert.deepEqual([c.data.volume24hUsd, f.market.reads], [3, 3]);
+});
+
+test("coin stats: the feed reads holders over one connection of its own, so a 429's rest holds across reads", async (t) => {
+  let asked = 0;
+  const f = statsFeed(t, {
+    rpc: {
+      async getTokenLargestAccounts() {
+        asked++;
+        throw new Error('429 Too Many Requests: {"jsonrpc":"2.0","error":{"code":429,"message":"Too many requests for a specific RPC call"}}');
+      },
+    },
+  });
+  await f.join();
+  f.change();
+  await f.advance(1_000);
+  assert.deepEqual([f.market.reads, asked], [2, 1], "two reads, one ask");
+  assert.equal(f.published[0].data.top, null);
+  assert.equal(f.logs.filter((l) => l.includes("429")).length, 1, "logged once");
+
+  // not handed one: built once from l1's endpoint, never l1 itself
+  const l1 = { rpcEndpoint: "http://127.0.0.1:8899" };
+  const store = new Store(":memory:");
+  const feed = new Feed({ reads: {}, l1, ers: {}, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, log: () => {} });
+  assert.ok(feed.statsChain.conn instanceof Connection);
+  assert.equal(feed.statsChain.conn.rpcEndpoint, l1.rpcEndpoint);
 });
 
 test("own candles: the feed records the DBC pool's price, then the DAMM v2 pool's once the coin moved", async () => {

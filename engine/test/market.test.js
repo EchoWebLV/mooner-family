@@ -39,6 +39,17 @@ test("GeckoTerminal candles: newest-first rows with a minute listed twice become
   assert.deepEqual(mergeCandles([]), []);
 });
 
+test("mergeCandles: a copy of a minute whose prices aren't finite numbers above 0 is dropped before the merge; the good copy survives", () => {
+  const good = { t: 1790366100_000, o: 2e-8, h: 3e-8, l: 1e-8, c: 2e-8 };
+  for (const bad of [{ h: NaN }, { l: NaN }, { o: 0 }, { c: -1e-8 }, { h: Infinity }, { l: null }, { c: "2e-8" }, { t: NaN }]) {
+    const copy = { ...good, o: 4e-8, h: 5e-8, l: 4e-8, c: 4e-8, ...bad };
+    assert.deepEqual(mergeCandles([good, copy]), [good], JSON.stringify(bad));
+    assert.deepEqual(mergeCandles([copy, good]), [good], `${JSON.stringify(bad)}, listed first`);
+  }
+  // two good copies still merge: the first's open, the highest high, the lowest low, the last's close
+  assert.deepEqual(mergeCandles([good, { ...good, o: 9e-8, h: 4e-8, l: 2e-8, c: 3e-8 }]), [{ ...good, h: 4e-8, c: 3e-8 }]);
+});
+
 test("GeckoTerminal pool stats: 24h volume in USD; a pool it hasn't seen is an error", async () => {
   const fetch = fakeFetch(reply({ data: { attributes: { reserve_in_usd: "4241.201", volume_usd: { m5: "0.0", h24: "0.0" } } } }), reply({ errors: [{ status: "404", title: "Not Found" }] }, 404));
   assert.deepEqual(await geckoStats(DBC_POOL, { fetch }), { volume24hUsd: 0 });

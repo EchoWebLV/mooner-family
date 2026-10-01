@@ -21,7 +21,7 @@ import { PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, SEAT_VERSION, decodePresale, de
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
 import { accountsOf, listItem } from "./api.js";
-import { coinStats } from "./coinstats.js";
+import { chainReads, coinStats, statsConnection } from "./coinstats.js";
 import { allProfiles, chatRows } from "./social.js";
 
 /** Pyth's SOL/USD price account (push oracle, shard 0), the same address on every cluster. */
@@ -52,18 +52,21 @@ export class Feed extends EventEmitter {
    * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
    * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
    * `db`: the server's SQLite (chat and pictures). `fetch`: for the market APIs
-   * (coinstats.js). `dammTries`: reads of the DAMM v2 pool after a migration, `retryMs`
-   * apart; if none finds it, the feed looks again the next time the DBC pool changes (or at
-   * the next start).
+   * (coinstats.js). `statsConn`: the connection coin stats read the chain over (the top
+   * holders, the supply); by default one of its own to l1's endpoint, built here once
+   * (coinstats.js statsConnection: a 429 fails at once, 10 s a request). `dammTries`: reads
+   * of the DAMM v2 pool after a migration, `retryMs` apart; if none finds it, the feed looks
+   * again the next time the DBC pool changes (or at the next start).
    */
-  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, statsMs = 60_000, dammTries = 10, fetch = globalThis.fetch, now = Date.now, log = console.log }) {
+  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, statsMs = 60_000, dammTries = 10, fetch = globalThis.fetch, statsConn, now = Date.now, log = console.log }) {
     super({ captureRejections: true });
     Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, statsMs, dammTries, fetch, now, log });
+    this.statsChain = chainReads(statsConn ?? statsConnection(l1.rpcEndpoint), { now, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
     this.wallets = new Map(); // topic -> listener id
-    this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, dammData, finding, retry }
-    this.coins = new Map(); // mint -> { stats, at, timer, reading } while `coin:<mint>` has sockets
+    this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, dammData, finding, retry, stats }
+    this.coins = new Set(); // mints whose `coin:<mint>` has sockets (pools or not, yet)
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
@@ -100,8 +103,10 @@ export class Feed extends EventEmitter {
       await (kind === "program" ? conn.removeProgramAccountChangeListener(id) : conn.removeAccountChangeListener(id)).catch(() => {});
     }
     for (const p of this.paced.values()) clearTimeout(p.timer);
-    for (const p of this.pools.values()) clearTimeout(p.retry);
-    for (const c of this.coins.values()) clearTimeout(c.timer);
+    for (const p of this.pools.values()) {
+      clearTimeout(p.retry);
+      clearTimeout(p.stats?.timer);
+    }
   }
 
   sub(conn, kind, id) {
@@ -318,37 +323,82 @@ export class Feed extends EventEmitter {
   }
 
   // ---- one coin's stats (coin:<mint>) ----
+  //
+  // A coin's last read lives on its pool record (`p.stats`: { data, at, reading, dirty,
+  // timer }), so it outlives the topic: a socket that leaves and comes back within statsMs
+  // costs no read. Per coin, whatever the sockets do: at most one read a statsMs (`at` is
+  // when the last one settled), never two out at once, and none while nobody has it open.
+  // `dirty`: the pool changed since the last read started.
 
-  /** The coin's stats, read at most once a `statsMs` (callers in between share them). */
+  /** The stats record on pool record `p`. */
+  statsOf(p) {
+    return (p.stats ??= { data: null, at: -Infinity, reading: null, dirty: false, timer: null });
+  }
+
+  /** A socket opened the coin: the read that's out, if one is; else the last read if it's
+   *  younger than statsMs (if the pool changed since, a read is set for statsMs after it);
+   *  else a read now. */
   async stats(mint) {
-    const c = this.coins.get(mint) ?? { stats: null, at: 0, timer: null, reading: null };
-    if (c.stats && this.now() - c.at < this.statsMs) return c.stats;
-    if (c.reading) return c.reading;
     const p = this.pools.get(mint);
-    c.reading = coinStats({ conn: this.l1, p, store: this.store, fetch: this.fetch, nowMs: this.now() }).finally(() => (c.reading = null));
-    c.stats = await c.reading;
-    c.at = this.now();
-    return c.stats;
+    const s = this.statsOf(p);
+    if (s.reading) return s.reading;
+    if (this.now() - s.at < this.statsMs) {
+      if (s.dirty) this.statsSoon(mint);
+      if (s.data) return s.data;
+      throw new Error("the last read failed; the next is due statsMs after it");
+    }
+    return this.readStats(mint, p);
+  }
+
+  /** Reads the coin's stats now and keeps them: the only place a read starts. A change
+   *  that arrives while it's out (or a read that fails) leaves `dirty` set, and a read is
+   *  set for statsMs after this one settles. */
+  readStats(mint, p) {
+    const s = this.statsOf(p);
+    s.dirty = false;
+    s.reading = coinStats({ chain: this.statsChain, p, store: this.store, fetch: this.fetch, nowMs: this.now() })
+      .then(
+        (data) => (s.data = data),
+        (e) => {
+          s.dirty = true;
+          throw e;
+        },
+      )
+      .finally(() => {
+        s.reading = null;
+        s.at = this.now();
+        if (s.dirty) this.statsSoon(mint);
+      });
+    return s.reading;
   }
 
   /** The coin's pool changed: if someone has it open, its stats are read again and pushed,
-   *  now if the last read is `statsMs` old, else once when it will be. A coin whose pool
-   *  doesn't change isn't read again, and nothing is read after stop. */
+   *  statsMs after the last read (now if that's past). A change while a read is out waits
+   *  for it to settle, then statsMs. Nobody on the coin: `dirty` waits for the next socket
+   *  (stats). Nothing is read after stop. */
   statsSoon(mint) {
-    const c = this.coins.get(mint);
-    if (!c || c.timer || this.stopped) return;
-    const wait = Math.max(0, c.at + this.statsMs - this.now());
-    c.timer = setTimeout(async () => {
-      c.timer = null;
-      if (this.stopped || this.coins.get(mint) !== c) return;
-      try {
-        const data = await this.stats(mint);
-        if (this.coins.get(mint) === c) this.publish(`coin:${mint}`, { type: "snapshot", data });
-      } catch (e) {
-        this.log(`live coin:${mint}: ${e?.message ?? e}`);
+    const p = this.pools.get(mint);
+    if (!p || this.stopped) return;
+    const s = this.statsOf(p);
+    s.dirty = true;
+    if (s.reading || s.timer || !this.coins.has(mint)) return;
+    const armedAt = s.at;
+    s.timer = setTimeout(() => {
+      s.timer = null;
+      if (this.stopped || !this.coins.has(mint)) return;
+      if (s.reading || s.at !== armedAt) {
+        // a socket's read started since this was set: read again statsMs after that one,
+        // once it settled (readStats sets it then; here if it already has)
+        s.dirty = true;
+        if (!s.reading) this.statsSoon(mint);
+        return;
       }
-    }, wait);
-    c.timer.unref?.();
+      this.readStats(mint, p).then(
+        (data) => !this.stopped && this.coins.has(mint) && this.publish(`coin:${mint}`, { type: "snapshot", data }),
+        (e) => this.log(`live coin:${mint}: ${e?.message ?? e}`),
+      );
+    }, Math.max(0, s.at + this.statsMs - this.now()));
+    s.timer.unref?.();
   }
 
   // ---- SOL ----
@@ -387,21 +437,28 @@ export class Feed extends EventEmitter {
   /** What the feed is watching and what it heard, for /api/health. */
   status() {
     const damm = [...this.pools.values()].filter((p) => p.damm).length;
-    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, damm, coins: this.coins.size, sol: this.sol };
+    const coins = [...this.coins].filter((m) => this.pools.has(m)).length; // open coins that are ours
+    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, damm, coins, sol: this.sol };
   }
 
   // ---- the hub's hooks ----
 
   first(topic) {
     if (topic.startsWith("wallet:")) this.watchWallet(topic);
-    if (topic.startsWith("coin:")) this.coins.set(topic.slice("coin:".length), { stats: null, at: 0, timer: null, reading: null });
+    // a mint that isn't a pool yet too: when its pool comes, pushPool reads and pushes it
+    if (topic.startsWith("coin:")) this.coins.add(topic.slice("coin:".length));
   }
 
   last(topic) {
     if (topic.startsWith("coin:")) {
       const mint = topic.slice("coin:".length);
-      clearTimeout(this.coins.get(mint)?.timer);
       this.coins.delete(mint);
+      // its stats stay on the pool record; a change still unread stays `dirty`
+      const s = this.pools.get(mint)?.stats;
+      if (s?.timer) {
+        clearTimeout(s.timer);
+        s.timer = null;
+      }
       return;
     }
     const id = this.wallets.get(topic);

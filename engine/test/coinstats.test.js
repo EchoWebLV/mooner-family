@@ -1,13 +1,16 @@
 // The coin screen's stats (server/coinstats.js): which source each figure comes from before
 // and after migration, the server's own candles when an API has none, and the top holders
-// read from chain.
+// read from chain; the store's own candles.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { poolAuthority } from "../src/pdas.js";
 import { dammPoolAuthority } from "../src/damm.js";
 import { Store } from "../server/store.js";
-import { coinStats, supplyOf, topHolders } from "../server/coinstats.js";
+import { CHART_MS, TOP_REST_MS, chainReads, coinStats, statsConnection, supplyOf, topHolders } from "../server/coinstats.js";
 
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 /** A fetch that answers by URL prefix: { prefix: body | Error }. */
@@ -170,6 +173,25 @@ test("candles the chart can't draw are dropped: a time or price that isn't a fin
   assert.deepEqual([m.volume24hUsd, m.liquidityUsd, m.holders], [2, 1, 3], "the pool's figures stand");
 });
 
+test("GeckoTerminal candles older than the chart are dropped; none left: the server's own candles", async () => {
+  const p = { row: { mint: MINT.toBase58(), presale: PRESALE.toBase58() }, pool: DBC_POOL, damm: null };
+  const sec = (ms) => ms / 1000;
+  const old = [sec(NOW - CHART_MS - 60_000), 1e-8, 1e-8, 1e-8, 1e-8, 1]; // a minute before the chart starts
+  const edge = [sec(NOW - CHART_MS), 2e-8, 2e-8, 2e-8, 2e-8, 1]; // the chart's first minute
+  const store = new Store(":memory:");
+  store.addPrice(MINT.toBase58(), 5e-8, NOW - 10_000);
+  const own = [{ t: NOW - 60_000, o: 5e-8, h: 5e-8, l: 5e-8, c: 5e-8 }];
+
+  // GeckoTerminal's `limit` counts candles with trades: a quiet pool's 300 go back further
+  const some = routes({ [`${GECKO}/ohlcv`]: { data: { attributes: { ohlcv_list: [edge, old] } } }, [GECKO]: { data: { attributes: { volume_usd: { h24: "1" } } } } });
+  const s = await coinStats({ conn: chain(holders), p, store, fetch: some, nowMs: NOW });
+  assert.deepEqual([s.candles, s.source], [[{ t: NOW - CHART_MS, o: 2e-8, h: 2e-8, l: 2e-8, c: 2e-8 }], "geckoterminal"]);
+
+  const allOld = routes({ [`${GECKO}/ohlcv`]: { data: { attributes: { ohlcv_list: [old] } } }, [GECKO]: { data: { attributes: { volume_usd: { h24: "1" } } } } });
+  const o = await coinStats({ conn: chain(holders), p, store, fetch: allOld, nowMs: NOW });
+  assert.deepEqual([o.candles, o.source, o.candleMs, o.volume24hUsd], [own, "mooner", 60_000, 1]);
+});
+
 test("the server's own candles can't be read: no chart, and every other figure stands", async () => {
   const store = new Store(":memory:");
   store.candles = () => {
@@ -179,4 +201,99 @@ test("the server's own candles can't be read: no chart, and every other figure s
   const fetch = routes({ [GECKO]: { data: { attributes: { volume_usd: { h24: "7" } } } } });
   const s = await coinStats({ conn: chain(holders), p, store, fetch, nowMs: NOW });
   assert.deepEqual([s.candles, s.source, s.volume24hUsd, s.supply, s.top.length], [[], null, 7, "1000000000000000", 3]);
+});
+
+test("own candles: the store prepares its candle statements once, not on every price", () => {
+  const store = new Store(":memory:");
+  const prepare = store.db.prepare;
+  let n = 0;
+  store.db.prepare = function (...a) {
+    n++;
+    return prepare.apply(this, a);
+  };
+  for (let i = 0; i < 3; i++) store.addPrice(MINT.toBase58(), (i + 1) * 1e-8, NOW + i * 60_000);
+  assert.equal(store.candles(MINT.toBase58()).length, 3);
+  assert.equal(store.candles(MINT.toBase58(), NOW + 60_000).length, 2);
+  assert.equal(n, 0, "no statement prepared per call");
+});
+
+test("own candles older than a day are pruned when the store opens", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mooner-candles-"));
+  try {
+    const file = path.join(dir, "server.db");
+    const mint = MINT.toBase58();
+    const now = Date.now();
+    const a = new Store(file);
+    a.addPrice(mint, 1e-8, now - 25 * 3_600_000); // more than a day old
+    a.addPrice(mint, 2e-8, now - 23 * 3_600_000); // less
+    a.addPrice(mint, 3e-8, now - 60_000);
+    assert.equal(a.candles(mint).length, 3, "kept while it's open");
+    a.close();
+    const b = new Store(file);
+    assert.deepEqual(b.candles(mint).map((k) => k.o), [2e-8, 3e-8]);
+    b.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+/** An RPC at http://rpc.test, through statsConnection, that answers getTokenLargestAccounts
+ *  with HTTP `status` (as api.mainnet-beta.solana.com answered it 429 on 2026-10-01) and
+ *  getTokenSupply with the supply. `calls`: requests by method. */
+function rpcSaying(status) {
+  const calls = {};
+  const base = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls[body.method] = (calls[body.method] ?? 0) + 1;
+    if (body.method === "getTokenLargestAccounts") {
+      const error = { code: status, message: status === 429 ? "Too many requests for a specific RPC call" : "Forbidden" };
+      return new Response(JSON.stringify({ jsonrpc: "2.0", error, id: body.id }), { status, statusText: status === 429 ? "Too Many Requests" : "Forbidden" });
+    }
+    const value = { amount: "1000000000000000", decimals: 6, uiAmount: 1e9, uiAmountString: "1000000000" };
+    return new Response(JSON.stringify({ jsonrpc: "2.0", result: { context: { slot: 1 }, value }, id: body.id }), { status: 200 });
+  };
+  return { conn: statsConnection("http://rpc.test", base), calls };
+}
+
+test("top holders over an RPC that rate-limits them: a 429 is one call and null at once, then not asked for 10 minutes; a 403, never again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = NOW;
+  const logs = [];
+  const p = { row: { mint: MINT.toBase58(), presale: PRESALE.toBase58() }, pool: DBC_POOL, damm: null };
+  /** One coinStats read over `chain`; it must settle in under 1 s of fake time. */
+  async function read(chain) {
+    let s;
+    coinStats({ chain, p, store: new Store(":memory:"), fetch: routes({}), nowMs: clock }).then((x) => (s = x));
+    for (let ms = 0; ; ms += 50) {
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      if (s) return s;
+      assert.ok(ms < 1_000, "settled in under 1 s of fake time");
+      t.mock.timers.tick(50);
+    }
+  }
+
+  const limited = rpcSaying(429);
+  const chain = chainReads(limited.conn, { now: () => clock, log: (m) => logs.push(m) });
+  const s = await read(chain);
+  assert.deepEqual([s.top, s.supply, limited.calls.getTokenLargestAccounts], [null, "1000000000000000", 1], "one call, no retries");
+  clock += TOP_REST_MS - 1;
+  assert.equal((await read(chain)).top, null);
+  assert.equal(limited.calls.getTokenLargestAccounts, 1, "not asked within 10 min");
+  clock += 1;
+  await read(chain);
+  assert.equal(limited.calls.getTokenLargestAccounts, 2, "asked again after 10 min");
+  assert.equal(TOP_REST_MS, 10 * 60_000);
+  assert.equal(logs.length, 2, "logged once each time a rest starts");
+  assert.match(logs[0], /429/);
+
+  const forbidden = rpcSaying(403);
+  const never = chainReads(forbidden.conn, { now: () => clock, log: (m) => logs.push(m) });
+  for (const later of [0, TOP_REST_MS, 30 * 86_400_000]) {
+    clock += later;
+    assert.equal((await read(never)).top, null);
+  }
+  assert.equal(forbidden.calls.getTokenLargestAccounts, 1, "a 403 is never asked again");
+  assert.equal(forbidden.calls.getTokenSupply, 3, "the supply is still read");
+  assert.equal(logs.length, 3);
+  assert.match(logs[2], /403/);
 });

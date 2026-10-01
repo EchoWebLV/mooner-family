@@ -58,11 +58,20 @@ const publicToken = (r) =>
     openedAt: r.opened_at,
   };
 
+/** Own candles older than this are pruned when the store opens (the chart shows 5 hours). */
+export const CANDLES_KEPT_MS = 24 * 3_600_000;
+
 export class Store {
   constructor(file) {
     if (file !== ":memory:" && !fs.existsSync(file)) fs.closeSync(fs.openSync(file, "a", 0o600));
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = DELETE;" + SCHEMA);
+    this.db.prepare("DELETE FROM candles WHERE t < ?").run(Date.now() - CANDLES_KEPT_MS);
+    // the candle statements run on every pool change: prepared once
+    this.addPriceSql = this.db.prepare(
+      "INSERT INTO candles (mint, t, o, h, l, c) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (mint, t) DO UPDATE SET h = max(h, excluded.h), l = min(l, excluded.l), c = excluded.c",
+    );
+    this.candlesSql = this.db.prepare("SELECT t, o, h, l, c FROM candles WHERE mint = ? AND t >= ? ORDER BY t");
   }
 
   close() {
@@ -138,14 +147,12 @@ export class Store {
   addPrice(mint, price, at = Date.now()) {
     if (!(Number.isFinite(price) && price > 0)) return;
     const t = Math.floor(at / 60_000) * 60_000;
-    this.db
-      .prepare("INSERT INTO candles (mint, t, o, h, l, c) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (mint, t) DO UPDATE SET h = max(h, excluded.h), l = min(l, excluded.l), c = excluded.c")
-      .run(mint, t, price, price, price, price);
+    this.addPriceSql.run(mint, t, price, price, price, price);
   }
 
   /** The coin's one-minute candles from `since` (ms) on, oldest first: { t, o, h, l, c }. */
   candles(mint, since = 0) {
-    return this.db.prepare("SELECT t, o, h, l, c FROM candles WHERE mint = ? AND t >= ? ORDER BY t").all(mint, since).map((r) => ({ ...r }));
+    return this.candlesSql.all(mint, since).map((r) => ({ ...r }));
   }
 
   /** The token opened as `presale`, for a presale that has closed since. */
