@@ -34,11 +34,14 @@ export function makeAppLinkRoutes({ certs = [] } = {}) {
 }
 
 /** The lines main.js logs about MOONER_ANDROID_CERTS before its checks (so --check shows them
- *  too). A left-out word goes only as its length and first 4 characters: someone may paste
- *  a secret into the variable by mistake, and it mustn't land in the host's logs. */
+ *  too). Someone may paste a secret into the variable by mistake, and it mustn't land in the
+ *  host's logs: a left-out word goes as its length, plus its first 4 characters only if it has
+ *  a colon (a mistyped fingerprint). A phrase's words never show any letters, since the first
+ *  4 letters of each word are enough to rebuild a seed phrase. */
 export function appLinksLog({ androidCerts, androidCertsBad }) {
-  const lines = [androidCerts.length ? `App Links for ${androidCerts.length} Android signing key(s)` : "no MOONER_ANDROID_CERTS: no assetlinks.json, app links open the site"];
-  const hint = (w) => `${w.length} chars "${w.slice(0, 4)}…"`;
+  const none = androidCertsBad.length ? "MOONER_ANDROID_CERTS is set but has no valid SHA-256 fingerprint" : "no MOONER_ANDROID_CERTS";
+  const lines = [androidCerts.length ? `App Links for ${androidCerts.length} Android signing key(s)` : `${none}: no assetlinks.json, app links open the site`];
+  const hint = (w) => (w.includes(":") ? `${w.length} chars "${w.slice(0, 4)}…"` : `${w.length} chars`);
   if (androidCertsBad.length) lines.push(`MOONER_ANDROID_CERTS: ${androidCertsBad.length} word(s) left out (not a SHA-256 fingerprint, or Expo's public debug key): ${androidCertsBad.map(hint).join(", ")}`);
   return lines;
 }

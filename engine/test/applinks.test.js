@@ -82,7 +82,7 @@ test("MOONER_ANDROID_CERTS: fingerprints, comma or space separated, uppercased; 
   }
 });
 
-test("App Links log lines (main.js, --check too): how many keys; a left-out word only as its length and first 4 characters", () => {
+test("App Links log lines (main.js, --check too): how many keys; a left-out word as its length, plus its first 4 characters only if it has a colon", () => {
   assert.deepEqual(appLinksLog(androidCertsFrom("")), ["no MOONER_ANDROID_CERTS: no assetlinks.json, app links open the site"]);
   assert.deepEqual(appLinksLog(androidCertsFrom(`${CERT},${CERT2}`)), ["App Links for 2 Android signing key(s)"]);
   // a secret pasted into the variable by mistake must not reach the host's logs
@@ -91,7 +91,19 @@ test("App Links log lines (main.js, --check too): how many keys; a left-out word
   const lines = appLinksLog(androidCertsFrom(`${CERT} AB:CD ${secret} ${expoDebug}`));
   assert.deepEqual(lines, [
     "App Links for 1 Android signing key(s)",
-    `MOONER_ANDROID_CERTS: 3 word(s) left out (not a SHA-256 fingerprint, or Expo's public debug key): 5 chars "AB:C…", 39 chars "pina…", 95 chars "FA:C…"`,
+    `MOONER_ANDROID_CERTS: 3 word(s) left out (not a SHA-256 fingerprint, or Expo's public debug key): 5 chars "AB:C…", 39 chars, 95 chars "FA:C…"`,
   ]);
-  assert.ok(!lines.join("\n").includes(secret.slice(0, 5)));
+  assert.ok(!lines.join("\n").includes(secret.slice(0, 4)));
+});
+
+test("App Links log lines: a pasted phrase gives away none of its words' first 4 letters (4 letters name a seed word)", () => {
+  const words = "apple banana cherry dolphin eagle falcon garden harbor island jungle kettle lemon".split(" ");
+  const lines = appLinksLog(androidCertsFrom(words.join(" ")));
+  assert.deepEqual(lines, [
+    "MOONER_ANDROID_CERTS is set but has no valid SHA-256 fingerprint: no assetlinks.json, app links open the site",
+    `MOONER_ANDROID_CERTS: 12 word(s) left out (not a SHA-256 fingerprint, or Expo's public debug key): ${words.map((w) => `${w.length} chars`).join(", ")}`,
+  ]);
+  for (const w of words) assert.ok(!lines.join("\n").includes(w.slice(0, 4)), w.slice(0, 4));
+  // set, but only with words that aren't kept: not "no MOONER_ANDROID_CERTS"
+  assert.equal(appLinksLog(androidCertsFrom("AB:CD"))[0], "MOONER_ANDROID_CERTS is set but has no valid SHA-256 fingerprint: no assetlinks.json, app links open the site");
 });
