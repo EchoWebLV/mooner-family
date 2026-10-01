@@ -1024,6 +1024,40 @@ test("cosign: a repeat of a join tx that already went out gets the early 202 and
   }
 });
 
+test("cosign: a referral write that throws is logged once and never changes a sent join's reply, 200 or 202", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator], sendTimeoutMs: 300 });
+  const add = Referrals.prototype.add;
+  const error = console.error;
+  const logged = [];
+  const lines = () => logged.filter((l) => l.startsWith("referral "));
+  Referrals.prototype.add = () => {
+    throw new Error("disk full");
+  };
+  console.error = (...a) => logged.push(a.join(" "));
+  try {
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const presale = presalePda(pid, mint);
+    assert.equal((await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)) })).status, 200);
+    const ref = Keypair.generate().publicKey.toBase58();
+
+    const u1 = Keypair.generate();
+    const ok = await s.call("POST", "/api/cosign", { tx: entryTx(u1, joinIxs(u1.publicKey, presale)), ref });
+    assert.deepEqual([ok.status, ok.json.kind, ok.json.confirmed, "sent" in ok.json], [200, "join", true, false], "the 200 is the join's");
+    assert.deepEqual(lines(), [`referral ${ok.json.sig}: disk full`], "one line, naming the sent join");
+
+    s.l1.confirm = false;
+    const u2 = Keypair.generate();
+    const slow = await s.call("POST", "/api/cosign", { tx: entryTx(u2, joinIxs(u2.publicKey, presale)), ref });
+    assert.deepEqual([slow.status, slow.json.kind, slow.json.confirmed, "sent" in slow.json], [202, "join", false, false], "the 202 is the join's");
+    assert.deepEqual(lines().slice(1), [`referral ${slow.json.sig}: disk full`], "one more line");
+  } finally {
+    Referrals.prototype.add = add;
+    console.error = error;
+    await s.close();
+  }
+});
+
 test("refOf: a wallet that isn't the joiner's, else null", () => {
   const user = Keypair.generate().publicKey;
   const other = Keypair.generate().publicKey;
