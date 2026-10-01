@@ -957,18 +957,27 @@ test("setCommit: a later rotate_key isn't blocked by an earlier one", async () =
   assert.ok(s.info.er.sent.at(-1).feePayer.equals(await seatKeyOf(s.info.er, s.seat)));
 });
 
-test("setCommit: the new key is kept before rotate_key goes out, so a lost answer costs no second popup", async () => {
+test("setCommit: the new key is kept before rotate_key goes out, so a lost answer costs no second popup", async (t) => {
   const s = seated({ key: Keypair.generate(), mine: Keypair.generate() });
   const f = flows({ keys: s.keys });
   const go = (amount, retries) => f.setCommit({ info: s.info, wallet: s.w.publicKey, signTransaction: s.w.signTransaction, view: s.view, amount, retries });
-  // the rotate_key lands, but the status read right after the send fails
+  // the rotate_key lands, but no status read answers: a failed read only means "ask again",
+  // so the send ends when its 30 s are up
   const statuses = s.info.er.getSignatureStatuses;
   s.info.er.getSignatureStatuses = async () => {
-    s.info.er.getSignatureStatuses = statuses;
     throw new Error("fetch failed");
   };
-  await assert.rejects(go(300_000_000n, 0), /fetch failed/);
-  assert.deepEqual(s.info.er.sent.map((tx) => tags(tx, s.info.pid)), [[IX.ROTATE_KEY]]);
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  let lost = null;
+  go(300_000_000n, 0).then(() => (lost = "resolved"), (e) => (lost = e));
+  for (let i = 0; i < 400 && !lost; i++) {
+    for (let j = 0; j < 5; j++) await tick();
+    t.mock.timers.tick(250);
+  }
+  t.mock.timers.reset();
+  assert.match(lost?.message ?? String(lost), /rotate_key \(sig1\): not confirmed in time/);
+  s.info.er.getSignatureStatuses = statuses;
+  assert.ok(s.info.er.sent.every((tx) => tags(tx, s.info.pid).join() === String(IX.ROTATE_KEY)), "only the rotate_key went out (sent again while unanswered)");
   await go(300_000_000n);
   assert.equal(s.w.asked.length, 1, "no second rotate_key");
   assert.ok(s.info.er.sent.at(-1).feePayer.equals(await seatKeyOf(s.info.er, s.seat)));

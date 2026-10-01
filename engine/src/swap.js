@@ -137,8 +137,9 @@ export const PREFLIGHT_TEXT = "This trade would fail right now, so it wasn't sen
 const refused = (e, m) => typeof e?.transactionMessage === "string" || m.startsWith("Simulation failed");
 
 /** A trade's error in plain words: no route, slippage, a preflight the RPC refused, else
- *  what flows.explain says. */
+ *  what flows.explain says. A send whose outcome isn't known keeps its words. */
 export function explainSwap(e) {
+  if (e?.outcomeUnknown) return e.message; // tx.js OUTCOME_UNKNOWN: the trade may have landed
   if (e?.noRoute || e?.message === NO_ROUTE) return NO_ROUTE_TEXT;
   const m = e?.message ?? String(e);
   const logs = e?.transactionLogs ?? (Array.isArray(e?.logs) ? e.logs : []);

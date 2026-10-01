@@ -13,7 +13,7 @@ import { DELEGATION_PROGRAM, describeTxError, ERRORS, failedWith } from "./const
 import * as I from "./ix.js";
 import { decodePresale, decodeSeat, PRESALE_LEN, SEAT_LEN, STATE } from "./layout.js";
 import { presalePda, seatPda } from "./pdas.js";
-import { connect, send, sendSigned, txLogs } from "./tx.js";
+import { connect, send, sendSigned, timedFetch, txLogs } from "./tx.js";
 import { cutToRoom, joinIxs, mintMessageText, openIxs, unsignedTx, validSeat } from "./client.js";
 
 /** Solana's public RPC for each cluster the server runs on (/api/info `cluster`). */
@@ -65,11 +65,13 @@ const entryFee = (signatures, cu, priority) => {
 export const joinFee = (priority = PRIORITY) => entryFee(2n, 403_000n, priority);
 export const openFee = (priority = PRIORITY) => entryFee(3n, 603_000n, priority);
 const rents = new Map(); // "<rpc> <bytes>" -> lamports; a read that fails or hangs isn't kept
+/** A Connection to Solana at `url` whose requests give up after 10 s (tx.js timedFetch). */
+const solana = (url) => new Connection(url, { commitment: "confirmed", fetch: timedFetch });
 
-/** Rent for `bytes` as `rpc` (a URL or a Connection) says, read once. A read gets 10 s: web3.js
- *  can't abort its fetch, and a hung read kept here would hang every later cost. */
+/** Rent for `bytes` as `rpc` (a URL or a Connection) says, read once. A read gets 10 s: a
+ *  Connection handed in may never give up, and a hung read kept here would hang every later cost. */
 function rentOn(rpc) {
-  const conn = typeof rpc === "string" ? new Connection(rpc, "confirmed") : rpc;
+  const conn = typeof rpc === "string" ? solana(rpc) : rpc;
   return (bytes) => {
     const k = `${conn.rpcEndpoint} ${bytes}`;
     const read = () => timed(conn.getMinimumBalanceForRentExemption(bytes), 10_000, "Solana");
@@ -131,6 +133,7 @@ const PLAIN = {
  *  trade's too); `named` gives Mooner's own codes their names. */
 export function explain(e) {
   const m = e?.message ?? String(e);
+  if (e?.outcomeUnknown) return m; // tx.js OUTCOME_UNKNOWN: it may have landed
   if (/User rejected|rejected the request|declined|cancel/i.test(m)) return "You cancelled it in your wallet.";
   // the runtime's words and System's (Token's bare "insufficient funds" is about tokens)
   if (/insufficient funds for (fee|rent)|no record of a prior credit|insufficient lamports/i.test(m)) return "Your wallet needs a little more SOL to cover rent and the Solana fee.";
@@ -229,7 +232,7 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
       pid: new PublicKey(i.program),
       gate: new PublicKey(i.gate),
       N: Object.fromEntries(Object.entries(i.numbers).map(([k, v]) => [k, typeof v === "string" ? BigInt(v) : v])),
-      ers: i.ers.map((e) => ({ validator: new PublicKey(e.validator), url: e.url, conn: connect(e.url) })),
+      ers: i.ers.map((e) => ({ validator: new PublicKey(e.validator), url: e.url, conn: connect(e.url, { fetch: timedFetch }) })),
     })).catch((e) => {
       infoP = null;
       throw e;
@@ -447,7 +450,7 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
   function solanaFor(info) {
     const r = rpc ?? PUBLIC_RPCS[info.cluster];
     if (!r) throw new Error(`no public Solana RPC for the server's cluster (${info.cluster})`);
-    return typeof r === "string" ? new Connection(r, "confirmed") : r;
+    return typeof r === "string" ? solana(r) : r;
   }
 
   /** Get my SOL back: the one button. The seat leaves the pool and the ER, and once it's

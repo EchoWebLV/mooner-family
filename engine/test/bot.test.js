@@ -9,7 +9,7 @@ import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, SYSTEM } from "../src/const
 import { POOL_DISC } from "../src/dbc.js";
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE, decodePresale } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
-import { sendSigned, simulate } from "../src/tx.js";
+import { OUTCOME_UNKNOWN, sendSigned, simulate } from "../src/tx.js";
 
 const pid = Keypair.generate().publicKey;
 const presale = presalePda(pid, Keypair.generate().publicKey);
@@ -137,8 +137,8 @@ test("sendSigned: after the blockhash runs out, one history look decides", async
   // it landed in the last block: that's success, not a hang
   assert.equal(await sendSigned(conn({ confirmationStatus: "finalized", err: null }), tx, opts), "sig");
   await assert.rejects(sendSigned(conn(null), tx, opts), /expired/);
-  // an RPC whose block height never moves ends too
-  await assert.rejects(sendSigned(conn(null, 0), tx, { ...opts, stuckMs: 50 }), /outcome unknown/);
+  // an RPC whose block height never moves ends too, saying it can't tell
+  await assert.rejects(sendSigned(conn(null, 0), tx, { ...opts, stuckMs: 50 }), { outcomeUnknown: true, sig: "sig", message: OUTCOME_UNKNOWN });
 });
 
 test("sendSigned and simulate: a code gets Mooner's name only when the logs say Mooner raised it", async () => {

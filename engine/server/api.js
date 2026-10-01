@@ -337,7 +337,7 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       sig = await sendSigned(l1, tx, { ixs: programs.map((programId) => ({ programId })), pid, what: out.kind, timeoutMs: sendTimeoutMs });
     } catch (e) {
       if (!(e instanceof TxError)) throw e;
-      if (!/not confirmed in time|outcome unknown/.test(e.message)) throw new HttpError(400, e.message, { sig: e.sig, logs: e.logs });
+      if (!e.outcomeUnknown && !/not confirmed in time/.test(e.message)) throw new HttpError(400, e.message, { sig: e.sig, logs: e.logs });
       sig = e.sig;
       confirmed = false;
     }
