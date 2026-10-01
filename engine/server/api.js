@@ -118,7 +118,7 @@ export function listItem(v) {
  * Presales, launched tokens and balances as users see them, read from Solana and the ERs.
  * Shared by the HTTP routes and the live feed (feed.js), so both hit the same cache.
  */
-export function makeReads({ pid, l1, bot, store, dbcConfig, now = Date.now }) {
+export function makeReads({ pid, l1, bot, store, dbcConfig, damm = () => null, now = Date.now }) {
   /** A delegated account is our presale only if it sits at our PDA for its mint. */
   function delegatedPresale(key, a) {
     if (a.data.length !== PRESALE_LEN || a.data[0] !== PRESALE_VERSION) return null;
@@ -207,7 +207,9 @@ export function makeReads({ pid, l1, bot, store, dbcConfig, now = Date.now }) {
 
   const listPresales = () => cached("list", 3_000, async () => Promise.all((await readPresales(await bot.scan())).map((r) => withUsers(view(r), r.p))));
 
-  /** Launched tokens with their pools, newest first. A pool that can't be read is null. */
+  /** Launched tokens with their pools, newest first. A pool that can't be read is null. Once a
+   *  coin migrated and the feed found its DAMM v2 pool (`damm(mint)`: { pool, sqrtPrice }),
+   *  the price is that pool's and `damm` its address. */
   const listLaunched = () =>
     cached("launched", 5_000, async () => {
       const rows = store.launches();
@@ -215,7 +217,8 @@ export function makeReads({ pid, l1, bot, store, dbcConfig, now = Date.now }) {
       const accs = await accountsOf(l1, pools);
       return rows.map((r, i) => {
         const s = decodePoolState(accs[i]?.data);
-        return { ...r, pool: s && { address: pools[i], quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated } };
+        const d = s?.migrated ? damm(r.mint) : null;
+        return { ...r, pool: s && { address: pools[i], quoteReserve: s.quoteReserve, sqrtPrice: d?.sqrtPrice ?? s.sqrtPrice, migrated: s.migrated, damm: d?.pool ?? null } };
       });
     });
 

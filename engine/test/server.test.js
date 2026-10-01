@@ -474,7 +474,7 @@ test("reads: an open presale lists its wallets, launched tokens come with their 
     s.l1.put(pool, DBC, Buffer.from(fixture.data, "base64"));
     s.later(5_000);
     const one = (await s.call("GET", "/api/launched")).json.launched[0];
-    assert.deepEqual(one.pool, { address: pool.toBase58(), quoteReserve: "197354828", sqrtPrice: "98247117170863603", migrated: false });
+    assert.deepEqual(one.pool, { address: pool.toBase58(), quoteReserve: "197354828", sqrtPrice: "98247117170863603", migrated: false, damm: null });
   } finally {
     await s.close();
   }

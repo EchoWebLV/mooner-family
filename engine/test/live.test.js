@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import WebSocket from "ws";
-import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG } from "../src/consts.js";
+import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, WSOL } from "../src/consts.js";
+import { DAMM_V2, MIGRATION_CONFIGS, dammPoolAddress } from "../src/damm.js";
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { Bot } from "../src/bot.js";
@@ -119,7 +120,7 @@ async function startLive({ paceMs = 60, hub: hubOpts = {}, before = () => {} } =
   l1.put(PYTH_SOL_USD, Keypair.generate().publicKey, pythData(12_000_000_000n));
   const store = new Store(":memory:");
   const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: er }, bot: Keypair.generate(), dbcConfig: MOONER_DBC_CONFIG, canary: true, log: () => {} });
-  const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG });
+  const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG, damm: (mint) => feed.dammOf(mint) });
   const logs = [];
   const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, log: (m) => logs.push(m) });
   before({ l1, store });
@@ -408,7 +409,7 @@ test("limits: sockets per address, and a socket that sends too much", async () =
   }
 });
 
-// ---- migration ----
+// ---- migration and the DAMM v2 pool ----
 
 const fixtureBytes = (name) => Buffer.from(JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8")).data, "base64");
 /** The trial DBC pool's bytes, with the migrated flag (byte 305) set or not. */
@@ -417,13 +418,21 @@ const dbcPool = (migrated) => {
   b[305] = migrated ? 1 : 0;
   return b;
 };
+/** The mainnet DAMM v2 pool's bytes as `mint`'s pool (token A at 168), at sqrt price `sqrt`. */
+const dammPool = (mint, sqrt = 185460299076988380n) => {
+  const b = fixtureBytes("damm-pool.json");
+  mint.toBuffer().copy(b, 168);
+  b.writeBigUInt64LE(sqrt & ((1n << 64n) - 1n), 456);
+  b.writeBigUInt64LE(sqrt >> 64n, 464);
+  return b;
+};
 /** A launched coin on the fake chain: its DBC pool written, the launch recorded. */
 function launchedCoin(l1, store, { migrated = false } = {}) {
   const { presale, mint } = newPresale(l1, store, { state: STATE.SETTLED });
   const pool = poolAddresses(MOONER_DBC_CONFIG, mint).pool;
   l1.put(pool, DBC, dbcPool(migrated));
   store.addLaunch(presale, mint, { sig: "LAUNCH", released: 9n, cost: 1n, tokens: 5n, units: 7 });
-  return { presale, mint, pool };
+  return { presale, mint, pool, damm: dammPoolAddress(MIGRATION_CONFIGS[2], mint, WSOL) };
 }
 
 test("migrated: one event when a pool's flag flips; none for a coin that migrated while the server was down", async () => {
@@ -451,6 +460,95 @@ test("migrated: one event when a pool's flag flips; none for a coin that migrate
     s.l1.write(old.pool, DBC, dbcPool(true));
     await c.next((m) => on("launched", "upsert")(m) && m.data.mint === old.mint.toBase58());
     assert.deepEqual(events, [coin.mint.toBase58()]);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("a pool that migrates: one migrated event, then the coin's price from its DAMM v2 pool", async () => {
+  const s = await startLive();
+  const coin = launchedCoin(s.l1, s.store);
+  const events = [];
+  s.feed.on("migrated", (row) => events.push(row.mint));
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    const first = (await c.next(on("launched", "upsert"))).data.pool;
+    assert.deepEqual([first.migrated, first.damm, first.sqrtPrice], [false, null, "98247117170863603"]);
+
+    // the migration: the DAMM v2 pool lands with the flag
+    s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    const moved = await c.next((m) => on("launched", "upsert")(m) && m.data.pool.damm);
+    assert.deepEqual([moved.data.pool.migrated, moved.data.pool.damm, moved.data.pool.sqrtPrice], [true, coin.damm.toBase58(), "185460299076988380"]);
+    assert.deepEqual(events, [coin.mint.toBase58()]);
+    assert.ok(s.logs.some((l) => l.includes("migrated to DAMM v2")), "logged");
+
+    // it trades on DAMM v2 now: that pool's changes are pushed
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n));
+    const traded = await c.next((m) => on("launched", "upsert")(m) && m.data.pool.sqrtPrice === "200000000000000000");
+    assert.equal(traded.data.pool.damm, coin.damm.toBase58());
+    // the DBC pool again (still migrated): no second event
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    await c.next(on("launched", "upsert"));
+    assert.deepEqual(events, [coin.mint.toBase58()]);
+
+    // a new socket's snapshot has the DAMM v2 price too
+    const d = await s.client();
+    d.sub("launched");
+    const [row] = (await d.next(on("launched", "snapshot"))).data;
+    assert.deepEqual([row.pool.damm, row.pool.sqrtPrice], [coin.damm.toBase58(), "200000000000000000"]);
+    d.close();
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("the DAMM v2 pool a moment after the flag: read again until it's there", async () => {
+  const s = await startLive();
+  const coin = launchedCoin(s.l1, s.store);
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    const flagged = (await c.next(on("launched", "upsert"))).data.pool;
+    assert.deepEqual([flagged.migrated, flagged.damm], [true, null], "migrated, its new pool not there yet");
+    await wait(150);
+    s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    const found = await c.next((m) => on("launched", "upsert")(m) && m.data.pool.damm);
+    assert.equal(found.data.pool.sqrtPrice, "185460299076988380");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("at start: a coin that migrated while the server was down gets its DAMM v2 pool, and no event", async () => {
+  let coin;
+  const s = await startLive({
+    before: ({ l1, store }) => {
+      coin = launchedCoin(l1, store, { migrated: true });
+      l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    },
+  });
+  const events = [];
+  s.feed.on("migrated", (row) => events.push(row));
+  const c = await s.client();
+  try {
+    await wait(50);
+    c.sub("launched");
+    const [row] = (await c.next(on("launched", "snapshot"))).data;
+    assert.deepEqual([row.pool.migrated, row.pool.damm, row.pool.sqrtPrice], [true, coin.damm.toBase58(), "185460299076988380"]);
+    assert.ok(s.l1.accountSubs().includes(coin.damm.toBase58()), "subscribed to the DAMM v2 pool");
+    assert.deepEqual(events, []);
+    assert.deepEqual(s.feed.status().damm, 1);
   } finally {
     c.close();
     await s.close();

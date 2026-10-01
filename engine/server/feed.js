@@ -2,8 +2,9 @@
 //   - our program on Solana and on each ER, and the delegation program's copies of our
 //     presales and seats on Solana: any change to a presale or a seat re-reads that
 //     presale once (paced) and pushes it to `presale:<key>` and `presales`
-//   - each launched token's DBC pool: pushed to `launched` as it trades; the flip of its
-//     migrated flag is the "migrated" event (feed.on("migrated", row))
+//   - each launched token's DBC pool, and its DAMM v2 pool once it migrated: pushed to
+//     `launched` as it trades; the flip of the DBC pool's migrated flag is the "migrated"
+//     event (feed.on("migrated", row))
 //   - each watched wallet's SOL: `wallet:<wallet>`
 //   - SOL/USD from Pyth's price account: `sol`
 //   - chat messages and pictures as the server saves them: `chat:<channel>`, `profiles`
@@ -12,6 +13,7 @@
 import { EventEmitter } from "node:events";
 import { PublicKey } from "@solana/web3.js";
 import { DELEGATION_PROGRAM } from "../src/consts.js";
+import { decodeDammPool, findDammPool } from "../src/damm.js";
 import { PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, SEAT_VERSION, decodePresale, decodeSeat } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
@@ -45,15 +47,17 @@ export class Feed extends EventEmitter {
   /**
    * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
    * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
-   * `db`: the server's SQLite (chat and pictures).
+   * `db`: the server's SQLite (chat and pictures). `dammTries`: reads of the DAMM v2 pool
+   * after a migration, `retryMs` apart, before the feed gives up on it until the next
+   * restart.
    */
-  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, log = console.log }) {
+  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, dammTries = 10, log = console.log }) {
     super({ captureRejections: true });
-    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, log });
+    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, dammTries, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
     this.wallets = new Map(); // topic -> listener id
-    this.pools = new Map(); // mint -> { row, pool, data, migrated }
+    this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, retry }
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
@@ -89,6 +93,7 @@ export class Feed extends EventEmitter {
       await (kind === "program" ? conn.removeProgramAccountChangeListener(id) : conn.removeAccountChangeListener(id)).catch(() => {});
     }
     for (const p of this.paced.values()) clearTimeout(p.timer);
+    for (const p of this.pools.values()) clearTimeout(p.retry);
   }
 
   sub(conn, kind, id) {
@@ -176,14 +181,14 @@ export class Feed extends EventEmitter {
     for (const row of this.store.launches()) {
       if (this.pools.has(row.mint)) continue;
       const pool = poolAddresses(this.dbcConfig, new PublicKey(row.mint)).pool;
-      this.pools.set(row.mint, { row, pool, data: null, migrated: null });
+      this.pools.set(row.mint, { row, pool, data: null, migrated: null, damm: null, dammState: null });
       this.sub(this.l1, "account", this.l1.onAccountChange(pool, (acc) => this.onPool(row.mint, acc.data), { commitment: "confirmed" }));
       if (push) this.l1.getAccountInfo(pool).then((a) => a && this.onPool(row.mint, a.data), () => {});
     }
   }
 
-  /** Reads every pool not read yet in one go (at start), so its migrated flag is known before
-   *  it can flip: a coin that migrated while the server was down fires no event. */
+  /** Reads every pool not read yet in one go (at start): its migrated flag is known before it
+   *  can flip, and a coin that migrated while the server was down gets its DAMM v2 pool. */
   async readPools() {
     const list = [...this.pools.values()].filter((p) => p.migrated === null);
     const accs = await accountsOf(this.l1, list.map((p) => p.pool)).catch((e) => (this.log(`live pools: ${e.message}`), []));
@@ -193,7 +198,14 @@ export class Feed extends EventEmitter {
       const p = list[i];
       p.data ??= a.data;
       p.migrated ??= s.migrated;
+      if (s.migrated) this.findDamm(p.row.mint);
     });
+  }
+
+  /** Where a migrated coin trades now, for api.js listLaunched: { pool, sqrtPrice } or null. */
+  dammOf(mint) {
+    const p = this.pools.get(mint);
+    return p?.damm ? { pool: p.damm.toBase58(), sqrtPrice: p.dammState.sqrtPrice } : null;
   }
 
   onPool(mint, data) {
@@ -206,9 +218,8 @@ export class Feed extends EventEmitter {
       if (!s) return;
       const was = p.migrated;
       p.migrated = s.migrated;
-      const pool = { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated };
-      const row = { ...p.row, pool };
-      this.publish("launched", { type: "upsert", data: row });
+      if (s.migrated && !p.damm) this.findDamm(mint);
+      const row = this.pushPool(p);
       if (s.migrated && was === false) {
         this.log(`$${p.row.token?.symbol} (${mint}) migrated to DAMM v2`);
         try {
@@ -217,6 +228,61 @@ export class Feed extends EventEmitter {
           this.log(`migrated listener: ${e?.message ?? e}`);
         }
       }
+    });
+  }
+
+  /** The `launched` row of pool record `p`: the DBC pool's figures, and once the DAMM v2 pool
+   *  is known its price (the coin trades there now) and address. */
+  poolRow(p) {
+    const s = decodePoolState(p.data);
+    if (!s) return null;
+    const sqrtPrice = p.dammState?.sqrtPrice ?? s.sqrtPrice;
+    return { ...p.row, pool: { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice, migrated: s.migrated, damm: p.damm?.toBase58() ?? null } };
+  }
+
+  /** Pushes `p`'s row to `launched`; returns it (null if the DBC pool doesn't decode). */
+  pushPool(p) {
+    const row = this.poolRow(p);
+    if (!row) return null;
+    this.publish("launched", { type: "upsert", data: row });
+    return row;
+  }
+
+  /** Finds the DAMM v2 pool `mint` migrated into and subscribes to it. The pool may land a
+   *  moment after the flag, so it's read again `retryMs` apart, `dammTries` times. */
+  async findDamm(mint, tries = this.dammTries) {
+    const p = this.pools.get(mint);
+    if (!p || p.damm || p.finding) return;
+    p.finding = true;
+    let found = null;
+    try {
+      found = await findDammPool(this.l1, new PublicKey(mint));
+    } catch (e) {
+      this.log(`live damm ${mint}: ${e.message}`);
+    }
+    p.finding = false;
+    if (!found) {
+      if (tries > 1) (p.retry = setTimeout(() => this.findDamm(mint, tries - 1), this.retryMs)).unref?.();
+      else this.log(`no DAMM v2 pool found for ${mint}: its price stays the one at migration`);
+      return;
+    }
+    p.damm = found.pool;
+    p.dammState = found.state;
+    this.reads.forgetLaunched();
+    this.sub(this.l1, "account", this.l1.onAccountChange(found.pool, (acc) => this.onDamm(mint, acc.data), { commitment: "confirmed" }));
+    this.pushPool(p);
+  }
+
+  onDamm(mint, data) {
+    const p = this.pools.get(mint);
+    if (!p) return;
+    p.dammData = data;
+    this.reads.forgetLaunched();
+    this.pace(`damm:${mint}`, this.poolPaceMs, async () => {
+      const s = decodeDammPool(p.dammData);
+      if (!s) return;
+      p.dammState = s;
+      this.pushPool(p);
     });
   }
 
@@ -255,7 +321,8 @@ export class Feed extends EventEmitter {
 
   /** What the feed is watching and what it heard, for /api/health. */
   status() {
-    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, sol: this.sol };
+    const damm = [...this.pools.values()].filter((p) => p.damm).length;
+    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, damm, sol: this.sol };
   }
 
   // ---- the hub's hooks ----

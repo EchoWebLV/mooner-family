@@ -121,7 +121,8 @@ if (args.check) {
   process.exit(0);
 }
 
-const reads = makeReads({ pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, store: ctx.store, dbcConfig: cfg.dbcConfig });
+// a migrated coin's price and DAMM v2 pool come from the feed, which watches that pool
+const reads = makeReads({ pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, store: ctx.store, dbcConfig: cfg.dbcConfig, damm: (mint) => feed.dammOf(mint) });
 const feed = new Feed({ reads, l1: ctx.l1, ers: ctx.bot.ers, pid: cfg.pid, dbcConfig: cfg.dbcConfig, store: ctx.store, db: ctx.store.db, log: (m) => log(`live ${m}`) });
 const keeper = new Keeper({
   bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`),
