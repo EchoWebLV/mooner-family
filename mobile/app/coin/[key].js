@@ -1,5 +1,6 @@
-// A launched coin: its market cap, price, curve and launch time, its mint to copy, its links,
-// and the seat this phone joined with. `key` is the coin's presale.
+// A launched coin: its chart, market cap, price, liquidity, volume, curve, holders and launch
+// time, your position, its mint to copy, its links, and the seat this phone joined with.
+// `key` is the coin's presale.
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
@@ -7,7 +8,10 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
 import { store } from "../../src/app";
-import { capText, coinScreenState, curveOf, dayTime, inWith, priceText } from "../../src/launched/coin";
+import { PriceChart } from "../../src/launched/PriceChart";
+import {
+  atMigration, capText, coinScreenState, curveOf, dayTime, holderRows, holdersText, inWith, liquidityText, positionOf, priceText, volumeText,
+} from "../../src/launched/coin";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { FillBar } from "../../src/ui/FillBar";
 import { shortWallet, solText } from "../../src/ui/format";
@@ -32,9 +36,18 @@ export default function Coin() {
   const solUsd = useStore(store, (s) => s.solUsd);
   const loaded = useStore(store, (s) => s.loaded.launched);
   const feedError = useStore(store, (s) => s.feedError.launched);
+  const mint = row?.mint;
+  const stats = useStore(store, (s) => (mint ? s.coins[mint] : undefined));
+  const statsMissing = useStore(store, (s) => (mint ? !!s.coinMissing[mint] : false));
+  const statsError = useStore(store, (s) => (mint ? s.coinError[mint] : undefined));
+  const holding = useStore(store, (s) => (mint ? s.holdings[mint] : undefined));
   const shows = coinScreenState({ row, loaded, view });
   const token = row?.token;
   const youWereIn = inWith(detail, wallet, mine);
+  const position = positionOf(holding, row?.pool?.sqrtPrice, solUsd);
+
+  // the coin's stats and this wallet's balance of it, while this screen is open
+  useEffect(() => (mint ? store.getState().watchCoin(mint) : undefined), [mint]);
 
   return (
     <Screen padded={false}>
@@ -48,7 +61,17 @@ export default function Coin() {
               <T v="num" color={C.text1}>{`$${token.symbol}`}</T>
             </View>
           </View>
-          <Stats row={row} solUsd={solUsd} />
+          <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={row.pool?.sqrtPrice} />
+          {position ? (
+            <Card style={{ gap: 6 }}>
+              <T v="label">{`Your $${token.symbol}`}</T>
+              <T v="num">{position.tokens}</T>
+              {position.sol ? <T v="small">{position.usd ? `${position.sol} · ${position.usd}` : position.sol}</T> : null}
+              {position.sol && atMigration(row.pool) ? <T v="small" color={C.text2}>At migration</T> : null}
+            </Card>
+          ) : null}
+          <Stats row={row} stats={stats} statsDone={!!stats || statsMissing || !!statsError} solUsd={solUsd} />
+          <Holders stats={stats} wallet={wallet} />
           <MintRow mint={row.mint} />
           <LinkPills token={token} />
           {token.description ? <T color={C.text1}>{token.description}</T> : null}
@@ -70,14 +93,18 @@ export default function Coin() {
   );
 }
 
-/** Market cap, price, curve and launch time, two to a row. Until the pool is read the pool's
- *  three say "Pool loading". Once the pool has migrated, its DBC price stopped moving: the
- *  cap and price are the ones at migration and say so. */
-function Stats({ row, solUsd }) {
+/** Market cap, price, liquidity, 24h volume, curve and launch time, two to a row. Until the
+ *  pool is read the pool's figures say "Pool loading"; until the stats came (or the server
+ *  said it has none), theirs say "Loading". A migrated coin's price is the one at
+ *  migration (and says so) until the server has found its DAMM v2 pool; from then on it's
+ *  that pool's live price. A figure no source has says "Not known yet". */
+function Stats({ row, stats, statsDone, solUsd }) {
   const pool = row.pool;
   const sqrt = pool?.sqrtPrice;
   const curve = pool ? curveOf(pool) : null;
-  const atMigration = pool?.migrated ? <T v="small" color={C.text2}>At migration</T> : null;
+  const liquidity = liquidityText(pool, stats);
+  const volume = volumeText(stats);
+  const atMigrationNote = atMigration(pool) ? <T v="small" color={C.text2}>At migration</T> : null;
   return (
     <View style={{ gap: 12 }}>
       <View style={{ flexDirection: "row", gap: 12 }}>
@@ -85,7 +112,7 @@ function Stats({ row, solUsd }) {
           {sqrt ? (
             <>
               <T v="num">{capText(sqrt, solUsd)}</T>
-              {atMigration}
+              {atMigrationNote}
             </>
           ) : (
             <PoolLoading />
@@ -95,12 +122,16 @@ function Stats({ row, solUsd }) {
           {sqrt ? (
             <>
               <T v="num">{priceText(sqrt)}</T>
-              {atMigration}
+              {atMigrationNote}
             </>
           ) : (
             <PoolLoading />
           )}
         </Stat>
+      </View>
+      <View style={{ flexDirection: "row", gap: 12 }}>
+        <Stat label="Liquidity">{!pool ? <PoolLoading /> : liquidity == null && !statsDone ? <Loading /> : <Figure text={liquidity} />}</Stat>
+        <Stat label="24h volume">{statsDone ? <Figure text={volume} /> : <Loading />}</Stat>
       </View>
       <View style={{ flexDirection: "row", gap: 12 }}>
         <Stat label="Curve">
@@ -130,6 +161,39 @@ function Stat({ label, children }) {
 }
 
 const PoolLoading = () => <T v="small" color={C.text2}>Pool loading</T>;
+const Loading = () => <T v="small" color={C.text2}>Loading</T>;
+
+/** A figure, or "Not known yet" when no source has it. */
+const Figure = ({ text }) => (text != null ? <T v="num">{text}</T> : <T v="small" color={C.text2}>Not known yet</T>);
+
+/** The top holders read from chain (the curve, the pool and the presale by name), each with
+ *  their tokens and, when the server read the supply, their share; and the holder count once
+ *  Meteora has one. Nothing while they're read; a line when the server couldn't read them. */
+function Holders({ stats, wallet }) {
+  if (!stats) return null;
+  const rows = holderRows(stats.top, wallet, stats.supply);
+  const count = holdersText(stats);
+  return (
+    <Card style={{ gap: 10 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+        <T v="label">Top holders</T>
+        {count ? <T v="small">{`${count} holders`}</T> : null}
+      </View>
+      {rows == null ? (
+        <T v="small" color={C.text2}>Couldn't read the holders right now</T>
+      ) : rows.length === 0 ? (
+        <T v="small" color={C.text2}>No holders yet</T>
+      ) : (
+        rows.map((h) => (
+          <View key={h.key} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+            <T numberOfLines={1} style={{ flexShrink: 1 }} color={h.who === "You" ? C.accent : C.text0}>{h.who}</T>
+            <T v="num">{h.share ? `${h.tokens} · ${h.share}` : h.tokens}</T>
+          </View>
+        ))
+      )}
+    </Card>
+  );
+}
 
 /** The mint, short, and "Copy": then "Copied" for COPIED_MS, or an error buzz if the copy
  *  didn't take. */

@@ -1,7 +1,9 @@
 // What the Launched list and the coin screen say: price, market cap, curve, launch time, your seat.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { capText, coinScreenState, curveOf, dayTime, inWith, priceText, sig3, stillIn } from "../src/launched/coin.js";
+import {
+  atMigration, capText, coinScreenState, curveOf, dayTime, holderRows, holdersText, inWith, liquidityText, positionOf, priceText, sig3, stillIn, volumeText,
+} from "../src/launched/coin.js";
 
 // Mooner's curve starts here (engine/src/dbc.js CURVE.SQRT_START_PRICE): 28 SOL market cap.
 const START = "97610994635780032";
@@ -32,7 +34,7 @@ test("curveOf: SOL in the curve of 80, full once migrated", () => {
   assert.deepEqual(curveOf({ quoteReserve: "12345678900", migrated: false }), { fill: 12.3456789 / 80, text: "12.35 of 80 SOL" });
   assert.deepEqual(curveOf({ quoteReserve: "0", migrated: false }), { fill: 0, text: "0.00 of 80 SOL" });
   assert.equal(curveOf({ quoteReserve: "90000000000", migrated: false }).fill, 1);
-  assert.deepEqual(curveOf({ quoteReserve: "0", migrated: true }), { fill: 1, text: "Migrated to DAMM v2" });
+  assert.deepEqual(curveOf({ quoteReserve: "0", migrated: true }), { fill: 1, text: "Migrated to Meteora DAMM v2" });
 });
 
 test("dayTime: d MMM, HH:mm on this phone's clock", () => {
@@ -74,4 +76,52 @@ test("inWith: the watched seat decides while it's there, else the join from this
   assert.equal(inWith(undefined, W, joined), 250_000_000n);
   assert.equal(inWith(undefined, W, undefined), null);
   assert.equal(inWith(seat("300000000"), null, undefined), null);
+});
+
+test("atMigration: only while a migrated coin's DAMM v2 pool isn't found yet", () => {
+  assert.equal(atMigration({ migrated: false, damm: null }), false);
+  assert.equal(atMigration({ migrated: true, damm: null }), true);
+  assert.equal(atMigration({ migrated: true, damm: "Damm1111" }), false);
+  assert.equal(atMigration(null), false);
+});
+
+test("liquidity, volume, holders: from the pool before migration, Meteora after; null when unknown", () => {
+  const dbc = { quoteReserve: "12345678900", migrated: false, damm: null };
+  assert.equal(liquidityText(dbc, null), "12.35 SOL");
+  const damm = { quoteReserve: "0", migrated: true, damm: "Damm1111" };
+  assert.equal(liquidityText(damm, { venue: "damm", liquidityUsd: 9956.5 }), "$9,956.50");
+  assert.equal(liquidityText(damm, { venue: "dbc", liquidityUsd: null }), null, "stats from before the DAMM v2 pool was found");
+  assert.equal(liquidityText(null, null), null);
+  assert.equal(volumeText({ volume24hUsd: 3754478.47 }), "$3.75M");
+  assert.equal(volumeText({ volume24hUsd: null }), null);
+  assert.equal(holdersText({ holders: 1256 }), "1.26K");
+  assert.equal(holdersText({ holders: null }), null);
+  assert.equal(volumeText(undefined), null);
+});
+
+test("holderRows: the pool and presale by name, you as You, a share of the supply the server read", () => {
+  const top = [
+    { owner: "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM", amount: "700000000000000", label: "Bonding curve" },
+    { owner: "Wallet1111", amount: "12345000000", label: null },
+    { owner: "HgZ9KPJhH9aQ7NG7k7xrxzTJkP7LkBZygRTnBGZQ5u8D", amount: "5000000000000", label: null },
+  ];
+  assert.deepEqual(holderRows(top, "Wallet1111", "1000000000000000").map(({ who, tokens, share }) => [who, tokens, share]), [
+    ["Bonding curve", "700M", "70%"],
+    ["You", "12.3K", "0.00123%"],
+    ["HgZ9…5u8D", "5M", "0.5%"],
+  ]);
+  // the trial coin's supply on chain (getTokenSupply, 2026-10-01): not 1B
+  assert.equal(holderRows(top, "W", "1196140480631743")[0].share, "58.5%");
+  assert.deepEqual(holderRows(top, "W", null).map((r) => r.share), [null, null, null], "no supply read: no shares, tokens only");
+  assert.equal(holderRows(null, "W", "1"), null);
+  assert.deepEqual(holderRows([], "W", "1"), []);
+});
+
+test("positionOf: what the wallet holds and its worth at the pool's price", () => {
+  // 28 SOL market cap: 2.8e-8 SOL per token
+  const START = "97610994635780032";
+  assert.deepEqual(positionOf({ raw: 1_000_000_000_000n, decimals: 6, ui: 1e6 }, START, 150), { tokens: "1M", sol: "0.028 SOL", usd: "$4.20" });
+  assert.deepEqual(positionOf({ raw: 500_000n, decimals: 6, ui: 0.5 }, null, 150), { tokens: "0.5", sol: null, usd: null });
+  assert.equal(positionOf({ raw: 0n, decimals: 6, ui: 0 }, START, 150), null);
+  assert.equal(positionOf(undefined, START, 150), null);
 });
