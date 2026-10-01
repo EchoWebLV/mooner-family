@@ -9,10 +9,9 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07080b",
     "android": {
-      "package": "family.mooner.app",
-      "edgeToEdgeEnabled": true
+      "package": "family.mooner.app"
     },
-    "plugins": ["expo-router", "expo-secure-store", "expo-font"],
+    "plugins": [["expo-router", { "sitemap": false }], "expo-secure-store", "expo-font"],
     "experiments": { "typedRoutes": false }
   }
 }

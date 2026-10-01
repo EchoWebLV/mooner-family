@@ -1,9 +1,11 @@
 // Sign-in: connect Seed Vault (or any Solana wallet on the phone), or look around first.
+// It opens on a cold start (index.js replaces itself with it) or on top of the app (Live's
+// header, a presale's "Connect to join"); either way it leaves for where the person was.
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { explain } from "../../engine/src/flows.js";
 import { browse } from "../src/session";
 import { useWalletActions } from "../src/wallet";
@@ -11,8 +13,19 @@ import { Logo } from "../src/ui/Logo";
 import { Button, T } from "../src/ui/kit";
 import { C, F, S } from "../src/ui/theme";
 
+// The wallet's Decline on the approval screen: an MWA protocol error with
+// ERROR_AUTHORIZATION_FAILED (-1, @solana-mobile/mobile-wallet-adapter-protocol) and the
+// wallet's own wording, which explain() doesn't know.
+const AUTHORIZATION_FAILED = -1;
+const reason = (e) => (e?.code === AUTHORIZATION_FAILED ? "You cancelled it in your wallet." : explain(e));
+
+/** Back to the screen that opened Connect, or into the tabs when nothing did (cold start). */
+function leave() {
+  if (router.canGoBack()) router.back();
+  else router.replace("/(tabs)");
+}
+
 export default function Connect() {
-  const insets = useSafeAreaInsets();
   const { connect } = useWalletActions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -23,25 +36,25 @@ export default function Connect() {
     try {
       await connect();
     } catch (e) {
-      setError(explain(e));
+      setError(reason(e));
       setBusy(false);
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    router.replace("/(tabs)");
+    leave();
   }
 
   function lookAround() {
     browse();
-    router.replace("/(tabs)");
+    leave();
   }
 
+  // The native SafeAreaView measures the insets where it sits (below the "Reconnecting…"
+  // strip when that shows) and adds them to this padding.
   return (
-    <View
-      style={{
-        flex: 1, backgroundColor: C.bg0, paddingHorizontal: S.gutter,
-        paddingTop: insets.top, paddingBottom: insets.bottom + 16,
-      }}
+    <SafeAreaView
+      edges={["top", "bottom"]}
+      style={{ flex: 1, backgroundColor: C.bg0, paddingHorizontal: S.gutter, paddingBottom: 16 }}
     >
       <View style={{ flex: 2, alignItems: "center", justifyContent: "center", gap: 12 }}>
         <Logo size={160} />
@@ -62,6 +75,6 @@ export default function Connect() {
         </Pressable>
         <T v="label" style={{ textAlign: "center" }}>Any Solana wallet on this phone works too.</T>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
