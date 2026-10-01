@@ -23,6 +23,13 @@ function rig({ url = "wss://x/api/ws" } = {}) {
     up() {
       this.onopen?.();
     }
+    fail() {
+      // an error, then the close that follows it; a close() after that is a no-op, as in
+      // browsers and React Native, where the socket is already CLOSED
+      this.closed = true;
+      this.onerror?.();
+      this.onclose?.();
+    }
     push(msg) {
       this.onmessage?.({ data: typeof msg === "string" ? msg : JSON.stringify(msg) });
     }
@@ -186,4 +193,142 @@ test("url may be a function, read on each connect", () => {
   made[0].close();
   fire();
   assert.deepEqual(made.map((s) => s.url), ["wss://x/1", "wss://x/2"]);
+});
+
+test("restart during a wait cancels it, connects now, and starts the wait over", () => {
+  const { live, made, timers, fire } = rig();
+  live.subscribe("x", () => {});
+  made[0].close();
+  fire();
+  made[1].close();
+  assert.equal(timers[0].ms, 1_000);
+  live.restart();
+  assert.equal(timers.length, 0);
+  assert.equal(made.length, 3);
+  made[2].close();
+  assert.equal(timers[0].ms, 500);
+});
+
+test("an open starts the wait over", () => {
+  const { live, made, timers, fire } = rig();
+  live.subscribe("x", () => {});
+  made[0].close();
+  fire();
+  made[1].close();
+  fire();
+  made[2].up();
+  made[2].close();
+  assert.equal(timers[0].ms, 500);
+});
+
+test("a new topic during a wait connects at once", () => {
+  const { live, made, timers } = rig();
+  live.subscribe("x", () => {});
+  made[0].close();
+  assert.equal(timers.length, 1);
+  live.subscribe("y", () => {});
+  assert.equal(timers.length, 0);
+  assert.equal(made.length, 2);
+});
+
+test("an error closes the socket and reconnects once", () => {
+  const { live, made, timers } = rig();
+  live.subscribe("x", () => {});
+  made[0].up();
+  made[0].fail();
+  assert.equal(timers.length, 1);
+  assert.equal(made.length, 1);
+});
+
+test("calling off twice leaves a later subscriber of the topic alone", () => {
+  const { live, made } = rig();
+  const got = [];
+  const off = live.subscribe("x", () => {});
+  made[0].up();
+  off();
+  live.subscribe("x", (m) => got.push(m.type));
+  off();
+  assert.deepEqual(made[0].sent.map((m) => m.op), ["sub", "unsub", "sub"]);
+  made[0].push({ topic: "x", type: "snapshot" });
+  assert.deepEqual(got, ["snapshot"]);
+});
+
+test("a listener added while a message is handed out hears the next one, not the current one", () => {
+  const { live, made } = rig();
+  const got = [];
+  let added = false;
+  live.subscribe("x", () => {
+    if (added) return;
+    added = true;
+    live.subscribe("x", (m) => got.push(m.type));
+  });
+  made[0].up();
+  made[0].push({ topic: "x", type: "first" });
+  assert.deepEqual(got, []);
+  made[0].push({ topic: "x", type: "second" });
+  assert.deepEqual(got, ["second"]);
+});
+
+test("a throwing listener does not stop the others, and is warned", () => {
+  const { live, made, warned } = rig();
+  const got = [];
+  live.subscribe("x", () => {
+    throw new Error("boom");
+  });
+  live.subscribe("x", (m) => got.push(m.type));
+  made[0].up();
+  made[0].push({ topic: "x", type: "snapshot" });
+  assert.deepEqual(got, ["snapshot"]);
+  assert.deepEqual(warned, ["live: x listener failed: boom"]);
+});
+
+test("a throwing status watcher does not stop the subscriptions going out on open, nor the reconnect on close", () => {
+  const { live, made, timers, warned } = rig();
+  live.subscribe("x", () => {});
+  live.onStatus(() => {
+    throw new Error("watcher");
+  });
+  made[0].up();
+  assert.deepEqual(made[0].sent, [{ op: "sub", topics: ["x"] }]);
+  made[0].close();
+  assert.equal(timers.length, 1);
+  assert.deepEqual(warned, [
+    "live: status listener failed: watcher", // told at once, on joining
+    "live: status listener failed: watcher", // open
+    "live: status listener failed: watcher", // closed
+  ]);
+});
+
+test("the last listener leaving during a wait: when the wait ends, no socket opens", () => {
+  const { live, made, timers, fire } = rig();
+  const off = live.subscribe("x", () => {});
+  made[0].up();
+  made[0].close();
+  off();
+  assert.equal(timers.length, 1);
+  fire();
+  assert.equal(made.length, 1);
+});
+
+test("a watcher told the socket is open finds its topics already sent", () => {
+  const { live, made } = rig();
+  const seen = [];
+  live.subscribe("x", () => {});
+  live.onStatus((up) => {
+    if (up) seen.push(made[0].sent.length);
+  });
+  made[0].up();
+  assert.deepEqual(seen, [1]);
+});
+
+test("a watcher told the socket is down finds the wait already set", () => {
+  const { live, made, timers } = rig();
+  const seen = [];
+  live.subscribe("x", () => {});
+  made[0].up();
+  live.onStatus((up) => {
+    if (!up) seen.push(timers.length);
+  });
+  made[0].close();
+  assert.deepEqual(seen, [1]);
 });

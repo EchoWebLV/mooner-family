@@ -3,8 +3,11 @@
 // reconnects on its own, and a reconnect subscribes again, so each topic gets a fresh
 // snapshot. No node: imports.
 //   client -> { op: "sub" | "unsub", topics }
-//   server -> { topic, type: "snapshot" | "upsert" | "remove" | "message" | "missing" | "error", data }
-//             or { error } when it refuses a subscription
+//   server -> { topic, type: "snapshot" | "upsert" | "remove" | "message", data }
+//             { topic, type: "missing" }                  (a presale that is not there)
+//             { topic, type: "error", error }             (a snapshot it could not read)
+//             { error }                                   (it refuses a subscription; logged)
+// A listener or a status watcher that throws is logged and skipped; the rest still run.
 
 const CHUNK = 32; // topics per message (the server takes at most 64 per socket)
 
@@ -32,9 +35,17 @@ export function makeLive({
     for (let i = 0; i < topics.length; i += CHUNK) ws.send(JSON.stringify({ op, topics: topics.slice(i, i + CHUNK) }));
   }
 
-  function status(up) {
-    open = up;
-    for (const fn of [...watchers]) fn(up);
+  // Hands `arg` to `fn`; a throw is logged, so one bad listener cannot stop the rest.
+  function call(fn, arg, who) {
+    try {
+      fn(arg);
+    } catch (e) {
+      warn(`live: ${who} listener failed: ${e?.message ?? e}`);
+    }
+  }
+
+  function notify(up) {
+    for (const fn of [...watchers]) call(fn, up, "status");
   }
 
   function connect() {
@@ -42,14 +53,15 @@ export function makeLive({
       cancel(timer);
       timer = null;
     }
-    if (ws) return;
+    if (ws || !listeners.size) return; // a wait that ran out after everyone left opens nothing
     const sock = new Socket(address());
     ws = sock;
     sock.onopen = () => {
       if (ws !== sock) return;
       tries = 0;
-      status(true);
-      tell("sub", [...listeners.keys()]);
+      open = true;
+      tell("sub", [...listeners.keys()]); // before any watcher runs
+      notify(true);
     };
     sock.onmessage = (e) => {
       if (ws !== sock) return;
@@ -63,13 +75,15 @@ export function makeLive({
         if (m?.error) warn(`live: ${m.error}`);
         return;
       }
-      for (const fn of [...(listeners.get(m.topic) ?? [])]) fn(m);
+      for (const fn of [...(listeners.get(m.topic) ?? [])]) call(fn, m, m.topic);
     };
     sock.onclose = () => {
       if (ws !== sock) return;
       ws = null;
-      if (open) status(false);
+      const wasOpen = open;
+      open = false;
       if (listeners.size) timer = later(connect, Math.min(15_000, 500 * 2 ** tries++) + random() * 500);
+      if (wasOpen) notify(false); // after the wait is set, so a watcher may connect at once
     };
     sock.onerror = () => sock.close();
   }
@@ -94,7 +108,7 @@ export function makeLive({
   /** `fn(open)` now and whenever the socket goes up or down. */
   function onStatus(fn) {
     watchers.add(fn);
-    fn(open);
+    call(fn, open, "status");
     return () => watchers.delete(fn);
   }
 
@@ -111,9 +125,11 @@ export function makeLive({
         // already closed
       }
     }
-    if (open) status(false);
+    const wasOpen = open;
+    open = false;
+    if (wasOpen) notify(false);
     tries = 0;
-    if (listeners.size) connect();
+    connect(); // also ends any wait that was running
   }
 
   return { subscribe, onStatus, restart };
