@@ -21,7 +21,7 @@ import { DELEGATION_PROGRAM, describeTxError, numbers } from "../src/consts.js";
 import { F_CLAIMED, PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, STATE_NAME, decodePresale, decodeSeat } from "../src/layout.js";
 import { configPda, poolAddresses, presalePda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
-import { TxError, sendSigned } from "../src/tx.js";
+import { TxError, sendSigned, within } from "../src/tx.js";
 import { cosign } from "../src/cosigner.js";
 import { launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "./auth.js";
@@ -253,7 +253,7 @@ export function makeReads({ pid, l1, bot, store, dbcConfig, damm = () => null, n
  * any wallet).
  * `feed` (feed.js) hears about each entry the server sends, before the chain says so.
  */
-export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, feed = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, now = Date.now, reads = makeReads({ pid, l1, bot, store, dbcConfig, now }) }) {
+export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, feed = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, simMs = 15_000, now = Date.now, reads = makeReads({ pid, l1, bot, store, dbcConfig, now }) }) {
   const N = numbers(canary);
   const L = Object.fromEntries(Object.entries({ ...DEFAULT_LIMITS, ...limits }).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
   const usedSigs = new Map(); // signature -> when, for the replay window
@@ -327,7 +327,11 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     const tx = out.signed;
     const keys = tx.message.staticAccountKeys;
     const programs = tx.message.compiledInstructions.map((ci) => keys[ci.programIdIndex]);
-    const sim = await l1.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" });
+    // the client waits for this answer: a simulation the RPC doesn't answer in `simMs` ends
+    // the request with nothing sent, so the open or join can be tried again
+    const sim = await within(l1.simulateTransaction(tx, { sigVerify: true, commitment: "confirmed" }), simMs).catch((e) => {
+      throw e?.timedOut ? new HttpError(503, "the network is slow, try again") : e;
+    });
     if (sim.value.err) {
       throw new HttpError(400, `the tx fails: ${describeTxError(sim.value.err, programs, pid, sim.value.logs)}`, { logs: sim.value.logs ?? [] });
     }

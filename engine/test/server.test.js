@@ -92,7 +92,7 @@ function presaleData(mint, state = STATE.OPEN) {
   return d;
 }
 
-async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, pinUri, pinError, web = null } = {}) {
+async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, simMs, pinUri, pinError, web = null } = {}) {
   const l1 = fakeChain();
   const store = new Store(":memory:");
   const pinned = [];
@@ -111,6 +111,7 @@ async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, pinUri
     pid, l1, bot, gateKey, alt, dbcConfig: MOONER_DBC_CONFIG, store, pinner, openers: () => allowed, cluster: "devnet", canary: true, sendTimeoutMs,
     now: () => Date.now() + skew,
     ...(limits && { limits }),
+    ...(simMs && { simMs }),
   });
   const server = createServer(routes, { log: () => {}, web });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -119,7 +120,7 @@ async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, pinUri
     const r = await fetch(base + p, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
     return { status: r.status, json: await r.json().catch(() => null) };
   };
-  return { l1, store, pinned, allowed, base, call, later: (ms) => (skew += ms), close: () => new Promise((r) => server.close(r)) };
+  return { l1, store, pinned, allowed, base, call, routes, later: (ms) => (skew += ms), close: () => new Promise((r) => server.close(r)) };
 }
 
 function mintBody(wallet, over = {}, signer = wallet) {
@@ -393,6 +394,44 @@ test("cosign: simulation failures, slow confirms, garbage, rate limits", async (
     assert.equal((await s2.call("POST", "/api/cosign", { tx: entryTx(u2, joinIxs(u2.publicKey, presale)) })).status, 429, "per IP");
   } finally {
     await s2.close();
+  }
+});
+
+test("cosign: a simulation the RPC doesn't answer in 15 s is a 503 \"the network is slow, try again\"; nothing is sent", async (t) => {
+  const user = Keypair.generate();
+  const presale = presalePda(pid, Keypair.generate().publicKey);
+  const tx = () => entryTx(user, joinIxs(user.publicKey, presale));
+  const d = await startServer();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    d.l1.simulateTransaction = () => new Promise(() => {}); // the RPC never answers
+    const cosign = d.routes.find((r) => r.method === "POST" && r.path.test("/api/cosign")).handler;
+    let out = null;
+    cosign({ body: { tx: tx() }, ip: "127.0.0.1" }).then((v) => (out = v), (e) => (out = e));
+    const flush = () => new Promise((r) => setImmediate(r));
+    await flush();
+    t.mock.timers.tick(14_999);
+    await flush();
+    assert.equal(out, null, "still simulating at 14.999 s");
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(out?.status, 503, "15 s by default");
+    assert.equal(out.message, "the network is slow, try again");
+    assert.equal(d.l1.sent.length, 0, "nothing is sent");
+  } finally {
+    t.mock.timers.reset();
+    await d.close();
+  }
+  // over HTTP, with a short deadline
+  const s = await startServer({ simMs: 50 });
+  try {
+    s.l1.simulateTransaction = () => new Promise(() => {});
+    const r = await s.call("POST", "/api/cosign", { tx: tx() });
+    assert.equal(r.status, 503);
+    assert.equal(r.json.error, "the network is slow, try again");
+    assert.equal(s.l1.sent.length, 0, "nothing is sent");
+  } finally {
+    await s.close();
   }
 });
 

@@ -577,8 +577,9 @@ export function createAppStore(): AppStore {
             side === 'buy'
               ? await quote(WSOL, t.address, BigInt(Math.round(amount * 1e9)))
               : await quote(t.address, WSOL, BigInt(Math.floor(amount * 1e6)))
-          onStep('Sign the trade in your wallet')
-          await swap(q, w.publicKey, PUBLIC, w.sendTransaction as never)
+          // the wallet signs only; the trade is sent from here until it lands or its
+          // blockhash runs out (a lost answer is outcome unknown, never a plain failure)
+          await swap(q, w.publicKey, PUBLIC, w.signTransaction, onStep)
           const tokens = side === 'buy' ? Number(q.outAmount) / 1e6 : Number(q.inAmount) / 1e6
           const sol = side === 'buy' ? Number(q.inAmount) / 1e9 : Number(q.outAmount) / 1e9
           readHeld(tokenId).catch(() => {})

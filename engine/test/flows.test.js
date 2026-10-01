@@ -534,25 +534,38 @@ test("openPresale: the wallet pays, the app's CU price, the saved session key is
   assert.equal(checkEntryTx(cosigned, { pid: info.pid, gate: info.gate, validators: [info.ers[0].validator], N: info.N }).kind, "open");
 });
 
-test("a cosign the server didn't answer in time may have been sent: outcome unknown, named by the signed tx; other failures stay theirs", async () => {
+test("a cosign that may have been sent (no answer in time, a 5xx, a network error, a reply that isn't JSON) is outcome unknown, named by the signed tx; only the server's 4xx stays plain", async () => {
   const info = fakeInfo();
   const w = fakeWallet();
-  const late = Object.assign(new ApiError(0, "the server didn't answer in 90 s", null), { timedOut: true });
-  let fail = late;
+  let fail = null;
   const api = { ...fakeApi(info), cosign: async () => { throw fail; } };
-  const open = () => flows({ api }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n });
-  const e = await open().catch((x) => x);
-  assert.equal(e.outcomeUnknown, true);
-  assert.equal(e.message, OUTCOME_UNKNOWN);
-  assert.equal(explain(e), OUTCOME_UNKNOWN);
-  assert.equal(e.what, "cosign");
-  assert.equal(e.sig, bs58.encode(w.asked[0].signatures[0]), "the wallet's signature: the tx's id");
-  // the server refusing, or a blockhash read timing out, is a plain failure
-  fail = new ApiError(400, "the gate refused", { error: "the gate refused" });
-  await assert.rejects(open(), (x) => x === fail);
+  const open = (f = flows({ api })) => f.openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n });
+  const maybeSent = [
+    Object.assign(new ApiError(0, "the server didn't answer in 90 s", null), { timedOut: true }),
+    new ApiError(502, "the server said 502", null), // a proxy, or the server failing mid-send
+    new ApiError(500, "boom", { error: "boom" }),
+    new ApiError(200, "the server's reply wasn't JSON", null),
+    new TypeError("Network request failed"), // React Native
+    new TypeError("Failed to fetch"), // a browser
+  ];
+  for (const x of maybeSent) {
+    fail = x;
+    w.asked.length = 0;
+    const e = await open().catch((y) => y);
+    assert.equal(e.outcomeUnknown, true, x.message);
+    assert.equal(e.message, OUTCOME_UNKNOWN);
+    assert.equal(explain(e), OUTCOME_UNKNOWN);
+    assert.equal(e.what, "cosign");
+    assert.equal(e.sig, bs58.encode(w.asked[0].signatures[0]), "the wallet's signature: the tx's id");
+  }
+  // the server's 4xx: it refused, or the failure is definite
+  for (const status of [400, 429, 404]) {
+    fail = new ApiError(status, "the gate refused", { error: "the gate refused" });
+    await assert.rejects(open(), (x) => x === fail, String(status));
+  }
+  // a blockhash read that times out: nothing was signed or sent
   const slow = Object.assign(new ApiError(0, "the server didn't answer in 10 s", null), { timedOut: true });
-  const api2 = { ...fakeApi(info), blockhash: async () => { throw slow; } };
-  await assert.rejects(flows({ api: api2 }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n }), (x) => x === slow);
+  await assert.rejects(open(flows({ api: { ...fakeApi(info), blockhash: async () => { throw slow; } } })), (x) => x === slow);
 });
 
 test("openPresale: 50,000 micro-lamports per CU when the app sets no price", async () => {
@@ -746,7 +759,7 @@ function refundable({ home = false } = {}) {
   const run = (view = s.view) => f.getBack({ info: s.info, wallet: s.w.publicKey, signTransaction: s.w.signTransaction, sendTransaction: s.w.sendTransaction, view, onStep });
   // a seat that's home left the pool first, unless `commit` says otherwise
   const withSeat = (where, commit = where === "home" ? "0" : "300000000") => ({ ...s.view, seats: [{ ...s.view.seats[0], where, commit }] });
-  return { ...s, key, sock, rpc, run, steps, seen, reads, landHome, presaleIs, topic: `presale:${s.presale}`, withSeat, without: { ...s.view, seats: [] } };
+  return { ...s, key, sock, rpc, api, run, steps, seen, reads, landHome, presaleIs, topic: `presale:${s.presale}`, withSeat, without: { ...s.view, seats: [] } };
 }
 
 /** What went out on Solana: each tx's Mooner instructions. */
@@ -1341,6 +1354,32 @@ test("getBack: a seat that comes home with SOL in a pool that filled: it says so
   assert.deepEqual(settled(c), [[IX.SETTLE_SEAT]]);
 });
 
+test("getBack: a refund whose last valid block height isn't a whole number is a plain error before the wallet is asked; nothing is sent", async () => {
+  for (const bad of [undefined, null, "7", 7.5, Number.NaN, 2 ** 53]) {
+    const r = refundable({ home: true });
+    r.api.blockhash = async () => ({ blockhash: BH, lastValidBlockHeight: bad });
+    const e = await r.run().then(() => null, (e) => e);
+    assert.equal(e?.message, "The server's blockhash came without its last block height, so the refund wasn't sent. Try again.", String(bad));
+    assert.equal(e.outcomeUnknown, undefined);
+    assert.equal(r.w.asked.length, 0, "the wallet isn't asked");
+    assert.equal(r.rpc.sent.length, 0, "nothing sent");
+  }
+});
+
+test("getBack: a wallet that signs the refund under another blockhash gets a plain error; nothing is sent", async () => {
+  const r = refundable({ home: true });
+  const sign = r.w.signTransaction;
+  r.w.signTransaction = async (tx) => {
+    tx.message.recentBlockhash = Keypair.generate().publicKey.toBase58(); // its own, newer one
+    return sign(tx);
+  };
+  const e = await r.run().then(() => null, (e) => e);
+  assert.equal(e?.message, "Your wallet changed the refund's blockhash, so it wasn't sent. Try again.");
+  assert.equal(e.outcomeUnknown, undefined);
+  assert.equal(r.w.asked.length, 1, "signed once");
+  assert.equal(r.rpc.sent.length, 0, "nothing sent");
+});
+
 test("getBack: a refund that fails on chain is an error that names the program's error", async () => {
   const r = refundable({ home: true });
   r.rpc.status = { confirmationStatus: "confirmed", err: { InstructionError: [0, { Custom: 6 }] } };
@@ -1374,7 +1413,8 @@ test("getBack: a refund Solana never says anything about: outcome unknown, sent 
   assert.equal(e.message, OUTCOME_UNKNOWN);
   assert.equal(explain(e), OUTCOME_UNKNOWN);
   assert.equal(e.what, "refund");
-  assert.ok(Date.now() >= 300_000, "the keeper's 300 s");
+  // 120 s and the 400 ms between polls; this clock moves 500 ms a step and is read after the step
+  assert.ok(Date.now() > 120_000 && Date.now() <= 121_000, `120 s, not the keeper's 300 s: ${Date.now()}`);
   assert.equal(r.w.asked.length, 1, "signed once");
   assert.ok(r.rpc.sent.length > 1, "sent again while it could still land");
   assert.ok(r.rpc.sent.every((tx) => Buffer.from(tx.serialize()).equals(Buffer.from(r.rpc.sent[0].serialize()))), "the same tx each time");

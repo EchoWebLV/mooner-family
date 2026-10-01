@@ -117,8 +117,9 @@ export async function swap({ quote: q, wallet, conn, signTransaction = null, sen
     // blockhash it could still land after that, and a retry would buy twice
     if (signed.message.recentBlockhash !== b.tx.message.recentBlockhash) throw new Error("Your wallet changed the trade's blockhash, so it wasn't sent. Try again.");
     onStep("Sending");
-    // someone is waiting on the sheet: an RPC whose block height isn't seen to pass Jupiter's
-    // last valid one ends the wait as outcome unknown after 120 s, not the keeper's 300 s
+    // someone is waiting on the sheet: when the RPC never shows the block height passing
+    // Jupiter's last valid one, the wait ends as outcome unknown close to 120 s after the
+    // first send (sendSigned cuts each call to the time left), not the keeper's 300 s
     return sendSigned(conn, signed, { what: "trade", lastValidBlockHeight: b.lastValidBlockHeight, preflight: true, stuckMs: 120_000 });
   }
   const sig = await sendTransaction(b.tx, conn);

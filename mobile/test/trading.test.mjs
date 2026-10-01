@@ -84,7 +84,6 @@ test("swap: the phone's priority, the wallet only signs, the app sends with a pr
     rpcEndpoint: "https://rpc",
     sendRawTransaction: async (raw, opts) => (sent.push(opts), "SIG"),
     getSignatureStatuses: async () => ({ value: [{ confirmationStatus: "confirmed", err: null }] }),
-    getBlockHeight: async () => 1,
   };
   const m = makeMarket({ conn, priority: 100_000, fetch });
   const used = [];

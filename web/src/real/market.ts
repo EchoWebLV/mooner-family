@@ -1,6 +1,6 @@
 // Market data and trades for launched coins. Quotes, swaps and token balances are the
 // engine's (engine/src/swap.js), the code the phone app trades with; a swap is a
-// transaction Jupiter builds and the user's wallet signs and sends. Candles come from
+// transaction Jupiter builds, the user's wallet signs and the app sends. Candles come from
 // GeckoTerminal through engine/src/market.js; trades of a pool from GeckoTerminal and SOL/USD
 // from Jupiter, here.
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js'
@@ -72,16 +72,20 @@ export async function quote(inputMint: string, outputMint: string, amount: bigin
   return { inAmount: String(q.inAmount), outAmount: String(q.outAmount), priceImpactPct: String(q.impact), raw: q }
 }
 
-type SendTx = (tx: VersionedTransaction, conn: Connection) => Promise<string>
+type SignTx = (tx: VersionedTransaction) => Promise<VersionedTransaction>
 
-/** Builds the swap for a quote, checks the wallet is its only signer, has the wallet sign and
- *  send it, and waits for it against Jupiter's blockhash. Errors are in plain words. */
-export async function swap(q: Quote, user: PublicKey, conn: Connection, sendTransaction: SendTx): Promise<string> {
+/** Builds the swap for a quote, checks the wallet is its only signer, has the wallet sign it
+ *  only, and sends it here as the phone does (engine sendSigned): again until it lands or
+ *  Jupiter's blockhash runs out, never signed again. One it can't tell about within 120 s is
+ *  outcome unknown (it may have landed), not a failure. Errors are in plain words; an
+ *  unknown outcome keeps `outcomeUnknown`. */
+export async function swap(q: Quote, user: PublicKey, conn: Connection, signTransaction: SignTx, onStep?: (step: string) => void): Promise<string> {
   try {
     // engine/src is plain JS: its optional signer params read as null to TypeScript
-    return await jupSwap({ quote: q.raw, wallet: user, conn, sendTransaction: sendTransaction as never })
+    return await jupSwap({ quote: q.raw, wallet: user, conn, signTransaction: signTransaction as never, ...(onStep && { onStep }) })
   } catch (e) {
-    throw new Error(explainSwap(e))
+    const unknown = (e as { outcomeUnknown?: boolean } | null)?.outcomeUnknown === true
+    throw Object.assign(new Error(explainSwap(e)), unknown ? { outcomeUnknown: true } : {})
   }
 }
 

@@ -146,6 +146,27 @@ test("sendSigned: the first send goes unanswered: it may have gone out, so its s
   assert.equal(e.sig, bs58.encode(legacy.signature));
 });
 
+test("sendSigned: an RPC that answers until 119.5 s and then goes silent ends close to stuckMs (120 s), not a call's 10 s or three past it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const live = (p) => (Date.now() < 119_500 ? p() : never());
+  // no status yet, the block height under the blockhash's: it keeps sending
+  const conn = rpc({ status: () => live(() => statuses(null)), later: () => live(async () => "SIG"), height: () => live(async () => 500) });
+  let at = null;
+  let end = null;
+  sendSigned(conn, unsigned, { lastValidBlockHeight: 1_000, stuckMs: 120_000 }).then(
+    () => (end = "landed"),
+    (e) => ((at = Date.now()), (end = e)),
+  );
+  while (!end && Date.now() < 300_000) {
+    await tick();
+    t.mock.timers.tick(100);
+  }
+  assert.equal(end?.outcomeUnknown, true);
+  assert.ok(asked(conn, "send").length > 10, "it was sending until then");
+  // past 120 s each call gets 1 ms; the clock here moves 100 ms a step
+  assert.ok(at > 120_000 && at <= 120_500, `ended at ${at} ms`);
+});
+
 test("sendSigned: with a preflight, resends keep it until a send returns a signature, then skip it; a resend's refusal is swallowed", async () => {
   const tx = signedV0();
   const PRE = { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" };

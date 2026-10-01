@@ -14,6 +14,7 @@ import * as I from "./ix.js";
 import { decodePresale, decodeSeat, PRESALE_LEN, SEAT_LEN, STATE } from "./layout.js";
 import { presalePda, seatPda } from "./pdas.js";
 import { connect, outcomeUnknown, send, sendSigned, sigOf, timedFetch, TxError } from "./tx.js";
+import { ApiError } from "./apiclient.js";
 import { cutToRoom, joinIxs, mintMessageText, openIxs, unsignedTx, validSeat } from "./client.js";
 
 /** Solana's public RPC for each cluster the server runs on (/api/info `cluster`). */
@@ -276,14 +277,17 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
   const keyFor = async (presale, wallet) => (await sessionKey(presale, wallet)) ?? (await saveSessionKey(presale, wallet, Keypair.generate()));
 
   /** Signs an entry tx with the wallet and hands it to the server, which co-signs and sends
-   *  it. Returns the server's reply once it's confirmed (or sent, if slow). A cosign the
-   *  server didn't answer in time (apiclient.js) may still have been sent: outcome unknown. */
+   *  it. Returns the server's reply once it's confirmed (or sent, if slow). Only the server's
+   *  own 4xx says nothing went out or the failure is definite (api.js: 400, 429). Any other
+   *  failure (no answer in time, a 5xx from it or a proxy, a network error, a reply that isn't
+   *  JSON) may come after the server sent it: outcome unknown, so a retry can't open a second
+   *  presale or pay twice. */
   async function signAndCosign(signTransaction, payer, ixs) {
     const { blockhash } = await api.blockhash();
     const tx = unsignedTx({ ixs: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priority }), ...ixs], payer, blockhash });
     const signed = await signTransaction(tx);
     const r = await api.cosign(b64(signed.serialize())).catch((e) => {
-      throw e?.timedOut && e.status === 0 ? outcomeUnknown(sigOf(signed), "cosign") : e;
+      throw e instanceof ApiError && e.status >= 400 && e.status < 500 ? e : outcomeUnknown(sigOf(signed), "cosign");
     });
     return r.json;
   }
@@ -583,12 +587,17 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
     if (commit > 0n) await mayTake(false);
     onStep("Sending it to your wallet");
     const { blockhash, lastValidBlockHeight } = await api.blockhash();
+    // sendSigned calls the refund dead once this height passes: without it, it couldn't
+    if (!Number.isSafeInteger(lastValidBlockHeight)) throw new Error("The server's blockhash came without its last block height, so the refund wasn't sent. Try again.");
     const ixs = [I.settleSeat(info.pid, { cranker: wallet, seat, user: wallet, presale })];
     const signed = await signTransaction(unsignedTx({ ixs, payer: wallet, blockhash }));
+    // as swap.js: under a blockhash of the wallet's own it could still land after ours runs
+    // out, once sendSigned has said the refund failed
+    if (signed?.message?.recentBlockhash !== blockhash) throw new Error("Your wallet changed the refund's blockhash, so it wasn't sent. Try again.");
     // simulated first (a settle the program would refuse isn't sent), then sent again until
     // it lands or its blockhash runs out; never signed again. One that can't be told either
-    // way is outcome unknown, as it is.
-    await sendSigned(conn, signed, { lastValidBlockHeight, preflight: true, ixs, pid: info.pid, what: "refund" }).catch((e) => {
+    // way is outcome unknown, as it is: after 120 s, as a trade, since someone is waiting.
+    await sendSigned(conn, signed, { lastValidBlockHeight, preflight: true, ixs, pid: info.pid, what: "refund", stuckMs: 120_000 }).catch((e) => {
       if (e?.outcomeUnknown) throw e;
       if (e instanceof TxError) throw new Error(`the refund failed: ${e.reason}`);
       throw named(e, info.pid); // the preflight refused it: nothing went out

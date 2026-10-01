@@ -185,18 +185,18 @@ test("swap (phone): an RPC that never answers a block height ends the trade as o
   // the trade went out; no status and no block height ever come back
   const conn = { ...fakeConn({ status: null }), getEpochInfo: never };
   const signTransaction = async (tx) => (tx.sign([wallet]), tx);
-  let end = null;
-  swap({ quote: await q0(), wallet: wallet.publicKey, conn, signTransaction, fetch: fakeFetch([200, built(jupTx())]) }).then(() => (end = "resolved"), (e) => (end = e));
+  let end = null; let at = null;
+  swap({ quote: await q0(), wallet: wallet.publicKey, conn, signTransaction, fetch: fakeFetch([200, built(jupTx())]) }).then(() => (end = "resolved"), (e) => ((at = Date.now()), (end = e)));
   for (let i = 0; i < 2_000 && !end; i++) {
     for (let j = 0; j < 5; j++) await tick();
     t.mock.timers.tick(250);
   }
-  const at = Date.now();
   t.mock.timers.reset();
   assert.equal(end?.outcomeUnknown, true, `ended with ${end?.message ?? end}`);
   assert.equal(end.sig, "SIG");
-  // the bound is checked between calls: the height read under way (10 s at most) may run past it
-  assert.ok(at > 120_000 && at <= 120_000 + 10_000 + 1_000, `ended at ${at / 1000} s`);
+  // past 120 s each call gets 1 ms (tx.js), so the hung height read can't carry it on;
+  // what's left is the 400 ms between polls, and this clock moves 250 ms a step
+  assert.ok(at > 120_000 && at <= 120_750, `ended at ${at / 1000} s`);
 });
 
 test("sendSigned skips the preflight unless asked: the keeper's sends are unchanged", async () => {

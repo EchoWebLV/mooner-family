@@ -98,7 +98,7 @@ export function outcomeUnknown(sig, what = "tx") {
 }
 
 /** `p`, or an Error with `timedOut` once `ms` pass (the call itself is left to end). */
-function within(p, ms) {
+export function within(p, ms) {
   let t;
   const late = new Promise((_, no) => (t = setTimeout(() => no(Object.assign(new Error(`the RPC didn't answer in ${ms / 1000} s`), { timedOut: true })), ms)));
   return Promise.race([p, late]).finally(() => clearTimeout(t));
@@ -126,8 +126,11 @@ export function sigOf(tx) {
 /** Sends a signed tx and waits for "confirmed". The raw tx is re-sent while pending
  *  (Solana drops txs under load), never signed again. Throws TxError, with our error names,
  *  if it failed. With `lastValidBlockHeight` it gives up only once the blockhash has
- *  expired, so a tx it calls dead can't land later; otherwise after `timeoutMs`. Each RPC
- *  call gets `callMs`. `stuckMs` (300 s; swap.js's trades pass 120 s) bounds the whole wait.
+ *  expired, so a tx it calls dead can't land later; otherwise after `timeoutMs`.
+ *  `stuckMs` (300 s; swap.js's trades and flows.js's refund pass 120 s) bounds the wait after
+ *  the first send: the first send gets `callMs`, and each call after it gets `callMs` or the
+ *  time left before `stuckMs`, whichever is less (1 ms at least). A call that hangs can't
+ *  carry the wait past `stuckMs`; it ends within the 400 ms between polls and a few 1 ms calls.
  *
  *  Once the first send went out, or may have (it timed out, or failed without the RPC
  *  refusing it), a call that times out or fails says nothing about the tx: it's transient,
@@ -147,7 +150,10 @@ export function sigOf(tx) {
  *  ends with "not confirmed in time" after `timeoutMs`, as before. */
 export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 60_000, resendMs = 2_000, stuckMs = 300_000, callMs = FETCH_MS, lastValidBlockHeight, preflight = false } = {}) {
   const raw = tx.serialize();
-  const ask = (p) => within(p, callMs);
+  // from `t0` (the first send answered or gave up) each call gets at most the time left
+  // before `stuckMs`, at least 1 ms: one that hangs then can't carry the wait past it
+  let t0 = null;
+  const ask = (p) => within(p, t0 === null ? callMs : Math.max(1, Math.min(callMs, t0 + stuckMs - Date.now())));
   // `preflight`: a send is simulated first, so a tx that would fail costs nothing. Until a
   // send has returned the signature, each resend is simulated too (the first may never have
   // reached the RPC). After that the tx is in, and a simulation could refuse it for having
@@ -162,7 +168,7 @@ export async function sendSigned(conn, tx, { ixs, pid, what = "tx", timeoutMs = 
     sig = refusedSend(e) ? null : sigOf(tx); // not refused: it may be out, under its own signature
     if (!sig) throw e;
   }
-  const t0 = Date.now();
+  t0 = Date.now();
   let lastSend = t0;
   const done = async (st) => {
     if (st.err) {
