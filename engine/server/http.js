@@ -121,15 +121,16 @@ function sendFile(res, root, file, method) {
 
 /**
  * routes: [{ method, path: RegExp (named groups become params), body: max bytes, handler }]
- * A handler gets { params, body, ip, url } and returns { status?, json }.
+ * A handler gets { params, body, ip, url } and returns { status?, json, type? } (type: the
+ * content-type; JSON in UTF-8 by default).
  * `web`: the built web app's folder (absolute), served for GETs outside /api/.
  */
 export function createServer(routes, { cors = "*", trustProxy = false, log = console.log, web = null } = {}) {
   const server = http.createServer(async (req, res) => {
-    const reply = (status, json) => {
+    const reply = (status, json, type = "application/json; charset=utf-8") => {
       const body = toJson(json);
       res.writeHead(status, {
-        "content-type": "application/json; charset=utf-8",
+        "content-type": type,
         "access-control-allow-origin": cors,
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
@@ -165,7 +166,7 @@ export function createServer(routes, { cors = "*", trustProxy = false, log = con
       if (!hit) throw new HttpError(pathMatched ? 405 : 404, pathMatched ? "method not allowed" : "not found");
       const body = req.method === "POST" ? await readBody(req, hit.r.body ?? 65_536) : {};
       const out = await hit.r.handler({ params: hit.params, body, ip: clientIp(req, trustProxy), url });
-      reply(out.status ?? 200, out.json);
+      reply(out.status ?? 200, out.json, out.type);
     } catch (e) {
       if (e instanceof HttpError) {
         if (e.cause) log(`${req.method} ${req.url}: ${e.cause.stack ?? e.cause}`); // a 500 that carries a marker (api.js)

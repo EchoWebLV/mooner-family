@@ -23,6 +23,8 @@
 //   MOONER_SCAN_MS       time between the keeper's full scans   (10000)
 //   PINATA_JWT           Pinata API key; required on mainnet
 //   MOONER_IPFS_GATEWAY  prefix of the token links            (IPFS_GATEWAY)
+//   MOONER_ANDROID_CERTS SHA-256 fingerprints of the Android app's signing keys, comma or space
+//                        separated, for /.well-known/assetlinks.json (none: no such file)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -99,7 +101,23 @@ export function loadConfig(env = process.env) {
     scanMs: Number(env.MOONER_SCAN_MS ?? 10_000),
     pinataJwt: env.PINATA_JWT || null,
     gateway: env.MOONER_IPFS_GATEWAY ?? IPFS_GATEWAY,
+    ...androidCertsFrom(env.MOONER_ANDROID_CERTS ?? ""),
   };
+}
+
+const FINGERPRINT = /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/;
+// The debug key in Expo's project template: public (it ships in every new project), so any app
+// signed with it could claim app.mooner.family links. Never listed.
+const EXPO_DEBUG_KEY = "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C";
+
+/** The App Links signing keys from a list of SHA-256 fingerprints ("AB:CD:…", 32 bytes),
+ *  comma or space separated: { androidCerts, androidCertsBad }. A word that isn't one, or
+ *  is Expo's public debug key, is left out and listed in androidCertsBad for main.js to log:
+ *  a typo there costs links that open the site, not the server. */
+export function androidCertsFrom(text) {
+  const words = text.split(/[\s,]+/).filter(Boolean);
+  const ok = (w) => FINGERPRINT.test(w.toUpperCase()) && w.toUpperCase() !== EXPO_DEBUG_KEY;
+  return { androidCerts: [...new Set(words.filter(ok).map((w) => w.toUpperCase()))], androidCertsBad: words.filter((w) => !ok(w)) };
 }
 
 /** The openers list, re-read when the file changes. Lines are wallets; `#` starts a

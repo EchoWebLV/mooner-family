@@ -18,6 +18,7 @@ import { NoPin, Pinata } from "./pinata.js";
 import { Keeper } from "./keeper.js";
 import { makeReads, makeRoutes } from "./api.js";
 import { makeSocialRoutes } from "./social.js";
+import { makeAppLinkRoutes } from "./applinks.js";
 import { createServer } from "./http.js";
 import { Hub } from "./hub.js";
 import { Feed } from "./feed.js";
@@ -134,7 +135,9 @@ const routes = makeRoutes({
 }).concat(makeSocialRoutes({
   store: ctx.store, isPresale: (key) => !!ctx.store.tokenOfPresale(new PublicKey(key)),
   onChat: (row) => feed.chat(row), onProfile: (wallet, pfp) => feed.profile(wallet, pfp),
-}));
+})).concat(makeAppLinkRoutes({ certs: cfg.androidCerts }));
+log(cfg.androidCerts.length ? `App Links for ${cfg.androidCerts.length} Android signing key(s)` : "no MOONER_ANDROID_CERTS: no assetlinks.json, app links open the site");
+if (cfg.androidCertsBad.length) log(`MOONER_ANDROID_CERTS: left out (not a SHA-256 fingerprint, or Expo's public debug key): ${cfg.androidCertsBad.join(" ")}`);
 const web = fs.existsSync(`${cfg.web}/index.html`) ? cfg.web : null;
 log(web ? `web app from ${web}` : `no web app at ${cfg.web} (npm run build in web/): API only`);
 const server = createServer(routes, { cors: cfg.cors, trustProxy: cfg.trustProxy, log, web });
