@@ -3,7 +3,8 @@
 // `store` is the expo-secure-store module, passed in so this file runs in Node tests.
 
 /** A key expo-secure-store accepts (letters, digits, ".", "-", "_"); anything else becomes
- *  "_". Mooner's names are base58 keys joined by ":", so two names never meet. */
+ *  "_". Mooner's own names are `mooner:...` with base58 parts, and `mwa-authorization:...`.
+ *  This keeps two of them apart only because those names never contain "_". */
 export const safeName = (name) => name.replace(/[^A-Za-z0-9._-]/g, "_");
 
 /** flows.js `keys`: { get(name), set(name, value) }. */

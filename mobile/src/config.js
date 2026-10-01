@@ -8,4 +8,4 @@ export const PRIORITY = 100_000;
 export const CHAIN = "solana:mainnet";
 export const RPC = "https://api.mainnet-beta.solana.com";
 /** How the app shows itself in the wallet's approval screen. */
-export const IDENTITY = { name: "Mooner", uri: "https://mooner.family", icon: "assets/icon-32.png" };
+export const IDENTITY = { name: "Mooner", uri: "https://mooner.family", icon: "assets/icon-180.png" };

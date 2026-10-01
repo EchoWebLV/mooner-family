@@ -4,6 +4,8 @@
 // Seed Vault signs without sending (spike, 2026-10-01), so a send is sign + our own RPC send,
 // as the web does.
 
+import { pickSignature } from "../../engine/src/walletcheck.js";
+
 /** `w`: useMobileWallet() from @wallet-ui/react-native-web3js. null until it's connected. */
 export function mwaSigner(w) {
   const publicKey = w.account?.publicKey;
@@ -15,6 +17,13 @@ export function mwaSigner(w) {
       const signed = await w.signTransactions(tx);
       return conn.sendRawTransaction(signed.serialize(), opts);
     },
-    signMessage: (bytes) => w.signMessages(bytes),
+    // The MWA spec leaves a signMessages reply's layout open (some wallets append the message
+    // to the signature). The server checks a bare 64-byte signature, so hand back only that.
+    async signMessage(bytes) {
+      const reply = await w.signMessages(bytes);
+      const got = pickSignature(bytes, Uint8Array.from(reply), publicKey);
+      if (!got) throw new Error("The wallet's signature didn't check out. Try another wallet.");
+      return got.signature;
+    },
   };
 }
