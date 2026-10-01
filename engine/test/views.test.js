@@ -85,6 +85,8 @@ test("joinCheck", () => {
   assert.match(joinCheck(open({ raised: "500000000" }), "W", N, NOW).why, /full/);
   assert.match(joinCheck(open({ seats: [{ user: "W", deposit: "1", commit: "0" }] }), "W", N, NOW).why, /already in/);
   assert.match(joinCheck(open({ users: [{ user: "W", commit: "100000000" }] }), "W", N, NOW).why, /already in/);
+  assert.match(joinCheck(open({ stale: true }), "W", N, NOW).why, /Can't see this pool/); // the pre-delegation snapshot
+  assert.equal(joinCheck(open({ stale: false }), "W", N, NOW).ok, true);
 });
 
 test("seatChoices: the presets that fit the program's seat rules", () => {
@@ -110,4 +112,13 @@ test("canGetBack", () => {
   assert.equal(canGetBack(open({ seats: [seat()], state: "FAILED" }), "W", NOW), true);
   assert.equal(canGetBack(open({ seats: [seat()], state: "FULL" }), "W", NOW), false);
   assert.equal(canGetBack(open({ seats: [] }), "W", NOW), false);
+  // a settled seat is refunded once the presale FAILED, not before and not when it only expired
+  assert.equal(canGetBack(open({ seats: [seat({ settled: true })], state: "FAILED" }), "W", NOW), true);
+  assert.equal(canGetBack(open({ seats: [seat({ settled: true })], state: "EXPIRED" }), "W", NOW), false);
+  assert.equal(canGetBack(open({ seats: [seat({ settled: true })], state: "SETTLED" }), "W", NOW), false);
+  // a seat with nothing in the pool can leave in any state, past the deadline too
+  assert.equal(canGetBack(open({ seats: [seat({ commit: "0" })], state: "FULL" }), "W", NOW), true);
+  assert.equal(canGetBack(open({ seats: [seat({ commit: "0" })], deadlineTs: T - 1 }), "W", NOW), true);
+  assert.equal(canGetBack(open({ seats: [seat({ commit: "0" })], state: "SETTLED" }), "W", NOW), true);
+  assert.equal(canGetBack(open({ seats: [seat({ commit: "0", creator: true })], state: "FULL" }), "W", NOW), false);
 });

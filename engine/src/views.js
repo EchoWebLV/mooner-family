@@ -79,9 +79,13 @@ export function seatOf(view, wallet) {
   return { deposit: big(s.deposit), commit: big(s.commit), creator: !!s.creator, settled: !!s.settled, claimed: !!s.claimed, where: s.where };
 }
 
-/** Whether `wallet` (or anyone, with null) can join now: { ok: true } or { ok: false, why }. */
+/** Whether `wallet` (or anyone, with null) can join now: { ok: true } or { ok: false, why }.
+ *  A view the server marks `stale` (it couldn't read the ER copy and sent the snapshot from
+ *  before delegation) never offers a join. A list item's `users` leaves out seats with
+ *  nothing in the pool, so the detail view (with `seats`) has the final say. */
 export function joinCheck(view, wallet, N, nowMs) {
   if (view.state !== "OPEN" || view.where === "closed") return no("This presale isn't taking seats.");
+  if (view.stale) return no("Can't see this pool right now. Try again in a moment.");
   if (secondsLeft(view, nowMs) <= 0) return no("Time's up for this presale.");
   if (wallet && (seatOf(view, wallet) || (view.users ?? []).some((u) => u.user === wallet))) return no("You're already in.");
   if (roomOf(view, N) <= 0n) return no("The pool is full.");
@@ -107,12 +111,17 @@ export function joinAmounts(view, N, amount) {
   return { deposit: commit > min ? commit : min, commit };
 }
 
-/** Whether "Get my SOL back" applies: a seat that isn't the creator's and isn't settled, in a
- *  presale that's open (before its deadline), expired or failed. flows.getBack has the last
- *  word and says why when it can't. */
+/** Whether "Get my SOL back" applies to `wallet`'s seat in a detail view. Never the creator's
+ *  seat. A seat with nothing in the pool can always leave and be refunded, in any state.
+ *  A seat with SOL in the pool: if it's settled, only once the presale has FAILED (the
+ *  refund then comes out of the presale); if not, while the presale is OPEN before its
+ *  deadline (the SOL comes out of the pool), or once it's EXPIRED or FAILED. flows.getBack
+ *  has the last word and says why when it can't. */
 export function canGetBack(view, wallet, nowMs) {
   const s = seatOf(view, wallet);
-  if (!s || s.creator || s.settled) return false;
+  if (!s || s.creator) return false;
+  if (s.commit === 0n) return true; // leave, or settle_seat with nothing in the pool: any state
+  if (s.settled) return view.state === "FAILED"; // settle_seat refunds a settled seat's commit once FAILED
   if (view.state === "OPEN") return secondsLeft(view, nowMs) > 0;
   return view.state === "EXPIRED" || view.state === "FAILED";
 }
