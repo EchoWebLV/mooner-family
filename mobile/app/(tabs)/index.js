@@ -9,7 +9,6 @@ import { liveList } from "../../src/store";
 import { PresaleCard } from "../../src/live/PresaleCard";
 import { solText } from "../../src/ui/format";
 import { Empty, Screen, T } from "../../src/ui/kit";
-import { useNow } from "../../src/ui/useNow";
 import { C, F, R, S } from "../../src/ui/theme";
 
 export default function Live() {
@@ -19,15 +18,14 @@ export default function Live() {
   const loaded = useStore(store, (s) => s.loaded.presales);
   const feedError = useStore(store, (s) => s.feedError.presales);
   const profiles = useStore(store, (s) => s.profiles);
-  const now = useNow(1000);
   const list = useMemo(() => liveList({ presales }).filter((v) => v.token), [presales]);
   const ready = !!info && loaded;
 
   const renderItem = useCallback(
     ({ item }) => (
-      <PresaleCard view={item} info={info} profiles={profiles} now={now} onPress={() => router.push(`/presale/${item.presale}`)} />
+      <PresaleCard view={item} info={info} profiles={profiles} onPress={() => router.push(`/presale/${item.presale}`)} />
     ),
-    [info, profiles, now],
+    [info, profiles],
   );
 
   return (
@@ -35,15 +33,21 @@ export default function Live() {
       <Header />
       {ready ? (
         <>
-          {feedError ? <T v="small" color={C.down} style={{ paddingHorizontal: S.gutter }}>{feedError}</T> : null}
+          {feedError && list.length > 0 ? (
+            <T v="small" color={C.down} style={{ paddingHorizontal: S.gutter }}>{feedError}</T>
+          ) : null}
           <FlatList
             data={list}
             keyExtractor={(v) => v.presale}
             renderItem={renderItem}
-            extraData={now}
             contentContainerStyle={{ padding: S.gutter }}
             ItemSeparatorComponent={Gap}
-            ListEmptyComponent={<Empty title="No presales right now" body="New ones show up here the moment they open." />}
+            ListEmptyComponent={
+              <Empty
+                title="No presales right now"
+                body={feedError ? <T v="small" color={C.down}>{feedError}</T> : "New ones show up here the moment they open."}
+              />
+            }
           />
         </>
       ) : (
