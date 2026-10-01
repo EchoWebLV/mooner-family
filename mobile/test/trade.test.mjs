@@ -50,6 +50,19 @@ test("tradeLines: a sell through other pools says the fees are in the price", ()
   });
 });
 
+test("tradeLines: the slippage is the quote's own (Jupiter's slippageBps), never shown above it; 3% when it doesn't say", () => {
+  const base = { inAmount: 1_000_000_000n, outAmount: 891_000_000n, minOut: 883_000_000n, impact: 0, route: [{ amm: POOL }] };
+  const slip = (raw) => tradeLines("buy", { ...base, raw }, { pools: [POOL], sqrtPrice: ONE, symbol: "MOON" }).slippage;
+  assert.equal(slip({ slippageBps: 90 }), "0.9%");
+  assert.equal(slip({ slippageBps: 300 }), "3%");
+  assert.equal(slip({ slippageBps: 125 }), "1.25%");
+  assert.equal(slip({ slippageBps: 7 }), "0.07%");
+  assert.equal(slip({ slippageBps: 12.7 }), "0.12%", "a fraction of a bp is cut, not rounded up");
+  assert.equal(slip({}), "3%");
+  assert.equal(slip(undefined), "3%");
+  assert.equal(slip({ slippageBps: null }), "3%");
+});
+
 test("secondsTo: the lock's countdown", () => {
   assert.equal(secondsTo(10_000, 6_500), 4);
   assert.equal(secondsTo(10_000, 9_999), 1);

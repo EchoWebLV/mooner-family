@@ -62,20 +62,24 @@ export function pctText(f) {
  * slippage }. `pools`: the coin's pool addresses (its DBC pool, and its DAMM v2 pool once
  * known): a route only through them shows the 1% pool fee, any other route says its fees
  * are in the price. `sqrtPrice`: the pool's live price, for the impact (null when it isn't
- * live: then the impact is Jupiter's own).
+ * live: then the impact is Jupiter's own). The slippage is the quote's own (Jupiter's
+ * `slippageBps`, the one its minOut was made with), cut to whole bps so it never shows more
+ * than that; SLIPPAGE_BPS, what swap.js asks for, when the quote doesn't say.
  */
 export function tradeLines(side, q, { pools, sqrtPrice, symbol }) {
   const coin = (raw) => `${tokensText(raw)} $${symbol}`;
   const sol = (lamports) => `${solSig(lamports)} SOL`;
   const impact = impactOf(side, q, sqrtPrice);
   const fee = poolFee(side, q, pools);
+  const given = q.raw?.slippageBps;
+  const bps = typeof given === "number" && Number.isFinite(given) && given >= 0 ? Math.floor(given) : SLIPPAGE_BPS;
   return {
     get: side === "buy" ? coin(q.outAmount) : sol(q.outAmount),
     minimum: side === "buy" ? coin(q.minOut) : sol(q.minOut),
     impact: pctText(impact),
     high: impact >= HIGH_IMPACT,
     fee: fee == null ? "In the price (Jupiter's route)" : `1% to the pool · ${sol(fee)}`,
-    slippage: `${SLIPPAGE_BPS / 100}%`,
+    slippage: `${bps / 100}%`,
   };
 }
 
