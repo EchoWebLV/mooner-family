@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -173,4 +173,13 @@ test("momentStep: plays only for a change seen live", () => {
 test("hhmm: two digits each", () => {
   const d = new Date(2026, 9, 1, 9, 5, 0);
   assert.equal(hhmm(d.getTime()), "09:05");
+});
+
+test("refToNote: a link's ref waits for the saved wallet's read, so a cold start can't take your own link for a friend's", () => {
+  const FRIEND = "S".repeat(44);
+  assert.equal(refToNote(true, FRIEND, undefined), null, "the saved wallet is still being read");
+  assert.equal(refToNote(true, FRIEND, null), FRIEND, "read: no wallet");
+  assert.equal(refToNote(true, FRIEND, { publicKey: ME }), FRIEND, "read: a wallet");
+  assert.equal(refToNote(false, FRIEND, null), null, "not a presale key");
+  assert.equal(refToNote(true, undefined, null), null, "no ref in the link");
 });

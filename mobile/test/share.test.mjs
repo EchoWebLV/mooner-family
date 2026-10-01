@@ -35,6 +35,26 @@ test("no token details yet: plain words, still the link", () => {
   });
 });
 
+test("no token details yet: every stage and sharer in plain words", () => {
+  const bare = (over = {}) => open({ token: null, ...over });
+  const IN = "0.12 of 0.5 SOL in so far.";
+  assert.equal(share(bare(), CREATOR).message, `My presale is open on Mooner.\n${IN}\n${BASE}/presale/${KEY}?ref=${CREATOR}`);
+  assert.equal(share(bare({ users: [{ user: ME }] })).message, `I'm in this presale on Mooner.\n${IN}\n${LINK}`);
+  assert.equal(share(bare(), null).message, `This presale is open on Mooner.\n${IN}\n${BASE}/presale/${KEY}`);
+  assert.equal(share(bare({ state: "LAUNCHING" })).message, `This presale is launching on Mooner.\n${LINK}`);
+  assert.equal(share(bare({ state: "CLOSED" }), ME, { pool: { migrated: false } }).message, `This coin is live on Mooner.\n${LINK}`);
+  assert.equal(share(bare({ state: "CLOSED" }), ME, { pool: { migrated: true } }).message, `This coin is live on Mooner.\n${LINK}`);
+  assert.equal(share(bare({ state: "EXPIRED" })).message, `This presale on Mooner has closed.\n${LINK}`);
+  for (const state of ["OPEN", "LAUNCHING", "EXPIRED"]) assert.equal(share(bare({ state })).title, "A presale on Mooner");
+});
+
+test("a creator who also has a seat shares it as theirs, not as one more person in it", () => {
+  const seats = [{ user: CREATOR, deposit: "100000000", commit: "100000000" }];
+  const users = [{ user: CREATOR }];
+  assert.equal(share(open({ seats, users }), CREATOR).message.split("\n")[0], "My $MOON presale is open on Mooner.");
+  assert.equal(share(open({ seats, users, token: null }), CREATOR).message.split("\n")[0], "My presale is open on Mooner.");
+});
+
 test("after the presale: launching, live, migrated, closed", () => {
   assert.equal(share(open({ state: "LAUNCHING" })).message, `$MOON is launching on Mooner.\n${LINK}`);
   assert.equal(share(open({ state: "CLOSED" }), ME, { pool: { migrated: false } }).message, `$MOON is live on Mooner.\n${LINK}`);

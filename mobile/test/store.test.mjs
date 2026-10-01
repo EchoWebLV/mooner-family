@@ -875,3 +875,21 @@ test("noteRef: your own link never replaces a friend's ref", async () => {
   await store.getState().join(KEY, 100_000_000n, me);
   assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER);
 });
+
+test("noteRef: a wallet that arrives while the saved refs are read counts as yours (a cold start)", async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const wrapSaved = (base) => (name) => {
+    const s = base(name);
+    if (name === "mooner:refs") s.get = async () => (await gate, { [KEY]: { ref: SHARER, at: 1 } });
+    return s;
+  };
+  const { store, calls, disk } = rig({ wrapSaved });
+  const noting = store.getState().noteRef(KEY, ME); // the room, opened from your own link
+  await store.getState().setWallet(ME); // the saved wallet, read meanwhile
+  release();
+  await noting;
+  assert.equal(disk.has("mooner:refs"), false, "your own link changed nothing");
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER, "the friend's ref goes with the join");
+});

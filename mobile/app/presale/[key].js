@@ -8,13 +8,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
 import { seatOf, whoIsIn } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
-import { useSigner } from "../../src/wallet";
+import { useAccount, useSigner } from "../../src/wallet";
 import { stillIn } from "../../src/launched/coin";
 import { ChatSheet } from "../../src/room/ChatSheet";
 import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
 import { Line, YourSeat } from "../../src/room/YourSeat";
-import { bottomOf, claimedOf, heroOf, isKey, lockedCommit } from "../../src/room/room";
+import { bottomOf, claimedOf, heroOf, isKey, lockedCommit, refToNote } from "../../src/room/room";
 import { shareOf } from "../../src/room/share";
 import { BASE } from "../../src/config";
 import { CoinImage } from "../../src/ui/CoinImage";
@@ -45,9 +45,14 @@ export default function Room() {
 
   const ref = Array.isArray(params.ref) ? params.ref[0] : params.ref;
   // A link someone shared (`?ref=<their wallet>`): kept until a join from this phone lands here.
+  // Noted once the saved wallet is read (refToNote). When it was there, FollowWallet's effect
+  // has set store.wallet first: it runs before this one in the same commit (it's an earlier
+  // sibling of the screens) and setWallet sets `wallet` before its first await.
+  const account = useAccount();
+  const toNote = refToNote(valid, ref, account);
   useEffect(() => {
-    if (valid && ref) store.getState().noteRef(key, ref);
-  }, [key, ref, valid]);
+    if (toNote) store.getState().noteRef(key, toNote);
+  }, [key, toNote]);
 
   const view = useStore(store, (s) => s.views[key] ?? s.presales[key]);
   const detail = useStore(store, (s) => s.views[key]);

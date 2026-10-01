@@ -18,22 +18,24 @@ export function goBack(fallback) {
 
 /** `fallback`: the href back opens when there's nothing to go back to. `right`: an element
  *  for the right side, up to `side` wide. `side`: each side's width, wider when `right` holds
- *  two buttons. */
+ *  two buttons; the back button stays SIDE wide inside it. */
 export function TopBar({ title, right, fallback, side = SIDE }) {
   return (
     <View style={{ height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Back"
-        hitSlop={8}
-        onPress={() => {
-          Haptics.selectionAsync().catch(() => {});
-          goBack(fallback);
-        }}
-        style={({ pressed }) => [{ width: side, height: 44, justifyContent: "center", paddingLeft: 4 }, pressed && { opacity: 0.6 }]}
-      >
-        <BackIcon color={C.text0} />
-      </Pressable>
+      <View style={{ width: side }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={8}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            goBack(fallback);
+          }}
+          style={({ pressed }) => [{ width: SIDE, height: 44, justifyContent: "center", paddingLeft: 4 }, pressed && { opacity: 0.6 }]}
+        >
+          <BackIcon color={C.text0} />
+        </Pressable>
+      </View>
       <T v="h2" numberOfLines={1} style={{ flex: 1, textAlign: "center" }}>{title}</T>
       <View style={{ width: side, alignItems: "flex-end" }}>{right ?? null}</View>
     </View>

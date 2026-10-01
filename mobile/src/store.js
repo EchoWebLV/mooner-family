@@ -338,7 +338,10 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
   /** A presale opened from a link that carries `?ref=<wallet>`: kept until a join there lands,
    *  and `join` sends it (never the joiner's own wallet). The newest link wins, except the
-   *  connected wallet's own, which never replaces a friend's; junk is ignored. */
+   *  connected wallet's own, which never replaces a friend's; junk is ignored. The wallet is
+   *  read after the saved refs, so one set meanwhile counts; the room notes only once the
+   *  saved wallet is read (room.js refToNote). With no wallet connected, the viewer's own
+   *  link can't be told apart from a friend's. */
   const noteRef = (key, ref) => changeRefs((r) => withRef(r, key, ref, now(), get().wallet));
 
   /** The join landed: its ref went with it. */

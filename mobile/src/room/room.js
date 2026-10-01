@@ -7,6 +7,12 @@ import { C } from "../ui/theme.js";
 /** A presale key as the server's topics take it (base58, 32 to 44 characters). */
 export const isKey = (k) => typeof k === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(k);
 
+/** The link's `?ref=` for the room to note, or null while there's nothing to note yet.
+ *  `account`: wallet.js useAccount(), undefined while the saved wallet is still being read.
+ *  Noting waits for that read, or a cold start opened from your own link would note it as a
+ *  friend's (the store's wallet is still null) and the friend's ref would be lost. */
+export const refToNote = (valid, ref, account) => (valid && ref && account !== undefined ? ref : null);
+
 const PAST = new Set(["launching", "live", "migrated"]);
 
 /** The ring and the line under it: { stage, fill, color, under }. */
