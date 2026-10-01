@@ -20,6 +20,7 @@ export const HUB_LIMITS = {
   walletsPerSocket: 4,
   coinsPerSocket: 4,
   messages: [120, 60_000], // per socket
+  repeatsPerSocket: [30, 60_000], // subs of a topic the socket has (each one a snapshot); first subs don't count
   maxBuffered: 4 * 1024 * 1024, // a socket this far behind is dropped
 };
 
@@ -71,6 +72,7 @@ export class Hub {
     ws.alive = true;
     ws.subs = new Set();
     const rate = new Limiter(...this.L.messages, now);
+    ws.repeats = new Limiter(...this.L.repeatsPerSocket, now);
     const say = (msg) => this.send(ws, msg);
 
     ws.on("pong", () => (ws.alive = true));
@@ -87,7 +89,7 @@ export class Hub {
       if (!["sub", "unsub"].includes(m?.op) || !list.length || list.length > this.L.topicsPerSocket) {
         return say({ error: 'send { op: "sub" | "unsub", topics: [...] }' });
       }
-      for (const t of list) {
+      for (const t of new Set(list)) {
         if (typeof t !== "string" || !TOPIC.test(t)) {
           say({ error: `unknown topic ${String(t).slice(0, 60)}` });
           continue;
@@ -106,9 +108,12 @@ export class Hub {
   }
 
   join(ws, topic) {
-    // a topic the socket has: its state once more (a second screen on it asked), and none
-    // of the limits, which count each topic once
-    if (ws.subs.has(topic)) return this.state(ws, topic);
+    // a topic the socket has: its state once more (a second screen on it asked), within
+    // the socket's repeat budget, and none of the topic limits, which count each topic once
+    if (ws.subs.has(topic)) {
+      if (!ws.repeats.take("r")) return this.send(ws, { error: "too many repeat subscriptions, slow down" });
+      return this.state(ws, topic);
+    }
     if (ws.subs.size >= this.L.topicsPerSocket) return this.send(ws, { error: `at most ${this.L.topicsPerSocket} topics` });
     if (topic.startsWith("wallet:") && [...ws.subs].filter((t) => t.startsWith("wallet:")).length >= this.L.walletsPerSocket) {
       return this.send(ws, { error: `at most ${this.L.walletsPerSocket} wallets` });

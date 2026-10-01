@@ -90,7 +90,9 @@ export function makeLive({
 
   /** `fn(msg)` hears `topic` until the returned function is called. A topic the socket
    *  has already is asked for again, so the new listener gets its snapshot too; every
-   *  listener on the topic hears that one, and each takes a snapshot as the whole state. */
+   *  listener on the topic hears that one, and each takes a snapshot as the whole state.
+   *  A listener must not subscribe to a topic it has again from its own snapshot handler:
+   *  each snapshot asks for the next, a loop that runs until the server's limits refuse it. */
   function subscribe(topic, fn) {
     let set = listeners.get(topic);
     if (!set) listeners.set(topic, (set = new Set()));

@@ -496,6 +496,177 @@ test("a wallet or a coin the socket has, subscribed again at its limit: its stat
   }
 });
 
+test("one message that names a topic 64 times gets one snapshot, held or new", async () => {
+  const s = await startLive();
+  const c = await s.client();
+  const count = (topic) => c.got.filter(on(topic, "snapshot")).length;
+  try {
+    c.sub("profiles");
+    await c.next(on("profiles", "snapshot"));
+    c.sub(...Array(64).fill("profiles")); // held
+    c.sub(...Array(64).fill("chat:global")); // new
+    await c.next(on("chat:global", "snapshot"));
+    await wait(100);
+    assert.deepEqual([count("profiles"), count("chat:global")], [1, 0], "one each (the chat one already taken)");
+    assert.deepEqual(c.got.filter((m) => m.error), []);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("repeat subscriptions past the socket's budget are refused like any limit, with no snapshot; a new topic still goes through", async () => {
+  const s = await startLive({ hub: { limits: { repeatsPerSocket: [2, 60_000] } } });
+  const c = await s.client();
+  try {
+    c.sub("profiles"); // a first sub: not a repeat
+    await c.next(on("profiles", "snapshot"));
+    for (let i = 0; i < 3; i++) c.sub("profiles");
+    assert.equal((await c.next((m) => m.error)).error, "too many repeat subscriptions, slow down");
+    await wait(100);
+    assert.equal(c.got.filter(on("profiles", "snapshot")).length, 2, "the first two repeats answered, the third not");
+    c.sub("chat:global");
+    assert.equal((await c.next(on("chat:global"))).type, "snapshot");
+    assert.deepEqual(c.got.filter((m) => m.error), []);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+/** Holds the next call of `reads[name]`: it reads now, and its answer waits until the
+ *  returned function is called. Later calls aren't held. */
+function holdNext(reads, name) {
+  const read = reads[name];
+  let go;
+  const gate = new Promise((r) => (go = r));
+  let armed = true;
+  reads[name] = (...args) => {
+    const p = read(...args);
+    if (!armed) return p;
+    armed = false;
+    return p.then(async (v) => (await gate, v));
+  };
+  return go;
+}
+
+/** Two live.js listeners on `topic` over the real hub; the second one's snapshot read
+ *  (`s.feed.reads[read]`) is held while `change()` happens and its push reaches both, then
+ *  let go. Returns what each listener heard, as `pick(msg)` of every message. */
+async function lateSnapshot(s, topic, read, change, pick) {
+  const live = makeLive({ url: s.url, WebSocket, warn: () => {} });
+  const [a, b] = [[], []];
+  const offs = [];
+  const heard = (list) => list.map(pick);
+  const until = async (ok) => {
+    for (let i = 0; i < 100 && !ok(); i++) await wait(20);
+  };
+  try {
+    offs.push(live.subscribe(topic, (m) => a.push(m)));
+    await until(() => a.length);
+    const go = holdNext(s.feed.reads, read);
+    offs.push(live.subscribe(topic, (m) => b.push(m))); // its read sees the old state, and is held
+    await wait(50);
+    const before = a.length;
+    change();
+    await until(() => a.length > before); // the change's push reached both
+    go();
+    await until(() => b.length >= 2);
+    await wait(100);
+    return [heard(a), heard(b)];
+  } finally {
+    offs.forEach((off) => off());
+  }
+}
+
+test("presale:<key>: a second listener's snapshot read that ends after a newer push is read again, so no listener goes back to the older state", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  try {
+    const [a, b] = await lateSnapshot(s, `presale:${presale.toBase58()}`, "presale", () => s.l1.write(presale, pid, presaleData(mint, { raised: 5n })), (m) => m.data.raised);
+    assert.deepEqual(a, ["0", "5", "5"], "the first listener: 0, then only 5");
+    assert.deepEqual(b, ["5", "5"]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("wallet:<w>: a second listener's balance read that ends after a newer push is read again, so no listener goes back to the older balance", async () => {
+  const s = await startLive();
+  const w = Keypair.generate().publicKey;
+  const system = new PublicKey("11111111111111111111111111111111");
+  s.l1.put(w, system, Buffer.alloc(0), 5_000);
+  try {
+    const [a, b] = await lateSnapshot(s, `wallet:${w.toBase58()}`, "balance", () => s.l1.write(w, system, Buffer.alloc(0), 9_000), (m) => m.data.lamports);
+    assert.deepEqual(a, [5_000, 9_000, 9_000], "the first listener: 5000, then only 9000");
+    assert.deepEqual(b, [9_000, 9_000]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("presales: a second listener's list read that ends after a newer upsert is read again, so no listener goes back to the older list", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  const said = (m) => (m.type === "snapshot" ? `list ${m.data[0].raised}` : `${m.type} ${m.data.raised}`);
+  try {
+    const [a, b] = await lateSnapshot(s, "presales", "listPresales", () => s.l1.write(presale, pid, presaleData(mint, { raised: 5n })), said);
+    assert.deepEqual(a, ["list 0", "upsert 5", "list 5"], "the first listener: 0, then only 5");
+    assert.deepEqual(b, ["upsert 5", "list 5"]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("launched: a second listener's list read that ends after a newer upsert is read again, so no listener goes back to the older pool", async () => {
+  let coin;
+  const s = await startLive({ before: ({ l1, store }) => (coin = launchedCoin(l1, store)) });
+  const traded = dbcPool(false);
+  traded.writeBigUInt64LE(300_000_000n, 240);
+  const said = (m) => (m.type === "snapshot" ? `list ${m.data[0].pool.quoteReserve}` : `${m.type} ${m.data.pool.quoteReserve}`);
+  try {
+    const [a, b] = await lateSnapshot(s, "launched", "listLaunched", () => s.l1.write(coin.pool, DBC, traded), said);
+    assert.deepEqual(a, ["list 197354828", "upsert 300000000", "list 300000000"], "the first listener: the old reserve, then only the new one");
+    assert.deepEqual(b, ["upsert 300000000", "list 300000000"]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a presale that changes during every snapshot read: three reads, then the last one is sent", async () => {
+  const store = new Store(":memory:");
+  const key = Keypair.generate().publicKey;
+  const topic = `presale:${key.toBase58()}`;
+  let reads = 0;
+  const feed = new Feed({
+    reads: {
+      forget() {},
+      async presale() {
+        reads++;
+        feed.touch(key); // a change on chain while it reads
+        return { presale: key.toBase58(), raised: String(reads) };
+      },
+    },
+    l1: { rpcEndpoint: "http://127.0.0.1:8899" },
+    ers: {},
+    pid,
+    dbcConfig: MOONER_DBC_CONFIG,
+    store,
+    db: store.db,
+    log: () => {},
+  });
+  feed.hub = { has: (t) => t === topic, publish() {} };
+  feed.pushPresale = async () => {}; // the change's own push isn't what this is about
+  const sent = [];
+  try {
+    await feed.snapshot(topic, (m) => sent.push(m));
+    assert.equal(reads, 3);
+    assert.deepEqual(sent, [{ type: "snapshot", data: { presale: key.toBase58(), raised: "3" } }]);
+  } finally {
+    await feed.stop();
+  }
+});
+
 // ---- migration, the DAMM v2 pool, coin stats ----
 
 const fixtureBytes = (name) => Buffer.from(JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8")).data, "base64");

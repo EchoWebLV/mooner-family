@@ -70,6 +70,8 @@ export class Feed extends EventEmitter {
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
+    this.seq = 0;
+    this.changes = new Map(); // topic -> the number of its last change, while it has sockets (see fresh)
     this.heard = {}; // chain notifications of our accounts, by source (for /api/health)
   }
 
@@ -121,6 +123,30 @@ export class Feed extends EventEmitter {
     return !!this.hub?.has(topic);
   }
 
+  /** `topic`'s state changed (its cache is forgotten and a push is on its way): a snapshot
+   *  read already out for it reads again (see fresh). Nobody on it: nothing to note. */
+  changed(topic) {
+    if (this.has(topic)) this.changes.set(topic, ++this.seq);
+  }
+
+  /** `read()`, and again while `topic` changed during it, up to `reads` reads in all; the
+   *  last read is what it returns. A change during a read may have pushed its newer state
+   *  already, and this older answer, sent after it, would set every listener on the topic
+   *  back (live.js hands a snapshot to all of them). */
+  async fresh(topic, read, reads = 3) {
+    for (let n = 1; ; n++) {
+      const was = this.changes.get(topic);
+      const got = await read();
+      if (n >= reads || this.changes.get(topic) === was) return got;
+    }
+  }
+
+  /** The launched list's cache is stale: forgotten, and a `launched` snapshot read out now reads again. */
+  forgetLaunched() {
+    this.reads.forgetLaunched();
+    this.changed("launched");
+  }
+
   /** An async listener that rejected (captureRejections sends it here): logged, not a crash. */
   [Symbol.for("nodejs.rejection")](err, ev) {
     this.log(`${ev} listener: ${err?.message ?? err}`);
@@ -149,6 +175,8 @@ export class Feed extends EventEmitter {
   touch(presale) {
     const k = presale.toBase58();
     this.reads.forget(presale);
+    this.changed(`presale:${k}`);
+    this.changed("presales");
     this.pace(`presale:${k}`, this.paceMs, () => this.pushPresale(presale));
   }
 
@@ -185,7 +213,7 @@ export class Feed extends EventEmitter {
   /** The keeper recorded a launch: its presale changed and there's a pool to watch. */
   launched(presale) {
     this.touch(presale);
-    this.reads.forgetLaunched();
+    this.forgetLaunched();
     this.syncPools(true);
   }
 
@@ -225,7 +253,7 @@ export class Feed extends EventEmitter {
     const p = this.pools.get(mint);
     if (!p) return;
     p.data = data;
-    this.reads.forgetLaunched();
+    this.forgetLaunched();
     this.pace(`pool:${mint}`, this.poolPaceMs, async () => {
       const s = decodePoolState(p.data);
       if (!s) return;
@@ -302,7 +330,7 @@ export class Feed extends EventEmitter {
     }
     p.damm = found.pool;
     p.dammState = found.state;
-    this.reads.forgetLaunched();
+    this.forgetLaunched();
     this.sub(this.l1, "account", this.l1.onAccountChange(found.pool, (acc) => this.onDamm(mint, acc.data), { commitment: "confirmed" }));
     this.notePrice(mint, found.state.sqrtPrice);
     this.pushPool(p);
@@ -312,7 +340,7 @@ export class Feed extends EventEmitter {
     const p = this.pools.get(mint);
     if (!p) return;
     p.dammData = data;
-    this.reads.forgetLaunched();
+    this.forgetLaunched();
     this.pace(`damm:${mint}`, this.poolPaceMs, async () => {
       const s = decodeDammPool(p.dammData);
       if (!s) return;
@@ -417,6 +445,7 @@ export class Feed extends EventEmitter {
       wallet,
       (acc) => {
         this.reads.forgetBalance(wallet);
+        this.changed(topic);
         this.publish(topic, { type: "snapshot", data: { lamports: acc.lamports } });
       },
       { commitment: "confirmed" },
@@ -450,6 +479,7 @@ export class Feed extends EventEmitter {
   }
 
   last(topic) {
+    this.changes.delete(topic);
     if (topic.startsWith("coin:")) {
       const mint = topic.slice("coin:".length);
       this.coins.delete(mint);
@@ -467,25 +497,30 @@ export class Feed extends EventEmitter {
     this.l1.removeAccountChangeListener(id).catch(() => {});
   }
 
-  /** A socket joined `topic`: its snapshot, to it alone. A failed read is tried again a
-   *  few times while someone is still on the topic. */
+  /** A socket joined `topic`, or subscribed again to a topic it has (a second listener on
+   *  it): its snapshot, to it alone. A read that a change overtook is read again (fresh). A
+   *  failed read is tried again a few times while someone is still on the topic. */
   async snapshot(topic, send, tries = 3) {
     try {
       const [kind, arg] = topic.split(":");
-      if (topic === "presales") return send({ type: "snapshot", data: await this.reads.listPresales() });
-      if (topic === "launched") return send({ type: "snapshot", data: await this.reads.listLaunched() });
+      if (topic === "presales") return send({ type: "snapshot", data: await this.fresh(topic, () => this.reads.listPresales()) });
+      if (topic === "launched") return send({ type: "snapshot", data: await this.fresh(topic, () => this.reads.listLaunched()) });
       if (topic === "profiles") return send({ type: "snapshot", data: allProfiles(this.db) });
       if (topic === "sol") return this.sol && send({ type: "snapshot", data: this.sol });
       if (kind === "chat") return send({ type: "snapshot", data: chatRows(this.db, arg) });
-      if (kind === "wallet") return send({ type: "snapshot", data: { lamports: await this.reads.balance(new PublicKey(arg)) } });
+      if (kind === "wallet") return send({ type: "snapshot", data: { lamports: await this.fresh(topic, () => this.reads.balance(new PublicKey(arg))) } });
       if (kind === "coin") return this.pools.has(arg) ? send({ type: "snapshot", data: await this.stats(arg) }) : send({ type: "missing" });
       if (kind === "presale") {
-        try {
-          return send({ type: "snapshot", data: await this.reads.presale(new PublicKey(arg)) });
-        } catch (e) {
-          if (e.status === 404) return send({ type: "missing" });
-          throw e;
-        }
+        const key = new PublicKey(arg);
+        const read = () =>
+          this.reads.presale(key).then(
+            (data) => ({ type: "snapshot", data }),
+            (e) => {
+              if (e.status === 404) return { type: "missing" };
+              throw e;
+            },
+          );
+        return send(await this.fresh(topic, read));
       }
     } catch (e) {
       this.log(`live ${topic}: ${e.message}`);
