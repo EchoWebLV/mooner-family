@@ -3,8 +3,9 @@
 # it on the phone plugged in over USB (adb devices). It signs with the debug keystore unless
 # the Gradle property MOONER_RELEASE_SIGN is 1 (plugins/withReleaseSigning.js); then with
 # Mooner's upload key, named by MOONER_UPLOAD_* in ~/.gradle/gradle.properties. Whether this
-# script's builds get the flag is the user's choice. `expo run:android` passes no -P to
-# Gradle, so for one build it goes in the environment (how the flag reaches Gradle):
+# script's builds get the flag is the user's choice. `expo run:android` adds only its own
+# -P flags to Gradle and has no option to pass yours, so for one build the flag goes in the
+# environment (how the flag reaches Gradle):
 #   ORG_GRADLE_PROJECT_MOONER_RELEASE_SIGN=1 sh scripts/run-android.sh
 # A build signed with another key than the installed app's won't install over it. That
 # needs `adb uninstall family.mooner.app` first, which deletes the app's data (sign-in,

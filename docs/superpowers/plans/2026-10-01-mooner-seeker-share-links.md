@@ -1804,7 +1804,10 @@ const TEMPLATE = `    signingConfigs {
 
 test("release builds use the upload key only with MOONER_RELEASE_SIGN=1, else the debug key; debug builds don't change", () => {
   const out = addReleaseSigning(`android {\n${TEMPLATE}}\n`);
-  assert.match(out, /signingConfigs \{\n {8}release \{\n {12}\/\/ mooner: release signing\n {12}if \(project\.findProperty\('MOONER_RELEASE_SIGN'\) == '1'\) \{\n {16}storeFile file\(MOONER_UPLOAD_STORE_FILE\)\n {16}storePassword MOONER_UPLOAD_STORE_PASSWORD\n {16}keyAlias MOONER_UPLOAD_KEY_ALIAS\n {16}keyPassword MOONER_UPLOAD_KEY_PASSWORD\n {12}\}\n {8}\}\n {8}debug \{/);
+  // a flag that isn't 1 or 0 stops the build; with the flag, all four key properties are read
+  // first and a missing one stops it before any is set (a SigningConfig in Gradle's error text
+  // prints its passwords)
+  assert.match(out, /signingConfigs \{\n {8}release \{\n {12}\/\/ mooner: release signing\n {12}def flag = project\.findProperty\('MOONER_RELEASE_SIGN'\)\n {12}if \(flag != null && !\(flag in \['1', '0'\]\)\) throw new GradleException\("MOONER_RELEASE_SIGN must be 1 or 0, and it is set to something else \(a space after the 1 counts\)"\)\n {12}if \(project\.findProperty\('MOONER_RELEASE_SIGN'\) == '1'\) \{\n {16}def key = \['MOONER_UPLOAD_STORE_FILE', 'MOONER_UPLOAD_STORE_PASSWORD', 'MOONER_UPLOAD_KEY_ALIAS', 'MOONER_UPLOAD_KEY_PASSWORD'\]\.collectEntries \{ \[it, project\.findProperty\(it\)\] \}\n {16}def missing = key\.findAll \{ !it\.value \}\.keySet\(\)\n {16}if \(missing\) throw new GradleException\("MOONER_RELEASE_SIGN is 1 but these Gradle properties aren't set: \$\{missing\.join\(', '\)\}"\)\n {16}storeFile file\(key\.MOONER_UPLOAD_STORE_FILE\)\n {16}storePassword key\.MOONER_UPLOAD_STORE_PASSWORD\n {16}keyAlias key\.MOONER_UPLOAD_KEY_ALIAS\n {16}keyPassword key\.MOONER_UPLOAD_KEY_PASSWORD\n {12}\}\n {8}\}\n {8}debug \{/);
   assert.match(out, /\/\/ see https:\/\/reactnative\.dev\/docs\/signed-apk-android\.\n {12}signingConfig\(project\.findProperty\('MOONER_RELEASE_SIGN'\) == '1' \? signingConfigs\.release : signingConfigs\.debug\)\n/);
   assert.match(out, /debug \{\n {12}signingConfig signingConfigs\.debug\n {8}\}/, "the debug build type keeps the debug key");
   assert.equal(out.match(/signingConfigs\.release/g).length, 1);
@@ -1817,14 +1820,59 @@ test("twice changes nothing; a file it doesn't know stops the build", () => {
   assert.throws(() => addReleaseSigning("android {\n}\n"), /isn't the template/);
 });
 
+test("its errors name properties, never a value", () => {
+  const out = addReleaseSigning(`android {\n${TEMPLATE}}\n`);
+  const errors = out.split("\n").filter((l) => l.includes("GradleException"));
+  assert.equal(errors.length, 2);
+  // the one thing put into an error's text is the missing properties' names
+  assert.deepEqual(errors.flatMap((l) => l.match(/\$\{[^}]*\}/g) ?? []), ["${missing.join(', ')}"]);
+  assert.match(out, /def missing = key\.findAll \{ !it\.value \}\.keySet\(\)/);
+  assert.doesNotMatch(errors.join("\n"), /"\s*\+|\+\s*"/, "no value joined on with +");
+});
+
+test("a signingConfigs that already has a release block stops the build, unless it's this plugin's own", () => {
+  const theirs = "        release {\n            storeFile file('their.keystore')\n        }\n";
+  const before = TEMPLATE.replace("    signingConfigs {\n", `    signingConfigs {\n${theirs}`);
+  const after = TEMPLATE.replace("            keyPassword 'android'\n        }\n", `            keyPassword 'android'\n        }\n${theirs}`);
+  for (const t of [before, after]) {
+    assert.notEqual(t, TEMPLATE);
+    assert.throws(() => addReleaseSigning(`android {\n${t}}\n`), /isn't the template it knows \(signingConfigs already has a release block\)/);
+  }
+  const once = addReleaseSigning(`android {\n${TEMPLATE}}\n`);
+  assert.equal(addReleaseSigning(once), once, "its own marked block is left as it is");
+});
+
 test("it's a config plugin: a function Expo can load", () => {
   assert.equal(typeof withReleaseSigning, "function");
+});
+
+// The plugin as Expo runs it: the appBuildGradle mod withAppBuildGradle registers. The mod
+// reads no modRequest field (@expo/config-plugins build/plugins/withMod.js adds nextMod
+// itself), so an empty one is enough.
+const runMod = (language, contents) =>
+  withReleaseSigning({ name: "x", slug: "x" }).mods.android.appBuildGradle({ modResults: { language, contents }, modRequest: {} });
+
+test("as a config plugin it changes a Groovy app/build.gradle", async () => {
+  const src = `android {\n${TEMPLATE}}\n`;
+  const res = await runMod("groovy", src);
+  assert.notEqual(res.modResults.contents, src);
+  assert.equal(res.modResults.contents, addReleaseSigning(src));
+});
+
+test("as a config plugin it stops on a Kotlin app/build.gradle.kts", async () => {
+  // Expo's getLanguage gives "kt" for .gradle.kts; "kts" stands for anything else not Groovy
+  for (const language of ["kt", "kts"]) {
+    await assert.rejects(runMod(language, `android {\n${TEMPLATE}}\n`), /must be Groovy/);
+  }
 });
 ```
 
 - [ ] **Step 2: Run it and confirm it fails.** Run `cd mobile && node --test test/releasesigning.test.mjs`. Expected: FAIL with `Cannot find module '../plugins/withReleaseSigning.js'`.
 
 - [ ] **Step 3: Write `mobile/plugins/withReleaseSigning.js`.** It is CommonJS; `mobile/package.json` has no `"type": "module"`. In `RELEASE_CONFIG`, `release {` is indented 8 spaces, its inner lines 12, and the `if` body 16, which matches the test. The build type line calls `signingConfig(…)` with parentheses, so Groovy can't read the `==` and `? :` any other way.
+  - A flag set to anything but `1` or `0` stops the build: Java's `Properties.load` keeps trailing spaces, so `MOONER_RELEASE_SIGN=1 ` would otherwise give a debug-signed build quietly, and so would `true`. The check sits outside the flag's `if`, so it doesn't wait for a release build; an absent flag passes.
+  - With the flag, all four key properties are read before any is set, and a missing one stops the build naming only the missing properties. Setting them one by one let Gradle's "unknown property" error print the whole SigningConfig, both passwords included (review of `b1e8e5c`). No error's text holds a value.
+  - The template check also refuses a `signingConfigs` that already has a `release` block, which Gradle would merge with this one. The plugin's own marked block passes unchanged, so a second run changes nothing.
 
 ```js
 // Expo config plugin: release builds signed with Mooner's own upload key, only when the
@@ -1840,20 +1888,31 @@ test("it's a config plugin: a function Expo can load", () => {
 // MOONER_RELEASE_SIGN=1 in that file signs every release build on the machine; passed for one
 // build (`./gradlew … -PMOONER_RELEASE_SIGN=1`, or
 // `ORG_GRADLE_PROJECT_MOONER_RELEASE_SIGN=1 sh scripts/run-android.sh`), only that build.
-// With the flag and no MOONER_UPLOAD_* properties Gradle stops: it never falls back to the
-// debug key quietly.
+// Gradle stops, and never falls back to the debug key quietly, when:
+// - the flag is set to anything but 1 or 0 (a space after the 1, `true`). Checked outside the
+//   flag's `if`, so it doesn't wait for a release build; an absent flag passes;
+// - the flag is 1 and any MOONER_UPLOAD_* property is missing. All four are read before any is
+//   set, and the error names only the missing ones: Gradle's error for an unknown property
+//   prints the whole SigningConfig, passwords included.
 const { withAppBuildGradle } = require("expo/config-plugins");
 
 const MARK = "// mooner: release signing";
 const SIGN = "project.findProperty('MOONER_RELEASE_SIGN') == '1'";
+const KEY = ["MOONER_UPLOAD_STORE_FILE", "MOONER_UPLOAD_STORE_PASSWORD", "MOONER_UPLOAD_KEY_ALIAS", "MOONER_UPLOAD_KEY_PASSWORD"];
 
+// An error's text never holds a value, only property names.
 const RELEASE_CONFIG = `        release {
             ${MARK}
+            def flag = project.findProperty('MOONER_RELEASE_SIGN')
+            if (flag != null && !(flag in ['1', '0'])) throw new GradleException("MOONER_RELEASE_SIGN must be 1 or 0, and it is set to something else (a space after the 1 counts)")
             if (${SIGN}) {
-                storeFile file(MOONER_UPLOAD_STORE_FILE)
-                storePassword MOONER_UPLOAD_STORE_PASSWORD
-                keyAlias MOONER_UPLOAD_KEY_ALIAS
-                keyPassword MOONER_UPLOAD_KEY_PASSWORD
+                def key = [${KEY.map((k) => `'${k}'`).join(", ")}].collectEntries { [it, project.findProperty(it)] }
+                def missing = key.findAll { !it.value }.keySet()
+                if (missing) throw new GradleException("MOONER_RELEASE_SIGN is 1 but these Gradle properties aren't set: \${missing.join(', ')}")
+                storeFile file(key.MOONER_UPLOAD_STORE_FILE)
+                storePassword key.MOONER_UPLOAD_STORE_PASSWORD
+                keyAlias key.MOONER_UPLOAD_KEY_ALIAS
+                keyPassword key.MOONER_UPLOAD_KEY_PASSWORD
             }
         }
 `;
@@ -1862,12 +1921,30 @@ const SIGNING_CONFIGS = /\n[ \t]*signingConfigs \{\n/;
 // the release build type's signingConfig line, after the template's comments
 const RELEASE_LINE = /(release \{\n(?:[ \t]*\/\/[^\n]*\n)*[ \t]*)signingConfig signingConfigs\.debug/;
 
+/** The text inside signingConfigs { … }, or null when there is none or its braces don't close. */
+function signingConfigsBody(src) {
+  const m = SIGNING_CONFIGS.exec(src);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  let depth = 1;
+  for (let i = start; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) return src.slice(start, i);
+  }
+  return null;
+}
+
 /** app/build.gradle's text with the release signing above. Running it twice changes nothing;
  *  a file that isn't Expo's template throws, rather than build with the wrong key. */
 function addReleaseSigning(src) {
   if (src.includes(MARK)) return src;
-  if (!SIGNING_CONFIGS.test(src) || !RELEASE_LINE.test(src)) {
+  const body = signingConfigsBody(src);
+  if (body === null || !RELEASE_LINE.test(src)) {
     throw new Error("withReleaseSigning: android/app/build.gradle isn't the template it knows; sign release builds by hand");
+  }
+  // a release block there already would be merged with this one by Gradle
+  if (/^[ \t]*release[ \t]*\{/m.test(body)) {
+    throw new Error("withReleaseSigning: android/app/build.gradle isn't the template it knows (signingConfigs already has a release block); sign release builds by hand");
   }
   return src
     .replace(SIGNING_CONFIGS, (m) => m + RELEASE_CONFIG)
@@ -1885,7 +1962,7 @@ module.exports = withReleaseSigning;
 module.exports.addReleaseSigning = addReleaseSigning;
 ```
 
-- [ ] **Step 4: Run it and confirm it passes.** Run `cd mobile && node --test test/releasesigning.test.mjs`. Expected: `# pass 3`, `# fail 0`.
+- [ ] **Step 4: Run it and confirm it passes.** Run `cd mobile && node --test test/releasesigning.test.mjs`. Expected: `# pass 7`, `# fail 0`.
 
 - [ ] **Step 5: Register the plugin.** Edit `mobile/app.json` as JSON, adding the plugin only if it isn't there:
 
@@ -1915,8 +1992,9 @@ with:
 # it on the phone plugged in over USB (adb devices). It signs with the debug keystore unless
 # the Gradle property MOONER_RELEASE_SIGN is 1 (plugins/withReleaseSigning.js); then with
 # Mooner's upload key, named by MOONER_UPLOAD_* in ~/.gradle/gradle.properties. Whether this
-# script's builds get the flag is the user's choice. `expo run:android` passes no -P to
-# Gradle, so for one build it goes in the environment (how the flag reaches Gradle):
+# script's builds get the flag is the user's choice. `expo run:android` adds only its own
+# -P flags to Gradle and has no option to pass yours, so for one build the flag goes in the
+# environment (how the flag reaches Gradle):
 #   ORG_GRADLE_PROJECT_MOONER_RELEASE_SIGN=1 sh scripts/run-android.sh
 # A build signed with another key than the installed app's won't install over it. That
 # needs `adb uninstall family.mooner.app` first, which deletes the app's data (sign-in,
@@ -1925,7 +2003,13 @@ with:
 
 - [ ] **Step 7: Prebuild and check `build.gradle`.**
   - Run `cd mobile && npx expo prebuild --platform android --clean`.
-  - Then run `grep -n "mooner: release signing\|MOONER_RELEASE_SIGN" android/app/build.gradle`. Expected three lines: the mark, `if (project.findProperty('MOONER_RELEASE_SIGN') == '1') {`, and the release build type's `signingConfig(project.findProperty('MOONER_RELEASE_SIGN') == '1' ? signingConfigs.release : signingConfigs.debug)`.
+  - Then run `grep -n "mooner: release signing\|MOONER_RELEASE_SIGN" android/app/build.gradle`. Expected six lines, in this order:
+    - the mark;
+    - `def flag = project.findProperty('MOONER_RELEASE_SIGN')`;
+    - the flag check, `if (flag != null && !(flag in ['1', '0'])) throw new GradleException("MOONER_RELEASE_SIGN must be 1 or 0, …")`;
+    - `if (project.findProperty('MOONER_RELEASE_SIGN') == '1') {`;
+    - the missing-key check, `if (missing) throw new GradleException("MOONER_RELEASE_SIGN is 1 but these Gradle properties aren't set: ${missing.join(', ')}")`;
+    - the release build type's `signingConfig(project.findProperty('MOONER_RELEASE_SIGN') == '1' ? signingConfigs.release : signingConfigs.debug)`.
 
 - [ ] **Step 8: Check the switch with Gradle, using no real key.** These runs use made-up paths and passwords, never the user's.
 
@@ -1938,12 +2022,18 @@ echo "== 2: key, no flag";             ./gradlew -q :app:signingReport $FAKE | g
 echo "== 3: key and -P flag";          ./gradlew -q :app:signingReport $FAKE -PMOONER_RELEASE_SIGN=1 | grep -A4 '^Variant: release$'
 echo "== 4: key and the flag in env";  ORG_GRADLE_PROJECT_MOONER_RELEASE_SIGN=1 ./gradlew -q :app:signingReport $FAKE | grep -A4 '^Variant: release$'
 echo "== 5: flag, no key";             ./gradlew -q :app:signingReport -PMOONER_RELEASE_SIGN=1 2>&1 | grep -m3 -i 'MOONER_UPLOAD\|error\|wrong'
+PART="-PMOONER_RELEASE_SIGN=1 -PMOONER_UPLOAD_STORE_FILE=/nonexistent/x -PMOONER_UPLOAD_STORE_PASSWORD=FAKEPW"
+echo "== 6: flag, part of the key";    ./gradlew -q :app:signingReport $PART 2>&1 | grep -m3 "aren't set"
+echo "== 6: FAKEPW in its output";     ./gradlew -q :app:signingReport $PART 2>&1 | grep -c FAKEPW
+echo "== 7: flag not 1 or 0";          ./gradlew -q :app:signingReport $FAKE -PMOONER_RELEASE_SIGN=true 2>&1 | grep -m3 'must be 1 or 0'
 ```
 
   - 1, expected: `Config: debug` and `SHA-256: FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C`.
   - 2, expected: `Config: debug`. Having the key isn't enough.
   - 3 and 4, expected: `Config: release`, `Store: /nonexistent/mooner-test.keystore`, `Alias: test`, `Error: Missing keystore`. Case 4 is the form `run-android.sh` uses (fact 8a).
-  - 5, expected: Gradle stops with an error that names `MOONER_UPLOAD_STORE_FILE`. Record its exact text.
+  - 5, expected: Gradle stops with `MOONER_RELEASE_SIGN is 1 but these Gradle properties aren't set: MOONER_UPLOAD_STORE_FILE, MOONER_UPLOAD_STORE_PASSWORD, MOONER_UPLOAD_KEY_ALIAS, MOONER_UPLOAD_KEY_PASSWORD`. Record its exact text.
+  - 6, expected: Gradle stops naming `MOONER_UPLOAD_KEY_ALIAS, MOONER_UPLOAD_KEY_PASSWORD`, and the count is `0`: the made-up password `FAKEPW` appears nowhere in the output.
+  - 7, expected: Gradle stops with `MOONER_RELEASE_SIGN must be 1 or 0, and it is set to something else (a space after the 1 counts)`.
   - Fact 8 shows how an earlier version of this switch behaved; these exact cases weren't run while writing this plan. If any result differs, stop and report it before installing anything.
   - If case 1 already shows `Config: release`, this machine already has `MOONER_RELEASE_SIGN=1` in `~/.gradle/gradle.properties` (USER STEP B done early, choice (a)). Stop: USER STEP C must come before any install.
 
@@ -1955,7 +2045,7 @@ cd mobile && sh scripts/check-bundle.sh && sh scripts/run-android.sh
 ```
 
   - Expected: the check passes, then `Signer #1 certificate SHA-256 digest: fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`, and the app opens as before. If the check fails, don't install.
-  - Then run `cd mobile && npm test`. Expected: the Task 6 count plus 3.
+  - Then run `cd mobile && npm test`. Expected: the Task 6 count plus 7.
 
 - [ ] **Step 10: Commit.**
 
@@ -2231,7 +2321,7 @@ MOONER_UPLOAD_KEY_PASSWORD=<the same password>
 cd mobile && sh scripts/check-bundle.sh && ORG_GRADLE_PROJECT_MOONER_RELEASE_SIGN=1 sh scripts/run-android.sh
 ```
 
-  (`expo run:android` passes no `-P` to Gradle, so the flag goes in the environment; fact 8a. For `./gradlew` directly, it's `-PMOONER_RELEASE_SIGN=1`.)
+  (`expo run:android` adds only its own `-P` flags to Gradle and has no option to pass yours, so the flag goes in the environment; fact 8a. For `./gradlew` directly, it's `-PMOONER_RELEASE_SIGN=1`.)
 - Do USER STEP C right after this one.
 
 **USER STEP C — remove the debug-signed app from the Seeker.**
@@ -2352,7 +2442,7 @@ cd web && node --test tests/refs.test.mjs && npm run build
 
 Expected:
 - engine is the Task 1 baseline plus 16 (Task 1: 6, Task 2: 2, Task 3: 5, Task 4: 3);
-- mobile is its baseline plus 15 (Task 5: 6, Task 6: 6, Task 8: 3);
+- mobile is its baseline plus 19 (Task 5: 6, Task 6: 6, Task 8: 7);
 - `web3.js copies: 1; files from engine/node_modules: 0`, then `app/ entries from this checkout:` above 0;
 - web refs `# pass 4`, and the build exits 0;
 - no failures that weren't failing at the baselines.
@@ -2397,7 +2487,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- docs/superpowers/spe
   - Piece 6 decides whether those cases count, and handles sybil checks. Nothing in piece 3 awards anything.
 - **Other share entry points:** the spec's coin-screen share (Screens, line 191) is not in piece 3; it can reuse `shareOf` and `shareLink`. Piece 4's new presale, which opens with the share sheet up, shares through `shareOf` (its `src/create/share.js`).
 - **The agent's builds after USER STEP B:** the user's choice, asked before Task 10 and recorded in its checklist. Under (a) the agent's release builds sign with the user's key through Gradle; under (b) they stay debug-signed and the agent stops installing on the Seeker after USER STEP C. Either way the agent never reads `~/.gradle/gradle.properties` or the keystore.
-- **The signing flag in Gradle:** the plugin's `findProperty('MOONER_RELEASE_SIGN') == '1'` and the parenthesised `signingConfig(…)` line weren't run through Gradle while writing this plan; an earlier switch was (fact 8). Task 8 Step 8 checks all five cases before anything is installed.
+- **The signing flag in Gradle:** the plugin's `findProperty('MOONER_RELEASE_SIGN') == '1'` and the parenthesised `signingConfig(…)` line weren't run through Gradle while writing this plan; an earlier switch was (fact 8). The `signingConfigs.release` block's own logic was run under Groovy 4.0.27 (Gradle 9.0.0's jar, plain `java`, no Gradle) with stubs for `project` and the SigningConfig: an absent flag, `0`, and the key without the flag set nothing; `1 `, `true` and an empty flag stop; the flag with part of the key stops naming only the missing properties, with no value in the text. The whole generated `build.gradle` compiles there. Whether AGP runs that block for every task is Gradle's to show: Task 8 Step 8 checks all seven cases before anything is installed.
 - **The Metro cache guard:** at `e81bb45`, the reviewer checked read-only that `getDefaultConfig` gives one store, of the class named `FileStore` (Expo's subclass of Metro's), and that Metro's constructor reads only `options.root`. The new block, which builds the store from the config's class, was not run while writing this plan. A real bundle with it runs first in Task 0 Step 6, in the repo's own `mobile/`.
 - **Concurrent saves on the phone:** two quick ref changes on the phone save in order in memory. Their secure-store writes are not awaited one after the other, so the last two writes could land in either order. A wrong order costs at most one stale ref.
 - **Web private mode:** in private browsing, or when storage is blocked, the web keeps no ref. The join then just sends none.
