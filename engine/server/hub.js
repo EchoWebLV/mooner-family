@@ -26,7 +26,8 @@ export const HUB_LIMITS = {
 /**
  * `server`: the http.Server (createServer). `onFirst(topic)` / `onLast(topic)`: the first
  * socket joined a topic, the last one left (start or stop watching it). `onSub(topic,
- * send)`: a socket joined; `send(msg)` goes to that socket only (its snapshot).
+ * send)`: a socket joined, or subscribed again to a topic it has; `send(msg)` goes to that
+ * socket only (its snapshot).
  */
 export class Hub {
   constructor(server, { path = "/api/ws", trustProxy = false, limits = {}, heartbeatMs = 30_000, onFirst = () => {}, onLast = () => {}, onSub = () => {}, log = console.log, now = Date.now } = {}) {
@@ -105,7 +106,9 @@ export class Hub {
   }
 
   join(ws, topic) {
-    if (ws.subs.has(topic)) return;
+    // a topic the socket has: its state once more (a second screen on it asked), and none
+    // of the limits, which count each topic once
+    if (ws.subs.has(topic)) return this.state(ws, topic);
     if (ws.subs.size >= this.L.topicsPerSocket) return this.send(ws, { error: `at most ${this.L.topicsPerSocket} topics` });
     if (topic.startsWith("wallet:") && [...ws.subs].filter((t) => t.startsWith("wallet:")).length >= this.L.walletsPerSocket) {
       return this.send(ws, { error: `at most ${this.L.walletsPerSocket} wallets` });
@@ -120,6 +123,15 @@ export class Hub {
     set.add(ws);
     try {
       if (first) this.onFirst(topic);
+    } catch (e) {
+      return this.log(`ws ${topic}: ${e.stack ?? e}`);
+    }
+    this.state(ws, topic);
+  }
+
+  /** `topic`'s state (its snapshot, or "missing") to `ws` alone. */
+  state(ws, topic) {
+    try {
       this.onSub(topic, (msg) => this.send(ws, { topic, ...msg }));
     } catch (e) {
       this.log(`ws ${topic}: ${e.stack ?? e}`);

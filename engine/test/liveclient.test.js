@@ -81,6 +81,27 @@ test("two listeners share a topic; the last one out unsubscribes", () => {
   assert.deepEqual(made[0].sent[1], { op: "unsub", topics: ["sol"] });
 });
 
+test("a second listener on a topic the open socket has asks for it again and hears the next message; only the last one out unsubscribes", () => {
+  const { live, made } = rig();
+  const [a, b] = [[], []];
+  const offA = live.subscribe("presale:x", (m) => a.push(m.n));
+  made[0].up();
+  made[0].push({ topic: "presale:x", type: "snapshot", n: 1 });
+  const offB = live.subscribe("presale:x", (m) => b.push(m.n));
+  assert.deepEqual(made[0].sent, [
+    { op: "sub", topics: ["presale:x"] },
+    { op: "sub", topics: ["presale:x"] }, // the server answers it with the topic's state
+  ]);
+  made[0].push({ topic: "presale:x", type: "snapshot", n: 2 });
+  assert.deepEqual([a, b], [[1, 2], [2]], "both hear it");
+  offA();
+  assert.equal(made[0].sent.length, 2, "one still listens: no unsub");
+  offB();
+  offB();
+  offA();
+  assert.deepEqual(made[0].sent.slice(2), [{ op: "unsub", topics: ["presale:x"] }], "exactly one unsub");
+});
+
 test("a topic subscribed while open is sent at once", () => {
   const { live, made } = rig();
   live.subscribe("a", () => {});

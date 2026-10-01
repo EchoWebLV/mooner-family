@@ -88,13 +88,13 @@ export function makeLive({
     sock.onerror = () => sock.close();
   }
 
-  /** `fn(msg)` hears `topic` until the returned function is called. */
+  /** `fn(msg)` hears `topic` until the returned function is called. A topic the socket
+   *  has already is asked for again, so the new listener gets its snapshot too; every
+   *  listener on the topic hears that one, and each takes a snapshot as the whole state. */
   function subscribe(topic, fn) {
     let set = listeners.get(topic);
-    if (!set) {
-      listeners.set(topic, (set = new Set()));
-      tell("sub", [topic]);
-    }
+    if (!set) listeners.set(topic, (set = new Set()));
+    tell("sub", [topic]); // not open yet: the open sends every topic
     set.add(fn);
     connect();
     return () => {

@@ -11,6 +11,7 @@ import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } fro
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { priceFromSqrt } from "../src/views.js";
 import { Bot } from "../src/bot.js";
+import { makeLive } from "../src/live.js";
 import { createServer, toJson } from "../server/http.js";
 import { makeReads } from "../server/api.js";
 import { makeSocialRoutes } from "../server/social.js";
@@ -409,6 +410,88 @@ test("limits: sockets per address, and a socket that sends too much", async () =
     again.close();
   } finally {
     b.close();
+    await s.close();
+  }
+});
+
+test("a topic the socket has, subscribed again: its state again, and the topic still counts once", async () => {
+  const s = await startLive({ hub: { limits: { topicsPerSocket: 2 } } });
+  const { presale } = newPresale(s.l1, s.store);
+  const k = presale.toBase58();
+  const unknown = `presale:${Keypair.generate().publicKey.toBase58()}`;
+  const c = await s.client();
+  try {
+    c.sub(`presale:${k}`, unknown);
+    assert.equal((await c.next(on(`presale:${k}`))).type, "snapshot");
+    assert.equal((await c.next(on(unknown))).type, "missing");
+
+    // at the limit: the topics it has are answered again, each with its whole state
+    c.sub(`presale:${k}`, unknown);
+    const again = await c.next(on(`presale:${k}`));
+    assert.deepEqual([again.type, again.data.presale, again.data.seats], ["snapshot", k, []]);
+    assert.equal((await c.next(on(unknown))).type, "missing");
+    assert.deepEqual(c.got.filter((m) => m.error), [], "no limit error for a topic it has");
+    c.sub("sol");
+    assert.match((await c.next((m) => m.error)).error, /at most 2 topics/, "a new one is still refused");
+
+    // each topic counted once: one unsub leaves it, and frees one place
+    c.unsub(unknown);
+    await wait(50);
+    assert.equal(s.hub.has(unknown), false);
+    c.sub("sol");
+    assert.equal((await c.next(on("sol"))).type, "snapshot");
+    assert.deepEqual(c.got.filter((m) => m.error), []);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("live.js on the real hub: a second listener on a presale, after the first got its snapshot, gets one too", async () => {
+  const s = await startLive();
+  const { presale } = newPresale(s.l1, s.store);
+  const topic = `presale:${presale.toBase58()}`;
+  const live = makeLive({ url: s.url, WebSocket, warn: () => {} });
+  const [a, b] = [[], []];
+  const offs = [];
+  const until = async (ok) => {
+    for (let i = 0; i < 100 && !ok(); i++) await wait(20);
+  };
+  try {
+    offs.push(live.subscribe(topic, (m) => a.push(m)));
+    await until(() => a.length);
+    assert.deepEqual(a.map((m) => m.type), ["snapshot"]);
+    offs.push(live.subscribe(topic, (m) => b.push(m)));
+    await until(() => b.length);
+    assert.deepEqual(b.map((m) => [m.type, m.data?.presale]), [["snapshot", presale.toBase58()]], "the second listener's snapshot");
+    assert.deepEqual(a.map((m) => m.type), ["snapshot", "snapshot"], "the first hears it too");
+  } finally {
+    offs.forEach((off) => off());
+    await s.close();
+  }
+});
+
+test("a wallet or a coin the socket has, subscribed again at its limit: its state again, no error, no second chain subscription", async () => {
+  const s = await startLive({ hub: { limits: { walletsPerSocket: 1, coinsPerSocket: 1 } } });
+  const w = Keypair.generate().publicKey;
+  s.l1.put(w, new PublicKey("11111111111111111111111111111111"), Buffer.alloc(0), 5_000);
+  const wallet = `wallet:${w.toBase58()}`;
+  const coin = `coin:${Keypair.generate().publicKey.toBase58()}`;
+  const c = await s.client();
+  try {
+    c.sub(wallet, coin);
+    assert.deepEqual((await c.next(on(wallet))).data, { lamports: 5_000 });
+    assert.equal((await c.next(on(coin))).type, "missing");
+    c.sub(wallet, coin);
+    assert.deepEqual((await c.next(on(wallet))).data, { lamports: 5_000 });
+    assert.equal((await c.next(on(coin))).type, "missing");
+    assert.deepEqual(c.got.filter((m) => m.error), []);
+    assert.equal(s.l1.accountSubs().filter((x) => x === w.toBase58()).length, 1, "one chain subscription");
+    c.unsub(wallet);
+    await wait(50);
+    assert.ok(!s.l1.accountSubs().includes(w.toBase58()), "one unsub lets it go");
+  } finally {
+    c.close();
     await s.close();
   }
 });
