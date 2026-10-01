@@ -6,7 +6,7 @@ import { createMoonerStore, launchedList, liveList, myPresales } from "../src/st
 const W = "Wallet1111";
 const signer = { publicKey: { toBase58: () => W }, signTransaction: async (t) => t, sendTransaction: async () => "SIG", signMessage: async () => new Uint8Array(64) };
 
-function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000 } = {}) {
+function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000, wrapSaved = (base) => base } = {}) {
   const subs = new Map(); // topic -> Set<fn>
   const status = new Set();
   const live = {
@@ -22,13 +22,14 @@ function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000 } = {}) {
     },
   };
   const push = (topic, type, data) => [...(subs.get(topic) ?? [])].forEach((fn) => fn({ topic, type, data }));
+  const pushRaw = (msg) => [...(subs.get(msg.topic) ?? [])].forEach((fn) => fn(msg));
   const listening = (topic) => (subs.get(topic)?.size ?? 0) > 0;
   const disk = new Map();
-  const saved = (name) => ({
+  const saved = wrapSaved((name) => ({
     get: async () => (disk.has(name) ? structuredClone(disk.get(name)) : undefined),
     set: async (v) => void disk.set(name, structuredClone(v)),
     clear: async () => void disk.delete(name),
-  });
+  }));
   const calls = [];
   const info = { N: { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n } };
   const flows = {
@@ -52,7 +53,7 @@ function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000 } = {}) {
   };
   const store = createMoonerStore({ live, api, flows, saved, now: () => now });
   const goUp = (up) => [...status].forEach((fn) => fn(up));
-  return { store, push, listening, disk, calls, info, goUp };
+  return { store, push, pushRaw, listening, disk, calls, info, goUp, status };
 }
 
 const tick = () => new Promise((r) => setImmediate(r));
@@ -255,4 +256,158 @@ test("selectors: Live fullest first, Launched newest first, my presales", () => 
   assert.deepEqual(liveList(s).map((v) => v.presale), ["B", "A"]);
   assert.deepEqual(launchedList(s).map((r) => r.presale), ["L2", "L1"]);
   assert.deepEqual(myPresales(s).sort(), ["B", "L1"]);
+});
+
+// ---- review fixes ----
+
+const OTHER = "Wallet2222";
+
+test("getBack: the refunded seat leaves the room's view and the list's users", async () => {
+  const { store, push } = rig();
+  await store.getState().setWallet(W);
+  store.getState().start();
+  store.getState().watch("A");
+  push("presale:A", "snapshot", { presale: "A", state: "OPEN", seats: [{ seat: "s1", user: W, commit: "0", creator: false }, { seat: "s2", user: OTHER, commit: "5", creator: true }] });
+  push("presales", "snapshot", [{ presale: "A", state: "OPEN", users: [{ user: W, commit: "0" }, { user: OTHER, commit: "5" }] }, { presale: "B", state: "OPEN", users: [{ user: W, commit: "1" }] }]);
+  const r = await store.getState().getBack("A", signer);
+  assert.equal(r.ok, true);
+  const s = store.getState();
+  assert.deepEqual(s.views.A.seats.map((x) => x.user), [OTHER]);
+  assert.deepEqual(s.presales.A.users.map((x) => x.user), [OTHER]);
+  assert.deepEqual(s.presales.B.users.map((x) => x.user), [W], "another presale is left alone");
+});
+
+test("getBack with nothing watched changes no view", async () => {
+  const { store } = rig();
+  await store.getState().setWallet(W);
+  const r = await store.getState().getBack("A", signer);
+  assert.equal(r.ok, true);
+  assert.deepEqual(store.getState().views, {});
+});
+
+test("getBack that fails: the error in plain words, the store freed, the seat stays", async () => {
+  const { store, push } = rig({ flows: { getBack: async () => { throw new Error("Your seat isn't back yet; try again in a moment."); } } });
+  await store.getState().setWallet(W);
+  store.getState().watch("A");
+  push("presale:A", "snapshot", { presale: "A", state: "OPEN", seats: [{ seat: "s1", user: W, commit: "0" }] });
+  const r = await store.getState().getBack("A", signer);
+  assert.deepEqual(r, { ok: false, error: "Your seat isn't back yet; try again in a moment." });
+  const s = store.getState();
+  assert.equal(s.busy, null);
+  assert.equal(s.views.A.seats.length, 1);
+  assert.equal(s.mine.A, undefined);
+});
+
+for (const topic of ["presales", "launched"]) {
+  const other = topic === "presales" ? "launched" : "presales";
+  const rows = (st) => (topic === "presales" ? st.presales : st.launched);
+
+  test(`${topic}: not loaded until its first snapshot, which may be empty`, () => {
+    const { store, push } = rig();
+    store.getState().start();
+    assert.deepEqual(store.getState().loaded, { presales: false, launched: false });
+    assert.deepEqual(rows(store.getState()), {});
+    push(topic, "snapshot", []);
+    assert.equal(store.getState().loaded[topic], true);
+    assert.equal(store.getState().loaded[other], false, "the other feed is untouched");
+    assert.deepEqual(rows(store.getState()), {});
+  });
+
+  test(`${topic}: an error push says why, the next snapshot clears it`, () => {
+    const { store, push, pushRaw } = rig();
+    store.getState().start();
+    assert.deepEqual(store.getState().feedError, { presales: null, launched: null });
+    pushRaw({ topic, type: "error", error: "couldn't read this right now" });
+    assert.equal(store.getState().feedError[topic], "couldn't read this right now");
+    assert.equal(store.getState().feedError[other], null);
+    assert.equal(store.getState().loaded[topic], false, "an error is not a snapshot");
+    push(topic, "snapshot", []);
+    assert.equal(store.getState().feedError[topic], null);
+    assert.equal(store.getState().loaded[topic], true);
+  });
+}
+
+test("sendChat: when sign-in fails, the user sees its real error and nothing is sent", async () => {
+  const { store, calls } = rig();
+  await store.getState().setWallet(W);
+  const r = await store.getState().sendChat("A", "gm", signer, { signIn: async () => { throw new Error("The wallet's signature didn't check out. Try another wallet."); } });
+  assert.deepEqual(r, { ok: false, error: "The wallet's signature didn't check out. Try another wallet." });
+  assert.equal(calls.some((c) => c[0] === "chat"), false);
+});
+
+test("sendChat sends with the session sign-in returned, even if the store's wallet isn't this signer's", async () => {
+  const { store, calls } = rig({ now: 1_790_000_000_000 });
+  // no setWallet: signIn can't put the session in the store, so only what it returned is there
+  const r = await store.getState().sendChat("A", "gm", signer, { signIn: async () => ({ token: "fresh", exp: 1_790_000_100_000 }) });
+  assert.deepEqual(r, { ok: true });
+  assert.deepEqual(calls.find((c) => c[0] === "chat"), ["chat", "fresh", "A", "gm"]);
+});
+
+test("join: the wallet switching meanwhile doesn't lose the record or touch the other wallet's", async () => {
+  let release;
+  const { store, disk } = rig({ flows: { joinPresale: () => new Promise((r) => (release = r)) } });
+  disk.set(`mooner:mine:${OTHER}`, { Z: { deposit: "1", at: 1 } });
+  await store.getState().setWallet(W);
+  const joining = store.getState().join("A", 100_000_000n, signer);
+  await tick(); // the join is inside joinPresale
+  await store.getState().setWallet(OTHER);
+  release();
+  assert.equal((await joining).ok, true);
+  assert.equal(disk.get(`mooner:mine:${W}`).A.deposit, "100000000", "saved for the wallet that joined");
+  assert.deepEqual(disk.get(`mooner:mine:${OTHER}`), { Z: { deposit: "1", at: 1 } }, "the other wallet's record is as it was");
+  assert.deepEqual(Object.keys(store.getState().mine), ["Z"], "state shows the wallet that's connected now");
+});
+
+test("join: a save that throws on the spot doesn't turn a landed join into a failure", async () => {
+  const wrapSaved = () => () => ({ get: async () => undefined, set: () => { throw new Error("storage is gone"); }, clear: async () => {} });
+  const { store } = rig({ wrapSaved });
+  await store.getState().setWallet(W);
+  const r = await store.getState().join("A", 100_000_000n, signer);
+  assert.equal(r.ok, true);
+  assert.equal(store.getState().mine.A.deposit, "100000000", "still shown for this session");
+});
+
+test("stop lets go of the socket's state too: socketUp is false again", () => {
+  const { store, goUp } = rig();
+  const stop = store.getState().start();
+  goUp(true);
+  assert.equal(store.getState().socketUp, true);
+  stop();
+  assert.equal(store.getState().socketUp, false);
+});
+
+test("start twice shares nothing: the first stop leaves the second running, the last lets go", async () => {
+  const loads = [];
+  const { store, listening, status } = rig({ flows: { loadInfo: async () => (loads.push(1), { N: {} }) } });
+  const stopA = store.getState().start();
+  const stopB = store.getState().start();
+  await tick();
+  assert.equal(loads.length, 1, "a second start loads nothing again");
+  assert.equal(status.size, 1, "one status watcher");
+  stopA();
+  stopA(); // a stop called twice counts once
+  assert.ok(listening("presales"), "still running for the second start");
+  stopB();
+  for (const t of ["presales", "launched", "profiles", "sol"]) assert.equal(listening(t), false, t);
+  assert.equal(status.size, 0);
+  // and it can start again
+  const stopC = store.getState().start();
+  assert.ok(listening("presales"));
+  stopC();
+});
+
+test("signOut: forgets the sign-in and the wallet, keeps what it joined", async () => {
+  const { store, disk, listening } = rig();
+  disk.set(`mooner:login:${W}`, { token: "old", exp: 2_000_000 });
+  disk.set(`mooner:mine:${W}`, { A: { deposit: "100000000", at: 1 } });
+  await store.getState().setWallet(W);
+  assert.ok(store.getState().session);
+  await store.getState().signOut();
+  const s = store.getState();
+  assert.equal(s.wallet, null);
+  assert.equal(s.session, null);
+  assert.deepEqual(s.mine, {});
+  assert.equal(listening(`wallet:${W}`), false);
+  assert.equal(disk.has(`mooner:login:${W}`), false, "the saved sign-in is gone");
+  assert.equal(disk.get(`mooner:mine:${W}`).A.deposit, "100000000", "its presales are still saved");
 });

@@ -14,6 +14,8 @@ const without = (o, k) => {
   const { [k]: _, ...rest } = o;
   return rest;
 };
+// Secure storage may throw on the spot or reject; neither may fail what the user did.
+const keep = (fn) => Promise.resolve().then(fn).catch(() => undefined);
 
 /**
  * live:  { subscribe(topic, fn) -> off, onStatus(fn) -> off }   engine/src/live.js
@@ -23,11 +25,14 @@ const without = (o, k) => {
  */
 export function createMoonerStore({ live, api, flows, saved, now = () => Date.now() }) {
   let walletOff = null;
+  let running = null; // { users, offs } while any start() is on
   const store = createStore(() => ({
     socketUp: false,
     info: null, // flows.loadInfo(): numbers as BigInt in info.N
     infoError: null,
     presales: {}, // key -> list view
+    loaded: { presales: false, launched: false }, // true from a feed's first snapshot: {} before that is "not here yet", after it "none"
+    feedError: { presales: null, launched: null }, // the server's words when it couldn't read a feed; the next snapshot clears it
     views: {}, // key -> detail view (seats), while a screen watches it
     missing: {}, // key -> true: the server has no such presale
     launched: {}, // presale key -> launched row
@@ -46,15 +51,23 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
 
   // ---- what the server pushes ----
 
+  // A feed's first snapshot (even an empty one) is what makes it loaded; one that couldn't be
+  // read says so until its next snapshot.
+  const feedSnapshot = (feed, rows) =>
+    set((s) => ({ [feed]: rows, loaded: { ...s.loaded, [feed]: true }, feedError: { ...s.feedError, [feed]: null } }));
+  const feedFailed = (feed, error) => patch("feedError", (e) => ({ ...e, [feed]: error || "couldn't read this right now" }));
+
   function onPresales(m) {
-    if (m.type === "snapshot") set({ presales: Object.fromEntries(m.data.map((v) => [v.presale, v])) });
+    if (m.type === "snapshot") feedSnapshot("presales", Object.fromEntries(m.data.map((v) => [v.presale, v])));
     else if (m.type === "upsert") patch("presales", (p) => ({ ...p, [m.data.presale]: m.data }));
     else if (m.type === "remove") patch("presales", (p) => without(p, m.data.presale));
+    else if (m.type === "error") feedFailed("presales", m.error);
   }
 
   function onLaunched(m) {
-    if (m.type === "snapshot") set({ launched: Object.fromEntries(m.data.map((r) => [r.presale, r])) });
+    if (m.type === "snapshot") feedSnapshot("launched", Object.fromEntries(m.data.map((r) => [r.presale, r])));
     else if (m.type === "upsert") patch("launched", (l) => ({ ...l, [m.data.presale]: m.data }));
+    else if (m.type === "error") feedFailed("launched", m.error);
   }
 
   function onProfiles(m) {
@@ -93,20 +106,37 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     }
   }
 
-  /** The public topics, for the whole app. Returns stop(). */
+  /** The public topics, for the whole app. Returns stop(). A second start() while one is on
+   *  subscribes nothing more: the topics are let go when every start has stopped, and the
+   *  socket then reads as down. Each stop counts once. */
   function start() {
-    const offs = [
-      live.onStatus((up) => {
-        set({ socketUp: up });
-        if (up && !get().info) loadInfo();
-      }),
-      live.subscribe("presales", onPresales),
-      live.subscribe("launched", onLaunched),
-      live.subscribe("profiles", onProfiles),
-      live.subscribe("sol", onSol),
-    ];
-    loadInfo();
-    return () => offs.forEach((off) => off());
+    if (!running) {
+      running = {
+        users: 0,
+        offs: [
+          live.onStatus((up) => {
+            set({ socketUp: up });
+            if (up && !get().info) loadInfo();
+          }),
+          live.subscribe("presales", onPresales),
+          live.subscribe("launched", onLaunched),
+          live.subscribe("profiles", onProfiles),
+          live.subscribe("sol", onSol),
+        ],
+      };
+      loadInfo();
+    }
+    const mine = running;
+    mine.users++;
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      if (--mine.users > 0) return;
+      mine.offs.forEach((off) => off());
+      if (running === mine) running = null;
+      set({ socketUp: false });
+    };
   }
 
   /** One presale's view and chat while a screen shows it. Returns off(). */
@@ -128,21 +158,22 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
       if (m.type === "snapshot" && m.data?.lamports != null) set({ lamports: Number(m.data.lamports) });
     });
     const [session, mine] = await Promise.all([
-      saved(loginName(wallet)).get().catch(() => undefined),
-      saved(mineName(wallet)).get().catch(() => undefined),
+      keep(() => saved(loginName(wallet)).get()),
+      keep(() => saved(mineName(wallet)).get()),
     ]);
     if (get().wallet !== wallet) return; // switched meanwhile
     set({ session: session && session.exp > now() ? session : null, mine: mine ?? {} });
   }
 
-  /** Mooner sign-in (one wallet signature), kept 7 days on this phone. */
+  /** Mooner sign-in (one wallet signature), kept 7 days on this phone. Returns { ok: true,
+   *  session } or { ok: false, error }. */
   async function signIn(signer, { signIn: sign = walletSignIn } = {}) {
     const wallet = signer.publicKey.toBase58();
     try {
       const session = await sign({ api, wallet: signer.publicKey, signMessage: signer.signMessage, now });
-      await saved(loginName(wallet)).set(session).catch(() => {});
+      await keep(() => saved(loginName(wallet)).set(session));
       if (get().wallet === wallet) set({ session });
-      return { ok: true };
+      return { ok: true, session };
     } catch (e) {
       return { ok: false, error: explain(e) };
     }
@@ -151,15 +182,36 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
   /** Forgets the sign-in and the wallet on this phone (the screen also disconnects MWA). */
   async function signOut() {
     const w = get().wallet;
-    if (w) await saved(loginName(w)).clear().catch(() => {});
+    if (w) await keep(() => saved(loginName(w)).clear());
     await setWallet(null);
   }
 
+  /** Notes `entry` for presale `key` under the wallet that did it. It's saved for that wallet
+   *  even if another is connected by now (built on its own saved record then); the state shows
+   *  it only while that wallet is the connected one. */
   async function remember(wallet, key, entry) {
-    if (get().wallet !== wallet) return;
-    const mine = { ...get().mine, [key]: { ...get().mine[key], ...entry } };
-    set({ mine });
-    await saved(mineName(wallet)).set(mine).catch(() => {});
+    let mine;
+    if (get().wallet === wallet) {
+      mine = { ...get().mine, [key]: { ...get().mine[key], ...entry } };
+      set({ mine });
+    } else {
+      const had = (await keep(() => saved(mineName(wallet)).get())) ?? {};
+      mine = { ...had, [key]: { ...had[key], ...entry } };
+    }
+    await keep(() => saved(mineName(wallet)).set(mine));
+  }
+
+  /** After a refund no push follows (flows.getBack): the wallet's seat leaves the presale's
+   *  detail view and the list item's users, so nothing offers to get it back again. */
+  function dropSeat(key, wallet) {
+    set((s) => {
+      const v = s.views[key];
+      const p = s.presales[key];
+      const next = {};
+      if (v?.seats) next.views = { ...s.views, [key]: { ...v, seats: v.seats.filter((x) => x.user !== wallet) } };
+      if (p?.users) next.presales = { ...s.presales, [key]: { ...p, users: p.users.filter((x) => x.user !== wallet) } };
+      return next.views || next.presales ? next : s;
+    });
   }
 
   // ---- actions ----
@@ -193,7 +245,9 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
       const info = get().info ?? (await flows.loadInfo());
       const view = await api.presale(key);
       await flows.getBack({ info, wallet: signer.publicKey, signTransaction: signer.signTransaction, sendTransaction: signer.sendTransaction, view, onStep });
-      await remember(signer.publicKey.toBase58(), key, { back: now() });
+      const wallet = signer.publicKey.toBase58();
+      dropSeat(key, wallet);
+      await remember(wallet, key, { back: now() });
     });
   }
 
@@ -206,15 +260,16 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     if (!session || session.exp <= now()) {
       const r = await signIn(signer, opts);
       if (!r.ok) return r;
-      session = get().session;
+      session = r.session;
     }
     try {
       await api.sendChat(session.token, key, text.trim());
       return { ok: true };
     } catch (e) {
       if (e.status === 401) {
-        set({ session: null });
-        await saved(loginName(signer.publicKey.toBase58())).clear().catch(() => {});
+        const wallet = signer.publicKey.toBase58();
+        if (get().wallet === wallet) set({ session: null });
+        await keep(() => saved(loginName(wallet)).clear());
       }
       return { ok: false, error: explain(e) };
     }
