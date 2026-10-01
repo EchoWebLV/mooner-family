@@ -17,6 +17,9 @@ const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n
 const BIG = { TARGET: 10_000_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 1_000_000_000n, STEP: 10_000_000n };
 const draft = (over = {}) => ({ ...blankDraft(), name: "Moon Dog", ticker: "MDOG", ...over, links: { ...blankDraft().links, ...over.links } });
 const PID = "6iCH5T57amKEmbxU7sNrfnYC5BYyjGWTW8mayEAz7Lpa"; // the presale program (mainnet)
+// a saved open's coin and presale: two keys made for these tests, no one's
+const MINT = "CtqGFBa6JYHvjp52W1oJ3r2ZoTYidPDbAmKbyU68oTWk";
+const PRE = "FjwDw8HvJEXrkmwwzZkNfKW4C6hGgCpMVvDvuhwDxwu2";
 const OPENER = "This wallet can't open presales yet. Mooner lets a short list of wallets open them for now; you can still join any presale.";
 
 test("normalizeTicker: capital letters and digits only", () => {
@@ -56,7 +59,7 @@ test("linkHref: handles, bare domains and https links; nothing else", () => {
       return false;
     }
   };
-  for (const host of ["999.1", "1.2.3.4.5", "xn--a.com"]) {
+  for (const host of ["999.1", "999.10", "1.2.3.400", "1.2.3.4.5", "xn--a.com"]) {
     assert.equal(serverTakes(`https://${host}`), false, `the server refuses ${host}`);
     assert.equal(linkHref("website", host), null, host);
   }
@@ -262,10 +265,10 @@ test("openLanded: the watched presale's snapshot or its row in the list means th
 test("restoredOpen: a saved open whose outcome wasn't known comes back on the last look, locked to its coin", () => {
   assert.equal(restoredOpen(null), null);
   assert.equal(restoredOpen(undefined), null);
-  assert.equal(restoredOpen({ mint: "Mint1", presale: "Pre1" }), null, "not a whole record");
+  assert.equal(restoredOpen({ mint: MINT, presale: PRE }), null, "not a whole record");
   const saved = {
-    mint: "Mint1",
-    presale: "Pre1",
+    mint: MINT,
+    presale: PRE,
     name: "Moon Dog",
     symbol: "MDOG",
     description: "",
@@ -284,13 +287,25 @@ test("restoredOpen: a saved open whose outcome wasn't known comes back on the la
   const r = restoredOpen(saved);
   assert.equal(r.step, "review");
   assert.equal(r.coin, saved);
-  assert.equal(r.unknown, "Pre1", "its presale is watched");
+  assert.equal(r.unknown, PRE, "its presale is watched");
   assert.equal(r.commit, 100_000_000n);
   assert.deepEqual(r.picture, { uri: "https://gw/ipfs/img", bytes: null });
   assert.deepEqual(r.draft, draftOf(saved));
   assert.equal(r.error, OUTCOME_UNKNOWN);
   // the screen's last look is step 3; an unknown outcome locks it, so Back stays put
   assert.equal(backAction({ at: 3, locked: !!r.unknown, issued: !!r.coin, step: r.step }), "stay");
+});
+
+test("isOpening: a saved open's mint and presale are public keys in base58", () => {
+  const saved = { mint: MINT, presale: PRE, symbol: "MDOG", commit: "100000000", at: 1_790_000_000_000 };
+  assert.equal(isOpening(saved), true);
+  assert.equal(isOpening({ ...saved, mint: "Mint1" }), false, "a mint that isn't a key");
+  assert.equal(isOpening({ ...saved, presale: "Pre1" }), false, "a presale that isn't a key");
+  // a key's shape (base58, 32–44 characters), but 24 bytes, not 32: new PublicKey throws
+  const short = "z".repeat(32);
+  assert.equal(isOpening({ ...saved, mint: short }), false, "a mint of 32 characters that isn't 32 bytes");
+  assert.equal(isOpening({ ...saved, presale: short }), false, "a presale of 32 characters that isn't 32 bytes");
+  assert.equal(restoredOpen({ ...saved, mint: "Mint1" }), null, "nothing to restore");
 });
 
 /** A read before a retry (GET /api/presale) that throws `e`. */

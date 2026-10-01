@@ -1,8 +1,8 @@
 // The phone app's state: what the server pushes (presales, one presale's view and chat,
 // launched coins, one coin's stats, Mooner pictures' traits, SOL/USD, the wallet's SOL), the
 // wallet's balance of an open coin, and what the user does (sign in, join, get SOL back, chat,
-// buy, sell). Screens read it with zustand's useStore and call its actions. Nothing here
-// imports React Native, so it runs in Node tests with fakes.
+// buy, sell, create a coin and open its presale). Screens read it with zustand's useStore and
+// call its actions. Nothing here imports React Native, so it runs in Node tests with fakes.
 
 import { createStore } from "zustand/vanilla";
 import { explain } from "../../engine/src/flows.js";
@@ -10,6 +10,19 @@ import { refFor, withRef, withoutRef } from "../../engine/src/refs.js";
 import { signIn as walletSignIn } from "../../engine/src/signin.js";
 import { explainSwap } from "../../engine/src/swap.js";
 import { SNIPE_S, TAX_MARGIN_S } from "../../engine/src/views.js";
+import {
+  ALREADY_OPEN,
+  OPEN_PENDING,
+  RETRY_UNCHECKED,
+  checkBeforeRetry,
+  commitProblem,
+  createError,
+  isOpening,
+  keptCommitProblem,
+  openFailure,
+  openLanded,
+  shortOfOpen,
+} from "./create/rules.js";
 
 const CHAT_KEEP = 200;
 /** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
@@ -24,6 +37,8 @@ export const NO_MINIMUM = "Get a price first, then press again.";
 const SEEN_LIVE_MS = (SNIPE_S + TAX_MARGIN_S + 30) * 1000;
 const loginName = (w) => `mooner:login:${w}`;
 const mineName = (w) => `mooner:mine:${w}`;
+/** An open whose outcome wasn't known, saved per wallet until it's settled (openCoin). */
+const openingName = (w) => `mooner:opening:${w}`;
 /** Share-link refs, { presale: { ref, at } } (engine/src/refs.js), one record per phone. */
 const REFS = "mooner:refs";
 const without = (o, k) => {
@@ -70,6 +85,10 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     lamports: null,
     session: null, // { token, exp }: Mooner sign-in, for chat
     mine: {}, // presale key -> { deposit, at, back? }: joined from this phone
+    // the connected wallet's open whose outcome wasn't known: { mint, presale, symbol, name,
+    // description, links, image, commit, at } (create/rules.js restoredOpen); `at`: its last
+    // save (openCoin); null: none; undefined: not read yet
+    opening: undefined,
     chats: {}, // channel -> rows, oldest first
     coins: {}, // mint -> the coin's stats (chart, volume, liquidity, holders): pushed while a screen watches it; the last ones stay after
     coinMissing: {}, // mint -> true: the server has no such coin
@@ -78,7 +97,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     // screen opens it, on SOL moves while one is open, and after a trade here (watched or not);
     // the last read stays after the screen closes; a wallet change empties it
     holdings: {},
-    busy: null, // { key, kind: "join" | "back" | "buy" | "sell", step }
+    busy: null, // { key, kind: "join" | "back" | "buy" | "sell" | "create", step }
   }));
   const get = store.getState;
   const set = store.setState;
@@ -236,7 +255,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     if (wallet === get().wallet) return;
     walletOff?.();
     walletOff = null;
-    set({ wallet, lamports: null, session: null, mine: {}, holdings: {} });
+    set({ wallet, lamports: null, session: null, mine: {}, holdings: {}, opening: undefined });
     if (!wallet) return;
     walletOff = live.subscribe(`wallet:${wallet}`, (m) => {
       if (m.type !== "snapshot" || m.data?.lamports == null) return;
@@ -248,12 +267,13 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       if (was != null) for (const mint of watching.keys()) readHolding(mint);
     });
     for (const mint of watching.keys()) readHolding(mint);
-    const [session, mine] = await Promise.all([
+    const [session, mine, opening] = await Promise.all([
       keep(() => saved(loginName(wallet)).get()),
       keep(() => saved(mineName(wallet)).get()),
+      openingOf(wallet),
     ]);
     if (get().wallet !== wallet) return; // switched meanwhile
-    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {} });
+    set({ session: session && session.exp > now() ? session : null, mine: mine ?? {}, opening });
   }
 
   /** Mooner sign-in (one wallet signature), kept 7 days on this phone. Returns { ok: true,
@@ -422,6 +442,155 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   /** What a join takes from the wallet besides the deposit (BigInt lamports). */
   const joinCost = async () => (await flows.joinCost()).total;
 
+  /** What an open takes from the wallet besides the commit (BigInt lamports). */
+  const openCost = async () => (await flows.openCost()).total;
+
+  /** Asks the server for a new coin: the wallet signs its details, then the server pins the
+   *  picture and details to IPFS and issues the coin to this wallet. `coin`: create/rules.js
+   *  mintFields(draft) plus `image` (the picture's bytes). Returns { ok: true, value: { mint,
+   *  presale, name, symbol, image, uri } } or { ok: false, error }. */
+  function mintCoin(coin, signer) {
+    return run(
+      "create",
+      "create",
+      async (onStep) => {
+        onStep("Sign the coin details in your wallet");
+        const signMessage = async (bytes) => {
+          const signature = await signer.signMessage(bytes);
+          onStep("Saving the picture and details to IPFS");
+          return signature;
+        };
+        return flows.requestMint({ wallet: signer.publicKey, signMessage, ...coin });
+      },
+      createError,
+    );
+  }
+
+  // wallet -> its saved open, or null once cleared: what this run of the app last wrote,
+  // read before the disk. Secure storage can refuse a save (keep swallows it); this copy then
+  // keeps the coin locked while the app runs. Every write goes through noteOpening, so it is
+  // never older than the disk, which can be after a refused save or clear.
+  const openings = new Map();
+
+  /** Saves `record` as `wallet`'s open whose outcome wasn't known, or clears it (null): in
+   *  memory first, then on disk. Saved for that wallet even if another is connected by now;
+   *  the state shows it only while that wallet is the connected one (as remember does). */
+  async function noteOpening(wallet, record) {
+    openings.set(wallet, record);
+    if (get().wallet === wallet) set({ opening: record });
+    await keep(() => (record ? saved(openingName(wallet)).set(record) : saved(openingName(wallet)).clear()));
+  }
+
+  /** Clears `wallet`'s saved open if it is the coin of presale `key` (the screen's fresh
+   *  start, Start over, and openCoin's own clears). A saved open for another coin stays. */
+  async function forgetOpening(wallet, key) {
+    if ((await openingOf(wallet))?.presale === key) await noteOpening(wallet, null);
+  }
+
+  /** `wallet`'s saved open, or null: this run's copy first, else the disk's if it is a whole
+   *  record (create/rules.js isOpening). */
+  async function openingOf(wallet) {
+    if (openings.has(wallet)) return openings.get(wallet);
+    const r = await keep(() => saved(openingName(wallet)).get());
+    return isOpening(r) ? r : null;
+  }
+
+  /** Opens the presale for `coin` with the creator's `commit` (BigInt lamports), which is also
+   *  their seat, then remembers the seat as this wallet's. `coin`: { mint, presale, symbol,
+   *  name, description, links, image }, the server's coin with its presale's key
+   *  (create/rules.js presaleKeyOf). Returns { ok: true, value: the presale's key (base58) }
+   *  or { ok: false, error }, and on a retry also `read: { verdict, at }`: the read before it
+   *  (create/rules.js checkBeforeRetry) and when it was asked, for the screen's canStartOver.
+   *  - The coin is saved for the wallet (`opening`), with `at`, before the wallet is asked,
+   *    so the screen keeps it, after a restart too, watches its presale and retries only it.
+   *    No prompt, nothing saved. While it is saved, another mint gets OPEN_PENDING.
+   *  - It is saved again, with a new `at`, once the wallet has signed and when an unknown
+   *    outcome is reported: `at` is the coin's last save, which Start over waits on.
+   *  - Once the wallet has signed, a failure that may have sent the open comes back as
+   *    OUTCOME_UNKNOWN (create/rules.js openFailure), never a plain failure; the coin stays
+   *    saved, and no seat is remembered.
+   *  - A retry reads its presale first, before any other check: the server knowing it in
+   *    any state means that open landed (ALREADY_OPEN, nothing signed; a presale that closed
+   *    leaves no account, so the program would open the same coin again). Only the server's
+   *    own 404 lets it go on, with the saved commit; anything else is RETRY_UNCHECKED.
+   *  - A success and ALREADY_OPEN clear the saved coin, and so does a first try's plain
+   *    failure. A retry's plain failure keeps it as it was before that try, even after the
+   *    sign: the server never sent this try's tx, or sent it and it failed for certain. */
+  async function openCoin(coin, commit, signer) {
+    let pid = null; // the presale program's key (base58), for createError
+    let read = null; // a retry's read: { verdict, at }
+    const r = await run(
+      "create",
+      "create",
+      async (onStep) => {
+        const wallet = signer.publicKey.toBase58();
+        const info = get().info ?? (await flows.loadInfo());
+        pid = info.pid.toBase58();
+        const had = await openingOf(wallet);
+        if (had && had.mint !== coin.mint) throw new Error(OPEN_PENDING);
+        let amount = commit;
+        if (had) {
+          // the read first: a landed open must never be signed again, whatever else is wrong
+          onStep("Checking whether the presale is open");
+          const at = now();
+          const verdict = await checkBeforeRetry(() => api.presale(coin.presale));
+          read = { verdict, at };
+          if (verdict === "open") {
+            await forgetOpening(wallet, coin.presale);
+            throw new Error(ALREADY_OPEN);
+          }
+          if (verdict !== "retry") throw new Error(RETRY_UNCHECKED);
+          amount = BigInt(had.commit); // fixed for its mint, whatever the screen hands in
+          const kept = keptCommitProblem(amount, info.N);
+          if (kept) throw new Error(kept);
+          const lamports = get().wallet === wallet ? get().lamports : null;
+          const short = shortOfOpen(amount, await openCost().catch(() => null), lamports);
+          if (short) throw new Error(short);
+        } else {
+          const problem = commitProblem(commit, info.N);
+          if (problem) throw new Error(problem);
+        }
+        const { mint, presale: key, symbol, name, description, links, image } = coin;
+        const record = { mint, presale: key, symbol, name, description, links, image, commit: String(amount) };
+        let sent = false; // the wallet signed: from here on the open may go out
+        const signTransaction = async (tx) => {
+          if (openLanded(key, get())) throw new Error(ALREADY_OPEN); // the feed has it: don't ask
+          await noteOpening(wallet, { ...record, at: now() }); // saved before the wallet is asked
+          onStep("Sign to open the presale with your SOL");
+          const signed = await signer.signTransaction(tx);
+          // saved again: Seed Vault changes the tx as it signs, maybe its blockhash too, so a
+          // prompt held a long time must not count against Start over's wait
+          await noteOpening(wallet, { ...record, at: now() });
+          sent = true;
+          onStep("Opening the presale");
+          return signed;
+        };
+        let presale;
+        try {
+          presale = (await flows.openPresale({ info, wallet: signer.publicKey, signTransaction, mint, commit: amount })).toBase58();
+        } catch (e) {
+          const out = openFailure(e, sent);
+          if (out?.outcomeUnknown) {
+            // it may have landed: the coin stays saved, as of when that was reported
+            await noteOpening(wallet, { ...record, at: now() });
+            throw out;
+          }
+          if (createError(out, pid) === ALREADY_OPEN) await forgetOpening(wallet, key);
+          // a retry's plain failure: as it was. Safe after the sign too: the server never sent
+          // this try's tx, or sent it and it failed for certain, so it can't land
+          else if (had) await noteOpening(wallet, had);
+          else await forgetOpening(wallet, key); // a first try's: nothing of it can land
+          throw out;
+        }
+        await forgetOpening(wallet, key);
+        await remember(wallet, presale, { deposit: String(amount), at: now(), back: null });
+        return presale;
+      },
+      (e) => createError(e, pid),
+    );
+    return read ? { ...r, read } : r;
+  }
+
   /** Posts to presale `key`'s chat, signing in first if needed. `opts.signIn` is for tests. */
   async function sendChat(key, text, signer, opts) {
     let session = get().session;
@@ -443,7 +612,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade });
+  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening });
   return store;
 }
 

@@ -7,6 +7,7 @@ import { ApiError } from "../../../engine/src/apiclient.js";
 import { explain, sol } from "../../../engine/src/flows.js";
 import { alreadyOpen } from "../../../engine/src/opening.js";
 import { presalePda } from "../../../engine/src/pdas.js";
+import { cleanRef } from "../../../engine/src/refs.js";
 import { OUTCOME_UNKNOWN, outcomeUnknown } from "../../../engine/src/tx.js";
 import { SEAT_PRESETS } from "../../../engine/src/views.js";
 import { solText } from "../ui/format.js";
@@ -290,13 +291,26 @@ export function backAction({ at, locked, issued, step }) {
   return "previous";
 }
 
-/** Whether `o` is a whole saved open: its mint, presale and ticker (not blank), and its commit
- *  as whole lamports above 0. A missing or broken `at` still counts: the coin stays locked,
- *  and canStartOver never lets it go. */
+/** Whether `s` is a public key in base58: a wallet's shape, untrimmed (refs.js cleanRef), and
+ *  32 bytes (new PublicKey throws otherwise). */
+function isKey(s) {
+  if (typeof s !== "string" || cleanRef(s) !== s) return false;
+  try {
+    new PublicKey(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `o` is a whole saved open: its mint and presale (public keys in base58, so
+ *  presaleKeyOf and the read before a retry can use them), its ticker (not blank), and its
+ *  commit as whole lamports above 0. A missing or broken `at` still counts: the coin stays
+ *  locked, and canStartOver never lets it go. */
 export const isOpening = (o) =>
   !!o &&
-  typeof o.mint === "string" &&
-  typeof o.presale === "string" &&
+  isKey(o.mint) &&
+  isKey(o.presale) &&
   typeof o.symbol === "string" &&
   o.symbol.trim() !== "" &&
   /^[1-9]\d*$/.test(String(o.commit ?? ""));

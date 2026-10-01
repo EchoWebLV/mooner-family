@@ -71,10 +71,10 @@
   - its Task 0: `check-bundle.sh` checks that the bundle holds this checkout's own screens, Metro keeps a cache per checkout, and every install runs the check first;
   - `app.json` already written by a JSON script (`JSON.stringify(j, null, 2) + "\n"`), with its release-signing plugin and App Links filter, so Task 1's script changes only the picker's entry;
   - its USER STEP B choice about release signing, recorded in Task 10's checklist line there: **(a)**, the agent's builds sign with the user's key. This plan's installs follow it (see Device below).
-- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 52 tests: 23 in `test/create.test.mjs` and 29 in `test/create-store.test.mjs`.
+- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 53 tests: 24 in `test/create.test.mjs` and 29 in `test/create-store.test.mjs`.
 - **Checked while writing (a record, not a gate).** The second round's changes were not run in a copy at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210` or `ef2e0f2`: the saved open and the read before a retry, `alreadyOpen`, `openPresale`'s unknown outcome after a 202, the share only after an open that succeeded here, and the Device wording. The third round's weren't either: the save before the wallet is asked, the copy in memory, the read before the commit check and its server-only 404, Start over, and the `trying` watch. Its check was read-only: each store, `JoinSheet.js` and `icons.js` anchor was counted at `ef2e0f2` (14 anchors, each found once), and piece 3's committed blocks were read, not applied: none of them holds or shares a line with any of these anchors, so each still matches once after piece 3. The checks below are from before them, on 2026-10-01 at HEAD `c38e1c4`, in a clean `git archive` of it in the scratchpad (and first at `8edc177` and `238150c`, with the same results but for the engine's count). Piece 3's blocks were applied by script first (68 edits), then this plan's (26: Task 1's `app.json` script, the new files, the store, `JoinSheet.js` and `icons.js` edits, and the tabs layout). Each anchor matched exactly once. The fourth round's changes (the coin saved again once the wallet signs and when an unknown is reported, and their tests) were not run either. Its check was read-only as well: the 14 anchors were counted again at `ccb0f94`, by a script that reads `git show HEAD:<file>`, and each was found once.
   - Task 1: the plugins print begins exactly as in Step 2, and the `app.json` diff after piece 3 is only the picker's lines. `mobile/node_modules/expo/bundledNativeModules.json` lists `expo-image-manipulator` `~55.0.21` and `expo-image-picker` `~55.0.24`.
-  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 52 now (23 and 29).
+  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 53 now (24 and 29).
   - Failing first, as written: `create.test.mjs` with `ERR_MODULE_NOT_FOUND` for `rules.js`; `create-store.test.mjs` with `# fail 15` (`mintCoin`, `openCoin`, `openCost` not functions) before the store edits. With the fourth round's tests, Task 3 Step 2 expects `# fail 29` (not run).
   - `cd engine && npm test`: `# pass 384`, `# fail 0`: 369 at `c38e1c4`, plus piece 3's 15. `6b9bbfe`, `df9abda`, `0c1cad3`, `e81bb45`, `874b210`, `5ba106a` and `ef2e0f2` change engine tests; that count wasn't taken. This plan changes nothing in `engine/`.
   - The parse check passes on `create.js`, `_layout.js`, the six files of Task 6, `picture.js`, `Chip.js`, `JoinSheet.js`, `icons.js` and `store.js`, with piece 3's screen files. `JoinSheet.js` has no `Pressable`, `F.` or `R.` left, and keeps `Haptics`.
@@ -195,7 +195,7 @@ BigInts and PublicKeys arrive as strings.
 - Create `src/ui/Chip.js` (moved out of `src/room/JoinSheet.js`, which then imports it), with an optional `label` for screen readers. Modify `src/ui/icons.js` (`PlusIcon`).
 - Create `src/create/Field.js`, `src/create/PictureStep.js`, `src/create/DetailsStep.js`, `src/create/CommitStep.js`, `src/create/ReviewStep.js`, `src/create/Unopened.js`.
 - Create `app/(tabs)/create.js`. Modify `app/(tabs)/_layout.js` (the Create tab, between Launched and Me).
-- Create `test/create.test.mjs` (23 tests) and `test/create-store.test.mjs` (29 tests).
+- Create `test/create.test.mjs` (24 tests) and `test/create-store.test.mjs` (29 tests).
 
 **Docs:** at the end, a piece 4 status line in the spec.
 
@@ -377,6 +377,9 @@ const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n
 const BIG = { TARGET: 10_000_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 1_000_000_000n, STEP: 10_000_000n };
 const draft = (over = {}) => ({ ...blankDraft(), name: "Moon Dog", ticker: "MDOG", ...over, links: { ...blankDraft().links, ...over.links } });
 const PID = "6iCH5T57amKEmbxU7sNrfnYC5BYyjGWTW8mayEAz7Lpa"; // the presale program (mainnet)
+// a saved open's coin and presale: two keys made for these tests, no one's
+const MINT = "CtqGFBa6JYHvjp52W1oJ3r2ZoTYidPDbAmKbyU68oTWk";
+const PRE = "FjwDw8HvJEXrkmwwzZkNfKW4C6hGgCpMVvDvuhwDxwu2";
 const OPENER = "This wallet can't open presales yet. Mooner lets a short list of wallets open them for now; you can still join any presale.";
 
 test("normalizeTicker: capital letters and digits only", () => {
@@ -416,7 +419,7 @@ test("linkHref: handles, bare domains and https links; nothing else", () => {
       return false;
     }
   };
-  for (const host of ["999.1", "1.2.3.4.5", "xn--a.com"]) {
+  for (const host of ["999.1", "999.10", "1.2.3.400", "1.2.3.4.5", "xn--a.com"]) {
     assert.equal(serverTakes(`https://${host}`), false, `the server refuses ${host}`);
     assert.equal(linkHref("website", host), null, host);
   }
@@ -622,10 +625,10 @@ test("openLanded: the watched presale's snapshot or its row in the list means th
 test("restoredOpen: a saved open whose outcome wasn't known comes back on the last look, locked to its coin", () => {
   assert.equal(restoredOpen(null), null);
   assert.equal(restoredOpen(undefined), null);
-  assert.equal(restoredOpen({ mint: "Mint1", presale: "Pre1" }), null, "not a whole record");
+  assert.equal(restoredOpen({ mint: MINT, presale: PRE }), null, "not a whole record");
   const saved = {
-    mint: "Mint1",
-    presale: "Pre1",
+    mint: MINT,
+    presale: PRE,
     name: "Moon Dog",
     symbol: "MDOG",
     description: "",
@@ -644,13 +647,25 @@ test("restoredOpen: a saved open whose outcome wasn't known comes back on the la
   const r = restoredOpen(saved);
   assert.equal(r.step, "review");
   assert.equal(r.coin, saved);
-  assert.equal(r.unknown, "Pre1", "its presale is watched");
+  assert.equal(r.unknown, PRE, "its presale is watched");
   assert.equal(r.commit, 100_000_000n);
   assert.deepEqual(r.picture, { uri: "https://gw/ipfs/img", bytes: null });
   assert.deepEqual(r.draft, draftOf(saved));
   assert.equal(r.error, OUTCOME_UNKNOWN);
   // the screen's last look is step 3; an unknown outcome locks it, so Back stays put
   assert.equal(backAction({ at: 3, locked: !!r.unknown, issued: !!r.coin, step: r.step }), "stay");
+});
+
+test("isOpening: a saved open's mint and presale are public keys in base58", () => {
+  const saved = { mint: MINT, presale: PRE, symbol: "MDOG", commit: "100000000", at: 1_790_000_000_000 };
+  assert.equal(isOpening(saved), true);
+  assert.equal(isOpening({ ...saved, mint: "Mint1" }), false, "a mint that isn't a key");
+  assert.equal(isOpening({ ...saved, presale: "Pre1" }), false, "a presale that isn't a key");
+  // a key's shape (base58, 32–44 characters), but 24 bytes, not 32: new PublicKey throws
+  const short = "z".repeat(32);
+  assert.equal(isOpening({ ...saved, mint: short }), false, "a mint of 32 characters that isn't 32 bytes");
+  assert.equal(isOpening({ ...saved, presale: short }), false, "a presale of 32 characters that isn't 32 bytes");
+  assert.equal(restoredOpen({ ...saved, mint: "Mint1" }), null, "nothing to restore");
 });
 
 /** A read before a retry (GET /api/presale) that throws `e`. */
@@ -759,6 +774,7 @@ import { ApiError } from "../../../engine/src/apiclient.js";
 import { explain, sol } from "../../../engine/src/flows.js";
 import { alreadyOpen } from "../../../engine/src/opening.js";
 import { presalePda } from "../../../engine/src/pdas.js";
+import { cleanRef } from "../../../engine/src/refs.js";
 import { OUTCOME_UNKNOWN, outcomeUnknown } from "../../../engine/src/tx.js";
 import { SEAT_PRESETS } from "../../../engine/src/views.js";
 import { solText } from "../ui/format.js";
@@ -1042,13 +1058,26 @@ export function backAction({ at, locked, issued, step }) {
   return "previous";
 }
 
-/** Whether `o` is a whole saved open: its mint, presale and ticker (not blank), and its commit
- *  as whole lamports above 0. A missing or broken `at` still counts: the coin stays locked,
- *  and canStartOver never lets it go. */
+/** Whether `s` is a public key in base58: a wallet's shape, untrimmed (refs.js cleanRef), and
+ *  32 bytes (new PublicKey throws otherwise). */
+function isKey(s) {
+  if (typeof s !== "string" || cleanRef(s) !== s) return false;
+  try {
+    new PublicKey(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `o` is a whole saved open: its mint and presale (public keys in base58, so
+ *  presaleKeyOf and the read before a retry can use them), its ticker (not blank), and its
+ *  commit as whole lamports above 0. A missing or broken `at` still counts: the coin stays
+ *  locked, and canStartOver never lets it go. */
 export const isOpening = (o) =>
   !!o &&
-  typeof o.mint === "string" &&
-  typeof o.presale === "string" &&
+  isKey(o.mint) &&
+  isKey(o.presale) &&
   typeof o.symbol === "string" &&
   o.symbol.trim() !== "" &&
   /^[1-9]\d*$/.test(String(o.commit ?? ""));
@@ -1123,10 +1152,10 @@ export function newPresaleShare({ key, symbol, wallet, commit, N, now }) {
 - [ ] **Step 5: Run the test to see it pass**
 
 Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/create.test.mjs`
-Expected: `# pass 23`, `# fail 0`
+Expected: `# pass 24`, `# fail 0`
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 23, `# fail 0`
+Expected: pass is BEFORE + 24, `# fail 0`
 
 - [ ] **Step 6: Commit**
 
@@ -1205,10 +1234,14 @@ const COIN = {
   image: Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]),
 };
 const PID = "6iCH5T57amKEmbxU7sNrfnYC5BYyjGWTW8mayEAz7Lpa";
+/** The coin and its presale: two keys made for these tests, no one's. A saved open needs real
+ *  keys (create/rules.js isOpening). */
+const MINT = "CtqGFBa6JYHvjp52W1oJ3r2ZoTYidPDbAmKbyU68oTWk";
+const PRE = "FjwDw8HvJEXrkmwwzZkNfKW4C6hGgCpMVvDvuhwDxwu2";
 /** The server's coin, with its presale's key, as the screen hands it to openCoin. */
 const OPENING = {
-  mint: "Mint1",
-  presale: "Pre1",
+  mint: MINT,
+  presale: PRE,
   symbol: "MDOG",
   name: "Moon Dog",
   description: "",
@@ -1254,12 +1287,12 @@ function rig({ flows: over = {}, signer: signerOver = {}, presale = NOT_FOUND, d
     requestMint: async (a) => {
       calls.push(["mint", a]);
       await a.signMessage(new Uint8Array([1, 2, 3]));
-      return { mint: "Mint1", presale: "Pre1", name: a.name, symbol: a.symbol, image: "https://gw/ipfs/img", uri: "https://gw/ipfs/meta" };
+      return { mint: MINT, presale: PRE, name: a.name, symbol: a.symbol, image: "https://gw/ipfs/img", uri: "https://gw/ipfs/meta" };
     },
     openPresale: async (a) => {
       calls.push(["open", a]);
       await a.signTransaction("TX");
-      return { toBase58: () => "Pre1" };
+      return { toBase58: () => PRE };
     },
     openCost: async () => ({ total: 8_800_000n }),
     ...over,
@@ -1283,7 +1316,7 @@ function rig({ flows: over = {}, signer: signerOver = {}, presale = NOT_FOUND, d
 test("mintCoin: the wallet signs the details, then the server's coin comes back", async () => {
   const { store, calls, signer, steps } = rig();
   const r = await store.getState().mintCoin(COIN, signer);
-  assert.deepEqual(r, { ok: true, value: { mint: "Mint1", presale: "Pre1", name: "Moon Dog", symbol: "MDOG", image: "https://gw/ipfs/img", uri: "https://gw/ipfs/meta" } });
+  assert.deepEqual(r, { ok: true, value: { mint: MINT, presale: PRE, name: "Moon Dog", symbol: "MDOG", image: "https://gw/ipfs/img", uri: "https://gw/ipfs/meta" } });
   const [, a] = calls.find(([k]) => k === "mint");
   assert.equal(a.wallet, signer.publicKey);
   assert.equal(a.name, "Moon Dog");
@@ -1329,16 +1362,16 @@ test("openCoin: the open with the creator's commit, then remembered as this wall
   const { store, calls, disk, signer, steps } = rig();
   await store.getState().setWallet(W);
   const r = await store.getState().openCoin(OPENING, 100_000_000n, signer);
-  assert.deepEqual(r, { ok: true, value: "Pre1" });
+  assert.deepEqual(r, { ok: true, value: PRE });
   const [, a] = calls.find(([k]) => k === "open");
-  assert.equal(a.mint, "Mint1");
+  assert.equal(a.mint, MINT);
   assert.equal(a.commit, 100_000_000n);
   assert.equal(a.wallet, signer.publicKey);
   assert.deepEqual(a.info.N, N);
   assert.deepEqual(calls.find(([k]) => k === "signTransaction"), ["signTransaction", "TX"]);
   assert.deepEqual(steps, ["Sign to open the presale with your SOL", "Opening the presale"]);
-  assert.deepEqual(store.getState().mine.Pre1, { deposit: "100000000", at: 5_000, back: null });
-  assert.deepEqual(disk.get(`mooner:mine:${W}`).Pre1, { deposit: "100000000", at: 5_000, back: null });
+  assert.deepEqual(store.getState().mine[PRE], { deposit: "100000000", at: 5_000, back: null });
+  assert.deepEqual(disk.get(`mooner:mine:${W}`)[PRE], { deposit: "100000000", at: 5_000, back: null });
   assert.ok(!calls.some(([k]) => k === "presale"), "no saved coin: no read first");
   assert.equal(store.getState().opening, null);
 });
@@ -1371,7 +1404,7 @@ test("create waits for any other action, and frees the store after", async () =>
     flows: {
       requestMint: async () => {
         await new Promise((r) => (release = r));
-        return { mint: "Mint1" };
+        return { mint: MINT };
       },
     },
   });
@@ -1424,8 +1457,8 @@ test("openCoin: the co-signer's unknown outcome after the wallet signed stays un
   const { r, mine, saved, steps } = await openAfterSigning(outcomeUnknown("SIG", "cosign"));
   assert.deepEqual(r, { ok: false, error: OUTCOME_UNKNOWN });
   assert.deepEqual(steps, ["Sign to open the presale with your SOL", "Opening the presale"]);
-  assert.equal(mine.Pre1, undefined);
-  assert.equal(saved?.Pre1, undefined);
+  assert.equal(mine[PRE], undefined);
+  assert.equal(saved?.[PRE], undefined);
 });
 
 test("openCoin: the presale not seen in time after the server's 202 is an unknown outcome", async () => {
@@ -1433,7 +1466,7 @@ test("openCoin: the presale not seen in time after the server's 202 is an unknow
   for (const e of [outcomeUnknown("SIG", "open"), new Error("the presale didn't show up yet; refresh in a moment")]) {
     const { r, mine } = await openAfterSigning(e);
     assert.deepEqual(r, { ok: false, error: OUTCOME_UNKNOWN }, e.message);
-    assert.equal(mine.Pre1, undefined, e.message);
+    assert.equal(mine[PRE], undefined, e.message);
   }
 });
 
@@ -1441,7 +1474,7 @@ test("openCoin: a network error or a 5xx after the wallet signed is an unknown o
   for (const e of [new TypeError("Network request failed"), new ApiError(502, "bad gateway", {})]) {
     const { r, saved } = await openAfterSigning(e);
     assert.deepEqual(r, { ok: false, error: OUTCOME_UNKNOWN }, e.message);
-    assert.equal(saved?.Pre1, undefined, e.message);
+    assert.equal(saved?.[PRE], undefined, e.message);
   }
 });
 
@@ -1458,7 +1491,7 @@ test("openCoin: the server's refusal after signing sent nothing: its own words, 
   assert.deepEqual(rent.r, { ok: false, error: "Your wallet needs a little more SOL to cover rent and the Solana fee." });
   const again = await openAfterSigning(ALREADY_EXISTS);
   assert.deepEqual(again.r, { ok: false, error: ALREADY_OPEN });
-  assert.equal(again.mine.Pre1, undefined, "the screen goes to the room, whose seats show it");
+  assert.equal(again.mine[PRE], undefined, "the screen goes to the room, whose seats show it");
 });
 
 test("openCoin: a failure before the wallet signed is a plain failure", async () => {
@@ -1487,8 +1520,8 @@ test("openCoin: an unknown outcome keeps the coin saved for its wallet, as of wh
 test("openCoin: a retry of the saved coin reads its presale once first; a success and the program's AlreadyExists clear it", async () => {
   const ok = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
   await ok.store.getState().setWallet(W);
-  assert.deepEqual(await ok.store.getState().openCoin(OPENING, 100_000_000n, ok.signer), { ok: true, value: "Pre1", read: readOf("retry") });
-  assert.deepEqual(ok.calls.filter(([k]) => k === "presale"), [["presale", "Pre1"]]);
+  assert.deepEqual(await ok.store.getState().openCoin(OPENING, 100_000_000n, ok.signer), { ok: true, value: PRE, read: readOf("retry") });
+  assert.deepEqual(ok.calls.filter(([k]) => k === "presale"), [["presale", PRE]]);
   assert.equal(ok.store.getState().opening, null);
   assert.equal(ok.disk.has(SAVED_NAME), false);
   const taken = signedThen(ALREADY_EXISTS, { disk: new Map([[SAVED_NAME, OLD]]) });
@@ -1503,7 +1536,7 @@ test("openCoin: a retry of the saved coin reads its presale once first; a succes
 });
 
 test("openCoin: a retry whose presale the server knows, closed too, was already opened: nothing is signed and the saved coin clears", async () => {
-  const closed = { presale: "Pre1", where: "closed", state: "CLOSED", token: { mint: "Mint1" }, launch: null, seats: [] };
+  const closed = { presale: PRE, where: "closed", state: "CLOSED", token: { mint: MINT }, launch: null, seats: [] };
   const { store, calls, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]), presale: async () => closed });
   await store.getState().setWallet(W);
   assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: false, error: ALREADY_OPEN, read: readOf("open") });
@@ -1537,12 +1570,12 @@ test("openCoin: the coin is saved, with when, before the wallet is asked; nothin
       openPresale: async (a) => {
         await a.signTransaction("TX");
         seen.open = structuredClone(disk.get(SAVED_NAME));
-        return { toBase58: () => "Pre1" };
+        return { toBase58: () => PRE };
       },
     },
   });
   await store.getState().setWallet(W);
-  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: "Pre1" });
+  assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: true, value: PRE });
   assert.deepEqual(seen.prompt, SAVED, "on disk, with `at`, when the wallet is asked");
   assert.deepEqual(seen.open, SAVED, "and while the open goes out");
   assert.equal(disk.has(SAVED_NAME), false, "a success clears it");
@@ -1581,7 +1614,11 @@ test("openCoin: a retry the wallet refuses, or the server refuses after the sign
   const rent = new ApiError(400, "the tx fails: Transaction results in an account (0) with insufficient funds for rent", { logs: [] });
   const refused = signedThen(rent, { disk: new Map([[SAVED_NAME, OLD]]), ...movingClock() });
   await refused.store.getState().setWallet(W);
-  assert.equal((await refused.store.getState().openCoin(OPENING, 100_000_000n, refused.signer)).ok, false);
+  assert.deepEqual(await refused.store.getState().openCoin(OPENING, 100_000_000n, refused.signer), {
+    ok: false,
+    error: "Your wallet needs a little more SOL to cover rent and the Solana fee.",
+    read: readOf("retry"),
+  });
   assert.deepEqual(refused.disk.get(SAVED_NAME), OLD, "signed, but the server never sent it: as the earlier try left it");
   assert.deepEqual(refused.store.getState().opening, OLD);
   const lost = signedThen(outcomeUnknown("SIG", "cosign"), { disk: new Map([[SAVED_NAME, OLD]]), ...movingClock() });
@@ -1629,7 +1666,7 @@ test("openCoin: when secure storage refuses the save, a copy in memory keeps the
   assert.equal(store.getState().opening, null, "another wallet has none");
   await store.getState().setWallet(W);
   assert.deepEqual(store.getState().opening, SAVED);
-  await store.getState().forgetOpening(W, "Pre1");
+  await store.getState().forgetOpening(W, PRE);
   assert.equal(store.getState().opening, null);
   await store.getState().setWallet(null);
   await store.getState().setWallet(W);
@@ -1639,7 +1676,7 @@ test("openCoin: when secure storage refuses the save, a copy in memory keeps the
 test("openCoin: a presale the feed already shows stops the open before the wallet is asked", async () => {
   const { store, calls, disk, signer } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
   await store.getState().setWallet(W);
-  store.setState({ presales: { Pre1: { presale: "Pre1", state: "OPEN" } } });
+  store.setState({ presales: { [PRE]: { presale: PRE, state: "OPEN" } } });
   assert.deepEqual(await store.getState().openCoin(OPENING, 100_000_000n, signer), { ok: false, error: ALREADY_OPEN, read: readOf("retry") });
   assert.ok(calls.some(([k]) => k === "open"), "the open was built");
   assert.ok(!calls.some(([k]) => k === "signTransaction"), "the wallet wasn't asked");
@@ -1657,7 +1694,7 @@ test("openCoin: no other coin opens while one is saved, and forgetOpening clears
   assert.deepEqual(await store.getState().openCoin(other, 100_000_000n, signer), { ok: false, error: OPEN_PENDING });
   assert.ok(!calls.some(([k]) => k === "presale" || k === "open" || k === "signTransaction"));
   assert.deepEqual(disk.get(SAVED_NAME), OLD);
-  await store.getState().forgetOpening(W, "Pre1");
+  await store.getState().forgetOpening(W, PRE);
   assert.equal(store.getState().opening, null);
   assert.equal(disk.has(SAVED_NAME), false);
 });
@@ -1681,7 +1718,7 @@ test("openCoin: a 404 without the server's own words signs nothing, and the save
 
 test("openCoin: a retry reads first, then checks its saved commit, which it keeps whatever the screen hands in", async () => {
   const BIG = { ...OLD, commit: "450000000" };
-  const closed = { presale: "Pre1", where: "closed", state: "CLOSED", token: { mint: "Mint1" }, launch: null, seats: [] };
+  const closed = { presale: PRE, where: "closed", state: "CLOSED", token: { mint: MINT }, launch: null, seats: [] };
   const landed = rig({ disk: new Map([[SAVED_NAME, BIG]]), presale: async () => closed });
   await landed.store.getState().setWallet(W);
   assert.deepEqual(await landed.store.getState().openCoin(OPENING, 100_000_000n, landed.signer), { ok: false, error: ALREADY_OPEN, read: readOf("open") });
@@ -1699,7 +1736,7 @@ test("openCoin: a retry reads first, then checks its saved commit, which it keep
   await kept.store.getState().setWallet(W);
   assert.equal((await kept.store.getState().openCoin(OPENING, 250_000_000n, kept.signer)).ok, true);
   assert.equal(kept.calls.find(([k]) => k === "open")[1].commit, 100_000_000n, "the saved commit, not the screen's");
-  assert.deepEqual(kept.store.getState().mine.Pre1, { deposit: "100000000", at: 5_000, back: null });
+  assert.deepEqual(kept.store.getState().mine[PRE], { deposit: "100000000", at: 5_000, back: null });
 });
 
 test("openCoin: a retry short of SOL says so after the read, signs nothing, and the saved coin stays", async () => {
@@ -1711,7 +1748,7 @@ test("openCoin: a retry short of SOL says so after the read, signs nothing, and 
     error: "You need 0.109 SOL to open this (your commit plus about 0.0088 SOL in fees and rent). You have 0.05.",
     read: readOf("retry"),
   });
-  assert.deepEqual(calls.filter(([k]) => k === "presale"), [["presale", "Pre1"]]);
+  assert.deepEqual(calls.filter(([k]) => k === "presale"), [["presale", PRE]]);
   assert.ok(!calls.some(([k]) => k === "open" || k === "signTransaction"));
   assert.deepEqual(disk.get(SAVED_NAME), OLD);
 });
@@ -2027,7 +2064,7 @@ Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test te
 Expected: `# pass 29`, `# fail 0`
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 52, `# fail 0`. `test/store.test.mjs` passes unchanged.
+Expected: pass is BEFORE + 53, `# fail 0`. `test/store.test.mjs` passes unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -2282,7 +2319,7 @@ export function PlusIcon({ color, size = 22 }) {
 - [ ] **Step 4: Tests and parse check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 52, `# fail 0`
+Expected: pass is BEFORE + 53, `# fail 0`
 
 Run from `mobile/` the parse check with `src/ui/Chip.js src/room/JoinSheet.js src/ui/icons.js`.
 Expected: `parsed 3 files`
@@ -3068,7 +3105,7 @@ The other screens' options are exactly as at `c38e1c4` (the file is unchanged si
 - [ ] **Step 3: Tests, parse check, bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 52, `# fail 0`
+Expected: pass is BEFORE + 53, `# fail 0`
 
 Run from `mobile/` the parse check with `"app/(tabs)/create.js" "app/(tabs)/_layout.js"`.
 Expected: `parsed 2 files`
@@ -3310,7 +3347,7 @@ Run superpowers:code-reviewer over the commits of Tasks 1-7, against this plan a
 - [ ] **Step 2: Every suite and the bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 52, plus any tests the review added; `# fail 0`
+Expected: pass is BEFORE + 53, plus any tests the review added; `# fail 0`
 
 Run: `cd engine && npm test`
 Expected: 0 fail. This plan changes nothing in `engine/`.
@@ -3385,5 +3422,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- docs/superpowers/spe
 - **The store's `watch` and the room's (verified).** Create stops its watch (the form resets) before it pushes the room, which starts its own. The order can't matter: `engine/src/live.js` `subscribe` (lines 91–108 at `ef2e0f2`: its doc comment 91–95, the function 96–108) keeps a Set of listeners per topic and sends `unsub` only when the last one leaves. Since `0c1cad3` it sends `sub` again for a topic it has, so a listener that comes second gets the snapshot too. Since `874b210` the server answers at most 30 such repeat subs of a held topic a minute per socket, and the doc says a listener must not subscribe again from its own snapshot handler. Create and the room make at most one repeat sub per open, and neither makes it from a handler.
 - **What marks a presale as there (verified).** `openLanded` takes a `views[key]` or `presales[key]` with a `state`. `mobile/src/store.js` `onPresale` (lines 125-129 at `ccb0f94`) puts a missing presale only in `missing[key]`, never in `views`. A `"closed"` view needs the server's `markOpened`, which runs only after an open landed (`api.js` lines 327 and 414, `keeper.js` line 67, at `ccb0f94`).
 - **The share's "in so far".** The new presale's share says the creator's commit is what's in, from the open itself, not from the feed. Someone joining in the same seconds isn't counted.
-- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 52 (23 + 29).
+- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 53 (24 + 29).
 - **Not run at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210`, `ef2e0f2` or `ccb0f94`.** The second round's changes (the saved open and the read before a retry, `alreadyOpen`, the 202's unknown outcome, the share only after an open that succeeded here, the Device wording) and the third round's (the save before the wallet is asked, the copy in memory, the read before the commit check with the server's own 404 only, the saved commit, the feed's check before the prompt, one coin at a time, Start over, and the `trying` watch) were not applied to a clean copy or run, and neither were the fourth round's (the coin saved again once the wallet signs and when an unknown is reported, with their tests). Both checks were read-only: the third round counted each anchor at `ef2e0f2`, and the fourth counted all 14 again at `ccb0f94` (a script that reads `git show HEAD:<file>`; each found once). Nothing was run. The counts in "Before this plan" are from `c38e1c4`, before them: a record, not a gate.
