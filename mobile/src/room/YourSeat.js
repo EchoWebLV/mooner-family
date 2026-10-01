@@ -1,12 +1,11 @@
 // Your seat in the room's bottom area: what you have in, and the one button that takes it back.
 import { useState } from "react";
 import { View } from "react-native";
-import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
 import { store } from "../app";
 import { solText } from "../ui/format";
-import { CheckIcon, LockIcon } from "../ui/icons";
+import { LockIcon } from "../ui/icons";
 import { Button, Steps, T } from "../ui/kit";
 import { C } from "../ui/theme";
 import { seatPlan } from "./room";
@@ -19,7 +18,6 @@ export function YourSeat({ view, launched, seat, wallet, now, signer, onBack }) 
   const plan = seatPlan(view, launched, seat, wallet, now);
   const backing = busy?.kind === "back" && busy.key === view.presale;
   const joining = busy?.kind === "join" && busy.key === view.presale;
-  const ticker = view.token?.symbol ?? "";
 
   async function getBack() {
     if (store.getState().busy) return;
@@ -45,12 +43,6 @@ export function YourSeat({ view, launched, seat, wallet, now, signer, onBack }) 
       {plan.note === "locked" ? (
         <Line icon={<LockIcon color={C.text1} />}>Locked in. Your tokens come to your wallet right after launch.</Line>
       ) : null}
-      {plan.note === "claimed" ? (
-        <>
-          <Line icon={<CheckIcon color={C.gold} />} color={C.gold}>Your tokens arrived</Line>
-          <Button title={`See $${ticker}`} onPress={() => router.push(`/coin/${view.presale}`)} />
-        </>
-      ) : null}
       {plan.back ? (
         <>
           {backing ? <Steps step={busy.step} /> : null}
@@ -68,7 +60,8 @@ export function YourSeat({ view, launched, seat, wallet, now, signer, onBack }) 
   );
 }
 
-function Line({ icon, color = C.text1, children }) {
+/** A small line of text after an icon. */
+export function Line({ icon, color = C.text1, children }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
       <View style={{ paddingTop: 2 }}>{icon}</View>

@@ -14,9 +14,10 @@ import { momentStep } from "./room";
 
 /** `ready`: the view is this visit's own (the first snapshot since the room opened has come);
  *  until then nothing counts as a change, so a view kept from an earlier visit can't start it.
- *  `seat`: seatOf(view, wallet) or null. `focused`: whether the room is the screen on top;
- *  while it isn't, nothing shows (the moment waits for the room to come back). */
-export function LaunchOverlay({ view, launched, seat, ready, focused }) {
+ *  `seat`: seatOf(view, wallet) or null. `claimed`: claimedOf(...), whether this wallet's
+ *  tokens arrived. `focused`: whether the room is the screen on top; while it isn't, nothing
+ *  shows (the moment waits for the room to come back). */
+export function LaunchOverlay({ view, launched, seat, claimed, ready, focused }) {
   const stage = ready && view ? stageOf(view, launched) : null;
   const seen = useRef(null); // the stage last seen
   const [phase, setPhase] = useState(null); // null | "launching" | "live" | "failed" | "done"
@@ -84,10 +85,10 @@ export function LaunchOverlay({ view, launched, seat, ready, focused }) {
           ) : (
             <View style={{ alignItems: "center", gap: 8 }}>
               <T v="title" style={{ textAlign: "center" }}>{`$${ticker} is live`}</T>
-              {inPool ? (
-                <T v="body" color={seat.claimed ? C.gold : C.text1} style={{ textAlign: "center" }}>
-                  {seat.claimed ? "Your tokens arrived" : "Your tokens are on the way"}
-                </T>
+              {claimed ? (
+                <T v="body" color={C.gold} style={{ textAlign: "center" }}>Your tokens arrived</T>
+              ) : inPool ? (
+                <T v="body" color={C.text1} style={{ textAlign: "center" }}>Your tokens are on the way</T>
               ) : null}
             </View>
           )}

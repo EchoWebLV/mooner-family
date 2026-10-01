@@ -23,15 +23,36 @@ export function heroOf(view, launched, N, nowMs) {
   return { stage, fill, color, under };
 }
 
-/** The room's sticky bottom: { kind: "connect" } | { kind: "seat", seat } | { kind: "join" }
- *  | { kind: "why", why }. With no wallet it offers to connect only when someone could join. */
-export function bottomOf(view, wallet, N, nowMs) {
+/** The commit to remember for claimedOf after `view`: this wallet's seat's commit once
+ *  commits are fixed (any state but OPEN; set_commit runs only while OPEN), else `had`.
+ *  `view`: a detail view (with `seats`). A get-back closes a seat while OPEN, so it never counts. */
+export function lockedCommit(view, wallet, had) {
+  if (!wallet || !Array.isArray(view?.seats) || view.state === "OPEN") return had;
+  const seat = seatOf(view, wallet);
+  return seat ? seat.commit : had;
+}
+
+/** Whether `wallet`'s tokens arrived. The program never sets F_CLAIMED: claim closes the seat
+ *  (finish.rs). Once the pool is full, a seat with SOL in it leaves a launched presale only by
+ *  claim (settle_seat refunds a committed seat only when EXPIRED or FAILED). `had`: the
+ *  seat's commit (BigInt) last seen after OPEN, or null. */
+export function claimedOf(view, wallet, had) {
+  if (!wallet || !Array.isArray(view?.seats) || !(had > 0n)) return false;
+  const launched = view.state === "SETTLED" || (view.state === "CLOSED" && !!view.launch);
+  return launched && !seatOf(view, wallet);
+}
+
+/** The room's sticky bottom: { kind: "connect" } | { kind: "seat", seat } | { kind: "claimed" }
+ *  | { kind: "join" } | { kind: "why", why }. With no wallet it offers to connect only when
+ *  someone could join. `claimed`: claimedOf(...), for when the seat is gone. */
+export function bottomOf(view, wallet, N, nowMs, claimed) {
   if (!wallet) {
     const anyone = joinCheck(view, null, N, nowMs);
     return anyone.ok ? { kind: "connect" } : { kind: "why", why: anyone.why };
   }
   const seat = seatOf(view, wallet);
   if (seat) return { kind: "seat", seat };
+  if (claimed) return { kind: "claimed" };
   const check = joinCheck(view, wallet, N, nowMs);
   return check.ok ? { kind: "join" } : { kind: "why", why: check.why };
 }
@@ -61,9 +82,8 @@ export function shortOf(deposit, extra, lamports) {
   return `You need ${solText(need, 3)} SOL for this (the seat plus about ${solText(extra, 4)} SOL in fees and rent). You have ${solText(have, 3)}.`;
 }
 
-/** Your seat in words: { title, note, back }. note: "claimed" (tokens arrived), "locked"
- *  (in the pool, launching or live), "creator" (stays in until launch) or null; back: whether
- *  "Get my SOL back" applies. */
+/** Your seat in words: { title, note, back }. note: "locked" (in the pool, launching or
+ *  live), "creator" (stays in until launch) or null; back: whether "Get my SOL back" applies. */
 export function seatPlan(view, launched, seat, wallet, nowMs) {
   const stage = stageOf(view, launched);
   const out = seat.commit === 0n;
@@ -71,10 +91,9 @@ export function seatPlan(view, launched, seat, wallet, nowMs) {
     ? `In your seat · ${solText(seat.deposit)} SOL, out of the pool`
     : `You're in · ${solText(seat.commit)} SOL`;
   let note = null;
-  if (seat.claimed) note = "claimed";
-  else if (!out && PAST.has(stage)) note = "locked";
+  if (!out && PAST.has(stage)) note = "locked";
   else if (seat.creator) note = "creator";
-  const back = !seat.claimed && canGetBack(view, wallet, nowMs);
+  const back = canGetBack(view, wallet, nowMs);
   return { title, note, back };
 }
 

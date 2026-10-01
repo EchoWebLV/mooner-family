@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, heroOf, hhmm, isKey, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -48,6 +48,68 @@ test("bottomOf: connect, your seat, join, or why not", () => {
   assert.deepEqual(bottomOf({ ...open(), seats: undefined, users: [{ user: ME, commit: "1" }] }, ME, N, NOW), { kind: "why", why: "You're already in." });
 });
 
+test("bottomOf: tokens arrived once the seat is gone and claimed", () => {
+  const live = open({ state: "SETTLED" });
+  assert.deepEqual(bottomOf(live, ME, N, NOW, true), { kind: "claimed" });
+  assert.deepEqual(bottomOf(live, ME, N, NOW, false), { kind: "why", why: "This presale isn't taking seats." });
+  // the seat is still there: still the seat
+  const kept = bottomOf(open({ state: "SETTLED", seats: [seatRow({ settled: true })] }), ME, N, NOW, true);
+  assert.equal(kept.kind, "seat");
+  assert.equal(kept.seat.commit, 250_000_000n);
+  // no wallet: as before
+  assert.deepEqual(bottomOf(live, null, N, NOW, true), { kind: "why", why: "This presale isn't taking seats." });
+});
+
+test("lockedCommit, claimedOf: full, launched, then the seat is gone (claim closes it)", () => {
+  const settled = open({ state: "SETTLED", seats: [seatRow({ settled: true })] });
+  let had = null;
+  for (const view of [open({ seats: [seatRow()] }), open({ state: "FULL", seats: [seatRow()] }), settled, open({ state: "SETTLED" })]) {
+    had = lockedCommit(view, ME, had);
+  }
+  assert.equal(had, 250_000_000n);
+  assert.equal(claimedOf(open({ state: "SETTLED" }), ME, had), true);
+  assert.equal(claimedOf(settled, ME, had), false, "not claimed yet");
+  const closed = (launch) => ({ presale: KEY, where: "closed", state: "CLOSED", token: null, launch, seats: [] });
+  assert.equal(claimedOf(closed({ sig: "S" }), ME, had), true);
+  // the presale's own state decides, not the stage (a launched row makes FULL "live")
+  assert.equal(claimedOf(open({ state: "FULL" }), ME, had), false);
+  assert.equal(claimedOf(open({ state: "LAUNCHING" }), ME, had), false);
+  // nothing is remembered while OPEN, from another wallet's seat, or with no wallet
+  assert.equal(lockedCommit(open({ seats: [seatRow()] }), ME, null), null);
+  assert.equal(lockedCommit(open({ state: "FULL", seats: [seatRow({ user: KEY })] }), ME, null), null);
+  assert.equal(lockedCommit(open({ state: "FULL", seats: [seatRow()] }), null, null), null);
+  assert.equal(claimedOf(open({ state: "SETTLED" }), null, had), false);
+});
+
+test("claimedOf: a get-back while OPEN, then the pool fills and launches: not claimed", () => {
+  let had = null;
+  for (const view of [open({ seats: [seatRow()] }), open({ state: "FULL" }), open({ state: "SETTLED" })]) had = lockedCommit(view, ME, had);
+  assert.equal(had, null);
+  assert.equal(claimedOf(open({ state: "SETTLED" }), ME, had), false);
+});
+
+test("claimedOf: FAILED, EXPIRED or CLOSED without a launch: refunded, not claimed", () => {
+  const had = lockedCommit(open({ state: "FULL", seats: [seatRow()] }), ME, null);
+  assert.equal(had, 250_000_000n);
+  assert.equal(claimedOf(open({ state: "FAILED" }), ME, had), false);
+  assert.equal(claimedOf(open({ state: "EXPIRED" }), ME, had), false);
+  assert.equal(claimedOf({ presale: KEY, where: "closed", state: "CLOSED", token: null, launch: null, seats: [] }, ME, had), false);
+});
+
+test("claimedOf: a seat out of the pool (commit 0) at launch is refunded, not claimed", () => {
+  const had = lockedCommit(open({ state: "FULL", seats: [seatRow({ commit: "0" })] }), ME, null);
+  assert.equal(had, 0n);
+  assert.equal(claimedOf(open({ state: "SETTLED" }), ME, had), false);
+});
+
+test("claimedOf, lockedCommit: a list item (no seats) says nothing", () => {
+  const item = { ...open({ state: "SETTLED" }), seats: undefined, users: [] };
+  assert.equal(claimedOf(item, ME, 5n), false);
+  assert.equal(lockedCommit({ ...item, state: "FULL" }, ME, 5n), 5n);
+  assert.equal(claimedOf(undefined, ME, 5n), false);
+  assert.equal(lockedCommit(undefined, ME, 5n), 5n);
+});
+
 test("pickOf: the whole chip while it fits; a note when less fits", () => {
   assert.deepEqual(pickOf(open(), N, 100_000_000n), { deposit: 100_000_000n, commit: 100_000_000n, note: null });
   // 0.3 SOL of room: a 0.5 chip puts in 0.3 and the seat holds 0.3
@@ -69,9 +131,9 @@ test("shortOf: the seat plus fees and rent against the wallet", () => {
   );
 });
 
-test("seatPlan: in, out of the pool, creator, locked, claimed", () => {
+test("seatPlan: in, out of the pool, creator, locked", () => {
   const plan = (view, seat) => seatPlan(view, null, seat, ME, NOW);
-  const seat = (over) => ({ deposit: 250_000_000n, commit: 250_000_000n, creator: false, settled: false, claimed: false, ...over });
+  const seat = (over) => ({ deposit: 250_000_000n, commit: 250_000_000n, creator: false, settled: false, ...over });
   assert.deepEqual(plan(open({ seats: [seatRow()] }), seat()), { title: "You're in · 0.25 SOL", note: null, back: true });
   assert.deepEqual(plan(open({ seats: [seatRow({ commit: "0" })] }), seat({ commit: 0n })), {
     title: "In your seat · 0.25 SOL, out of the pool", note: null, back: true,
@@ -80,8 +142,9 @@ test("seatPlan: in, out of the pool, creator, locked, claimed", () => {
   const launching = open({ state: "LAUNCHING", seats: [seatRow()] });
   assert.deepEqual(plan(launching, seat()), { title: "You're in · 0.25 SOL", note: "locked", back: false });
   assert.equal(plan(open({ state: "LAUNCHING", seats: [seatRow({ creator: true })] }), seat({ creator: true })).note, "locked");
-  const live = open({ state: "SETTLED", seats: [seatRow({ settled: true, claimed: true })] });
-  assert.deepEqual(plan(live, seat({ settled: true, claimed: true })), { title: "You're in · 0.25 SOL", note: "claimed", back: false });
+  // launched, not claimed yet (a claim closes the seat, and the room says so without it)
+  const live = open({ state: "SETTLED", seats: [seatRow({ settled: true })] });
+  assert.deepEqual(plan(live, seat({ settled: true })), { title: "You're in · 0.25 SOL", note: "locked", back: false });
   // expired before filling: the seat's SOL can come back
   assert.equal(plan(open({ state: "EXPIRED", seats: [seatRow()] }), seat()).back, true);
 });

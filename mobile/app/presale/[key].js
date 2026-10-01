@@ -9,15 +9,16 @@ import { useStore } from "zustand";
 import { seatOf, whoIsIn } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { useSigner } from "../../src/wallet";
+import { stillIn } from "../../src/launched/coin";
 import { ChatSheet } from "../../src/room/ChatSheet";
 import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
-import { YourSeat } from "../../src/room/YourSeat";
-import { bottomOf, heroOf, isKey } from "../../src/room/room";
+import { Line, YourSeat } from "../../src/room/YourSeat";
+import { bottomOf, claimedOf, heroOf, isKey, lockedCommit } from "../../src/room/room";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face, Faces } from "../../src/ui/Face";
 import { shortWallet, solText } from "../../src/ui/format";
-import { ChatIcon } from "../../src/ui/icons";
+import { ChatIcon, CheckIcon } from "../../src/ui/icons";
 import { Button, Card, Empty, Pill, Screen, Sheet, Steps, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
 import { Ring } from "../../src/ui/Ring";
@@ -51,6 +52,7 @@ export default function Room() {
   const launched = useStore(store, (s) => s.launched[key]);
   const chatCount = useStore(store, (s) => s.chats[key]?.length ?? 0);
   const busy = useStore(store, (s) => s.busy);
+  const mineEntry = useStore(store, (s) => s.mine[key]);
   const focused = useIsFocused();
   const now = useNow(1000, focused);
   const signer = useSigner();
@@ -80,6 +82,15 @@ export default function Room() {
   const seat = useMemo(() => (view && wallet ? seatOf(view, wallet) : null), [view, wallet]);
   const ticker = view?.token?.symbol;
 
+  // Whether this wallet's tokens arrived: its seat's commit last seen after OPEN (kept here,
+  // per presale and wallet), else a join from this phone not taken back (the keeper delivers
+  // the tokens by itself, so the room often never sees the seat after OPEN).
+  const [lock, setLock] = useState({ key: null, wallet: null, commit: null });
+  const same = lock.key === key && lock.wallet === wallet;
+  const locked = lockedCommit(detail, wallet, same ? lock.commit : null);
+  if (!same || lock.commit !== locked) setLock({ key, wallet, commit: locked });
+  const claimed = claimedOf(detail, wallet, locked ?? (stillIn(mineEntry) ? 1n : null));
+
   if (!valid || missing) {
     return (
       <Screen padded={false}>
@@ -106,7 +117,7 @@ export default function Room() {
   }
 
   const hero = heroOf(view, launched, info.N, now);
-  const bottom = bottomOf(view, wallet, info.N, now);
+  const bottom = bottomOf(view, wallet, info.N, now, claimed);
   // A join going on with its sheet closed (by a tap outside it, or back): its steps show here.
   const joinBusy = busy?.kind === "join" && busy.key === key && !joinOpen && bottom.kind !== "seat";
 
@@ -143,6 +154,12 @@ export default function Room() {
         {bottom.kind === "seat" ? (
           <YourSeat view={view} launched={launched} seat={bottom.seat} wallet={wallet} now={now} signer={signer} onBack={onBack} />
         ) : null}
+        {bottom.kind === "claimed" ? (
+          <>
+            <Line icon={<CheckIcon color={C.gold} />} color={C.gold}>Your tokens arrived</Line>
+            <Button title={ticker ? `See $${ticker}` : "See the coin"} onPress={() => router.push(`/coin/${key}`)} />
+          </>
+        ) : null}
         {joinBusy ? (
           <>
             <Steps step={busy.step} />
@@ -165,7 +182,7 @@ export default function Room() {
       />
       <ChatSheet open={chatOpen} onClose={closeChat} channel={key} wallet={wallet} signer={signer} />
       <FaceSheet row={face} onClose={() => setFace(null)} />
-      <LaunchOverlay view={view} launched={launched} seat={seat} ready={ready} focused={focused} />
+      <LaunchOverlay view={view} launched={launched} seat={seat} claimed={claimed} ready={ready} focused={focused} />
     </Screen>
   );
 }
