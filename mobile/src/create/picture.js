@@ -16,7 +16,7 @@ export class PictureError extends Error {}
  *  where to allow it. */
 export async function fromCamera() {
   let perm = await ImagePicker.getCameraPermissionsAsync();
-  if (!perm.granted && perm.canAskAgain) perm = await ImagePicker.requestCameraPermissionsAsync();
+  if (!perm.granted) perm = await ImagePicker.requestCameraPermissionsAsync();
   if (!perm.granted) throw new PictureError("Mooner can't use the camera. Allow it in Settings, or choose from the gallery.");
   return finish(await ImagePicker.launchCameraAsync(PICK));
 }
