@@ -4,6 +4,9 @@
 import { LAMPORTS_PER_SOL, PRESALE_TARGET, TOTAL_SUPPLY } from './constants'
 import type { Lamports, Pool } from './types'
 
+// SOL per whole token at a Q64.64 sqrt price: the engine's, shared with the phone app.
+export { priceFromSqrt } from '../../../engine/src/views.js'
+
 const DECIMALS = 6
 const SQRT_START = 97610994635780032n
 const LIQUIDITY = 105571432261223416012914185700781n
@@ -22,12 +25,6 @@ export function firstBuyTokens(lamports: Lamports): number {
   const s1 = SQRT_START + (q << 128n) / LIQUIDITY
   const raw = (LIQUIDITY * (s1 - SQRT_START)) / (SQRT_START * s1)
   return Number(raw) / 10 ** DECIMALS
-}
-
-/** SOL per whole token at a Q64.64 sqrt price (of lamports per raw token). */
-export function priceFromSqrt(sqrtPrice: bigint): number {
-  const s = Number(sqrtPrice) / 2 ** 64
-  return (s * s * 10 ** DECIMALS) / LAMPORTS_PER_SOL
 }
 
 const PRESALE_TOKENS = firstBuyTokens(PRESALE_BUY_LAMPORTS)

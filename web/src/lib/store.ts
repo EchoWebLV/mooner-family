@@ -17,6 +17,7 @@ import { DEFAULT_PFP, handlePfp, sanitizePfp } from './pfp/traits'
 import { canJoin, pickMatch } from './presale'
 import { joinCost, openCost } from '../../../engine/src/flows.js'
 import { signIn as engineSignIn } from '../../../engine/src/signin.js'
+import { stageOf as viewStage } from '../../../engine/src/views.js'
 import type {
   Candle, ChatMessage, Lamports, Level, Participant, Pfp, Stage, Title, TitleProgress, TitleStats, Token, Trade,
   User, World,
@@ -205,22 +206,7 @@ function person(id: string, pfp?: Pfp): User {
   }
 }
 
-function stageOf(v: PresaleView | undefined, l: LaunchedRow | undefined): Stage {
-  if (l) return l.pool?.migrated ? 'migrated' : 'live'
-  switch (v?.state) {
-    case 'OPEN':
-      return 'presale'
-    case 'FULL':
-    case 'LAUNCHING':
-      return 'launching'
-    case 'SETTLED':
-      return 'live'
-    case 'CLOSED':
-      return v.launch ? 'live' : 'expired'
-    default:
-      return 'expired'
-  }
-}
+const stageOf = (v: PresaleView | undefined, l: LaunchedRow | undefined): Stage => viewStage(v, l) as Stage
 
 function loadLogin(wallet: string): { token: string; exp: number } | null {
   try {
