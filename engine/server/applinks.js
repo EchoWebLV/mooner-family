@@ -32,3 +32,13 @@ export function makeAppLinkRoutes({ certs = [] } = {}) {
     },
   ];
 }
+
+/** The lines main.js logs about MOONER_ANDROID_CERTS before its checks (so --check shows them
+ *  too). A left-out word goes only as its length and first 4 characters: someone may paste
+ *  a secret into the variable by mistake, and it mustn't land in the host's logs. */
+export function appLinksLog({ androidCerts, androidCertsBad }) {
+  const lines = [androidCerts.length ? `App Links for ${androidCerts.length} Android signing key(s)` : "no MOONER_ANDROID_CERTS: no assetlinks.json, app links open the site"];
+  const hint = (w) => `${w.length} chars "${w.slice(0, 4)}…"`;
+  if (androidCertsBad.length) lines.push(`MOONER_ANDROID_CERTS: ${androidCertsBad.length} word(s) left out (not a SHA-256 fingerprint, or Expo's public debug key): ${androidCertsBad.map(hint).join(", ")}`);
+  return lines;
+}
