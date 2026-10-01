@@ -8,6 +8,7 @@ import { Icon } from '@/components/ui/Icon'
 import { Links } from '@/components/ui/Links'
 import { fmtClock } from '@/lib/format'
 import { participantOf } from '@/lib/presale'
+import { shareLink } from '@/real/refs.js'
 import { mainBadge } from '@/lib/selectors'
 import type { Token, World } from '@/lib/types'
 import styles from './PresaleScreen.module.css'
@@ -62,7 +63,7 @@ export function PresaleHeader({ t, world, invite, className }: PresaleHeaderProp
             </CopyButton>
           )}
           {!isPrivate && (
-            <CopyButton value={`/presale/${t.id}`} label="Copy presale link" className="btn btn-sm">
+            <CopyButton value={shareLink('', t.id, world.meId)} label="Copy presale link" className="btn btn-sm">
               Share
             </CopyButton>
           )}

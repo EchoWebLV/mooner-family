@@ -3,7 +3,7 @@
 // show up by themselves), or email or X, which get a Privy wallet made for them.
 import '@/real/polyfills.js'
 import '@/globals.css'
-import { PrivyProvider, type PrivyClientConfig } from '@privy-io/react-auth'
+import { PrivyProvider, usePrivy, type PrivyClientConfig } from '@privy-io/react-auth'
 import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana'
 import { createSolanaRpc, createSolanaRpcSubscriptions } from '@solana/kit'
 import { StrictMode, useEffect } from 'react'
@@ -21,9 +21,10 @@ import { PulseScreen } from '@/components/rails/PulseScreen'
 import { AppShell } from '@/components/shell/AppShell'
 import { TokenScreen } from '@/components/token/TokenScreen'
 import { NotFound } from '@/components/ui/NotFound'
-import { WorldProvider } from '@/components/world/WorldProvider'
+import { useApp, WorldProvider } from '@/components/world/WorldProvider'
 import { BOARDS, type Board } from '@/lib/leaderboard'
 import { PUBLIC_RPC } from '@/real/chain.js'
+import { noteRef } from '@/real/refs.js'
 
 // the app's id in the Privy dashboard (public), from web/.env at build time
 const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID as string
@@ -80,6 +81,16 @@ function Title() {
 function Presale() {
   const { id = '' } = useParams()
   const [q] = useSearchParams()
+  const ref = q.get('ref')
+  // a shared link's `?ref=<wallet>`: kept until a join here lands (real/refs.js). Noted once
+  // Privy knows whether you're signed in, and if you are, once the store has your wallet: on
+  // a page load your own link would otherwise read as a friend's and replace theirs.
+  const { ready, authenticated } = usePrivy()
+  const me = useApp((s) => s.wallet?.publicKey.toBase58())
+  const known = ready && (!authenticated || !!me)
+  useEffect(() => {
+    if (ref && known) noteRef(id, ref, me)
+  }, [id, ref, known, me])
   return <PresaleScreen key={id} id={id} invite={q.get('invite') ?? undefined} />
 }
 

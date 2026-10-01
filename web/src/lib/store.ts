@@ -8,6 +8,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import { api } from '@/real/api.js'
 import * as chain from '@/real/chain.js'
 import * as live from '@/real/live.js'
+import { dropRef, refFor } from '@/real/refs.js'
 import { candlesOf, quote, swap, tokenBalance, tradesOf, WSOL } from '@/real/market'
 import {
   canStartOver, checkBeforeRetry, clearOpening, forgetOpening, keptAfter, openedNote, openingKey, openKept, readOpening, seatFit, shows,
@@ -675,8 +676,10 @@ export function createAppStore(): AppStore {
           const view = await viewOf(tokenId)
           await chain.joinPresale({
             info, wallet: w.publicKey, signTransaction: w.signTransaction, view, amount: BigInt(deposit), onStep,
+            ref: refFor(tokenId, w.publicKey.toBase58()),
           })
         })
+        dropRef(tokenId)
         await readPresale(tokenId).catch(() => {})
         return { ok: true }
       } catch (e) {
