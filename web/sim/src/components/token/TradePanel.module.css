@@ -1,0 +1,120 @@
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 12px 16px 16px;
+}
+
+/* Buy / Sell as a two-way switch, green and red when picked. */
+.sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-0);
+}
+
+.sides button[role='tab'] {
+  justify-content: center;
+  height: 32px;
+  border-radius: 999px;
+}
+
+.sides button[role='tab']::after {
+  display: none;
+}
+
+.sides button[role='tab'][aria-selected='true']:first-child {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.sides button[role='tab'][aria-selected='true']:last-child {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.form {
+  display: grid;
+  gap: 12px;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.presets button {
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.presets button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.amount {
+  position: relative;
+}
+
+.input {
+  height: 42px;
+  padding-right: 76px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.unit {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  max-width: 64px;
+  overflow: hidden;
+  transform: translateY(-50%);
+  color: var(--text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.receive {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  font-size: 13px;
+}
+
+.receiveValue {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wallet {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.venue {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+}

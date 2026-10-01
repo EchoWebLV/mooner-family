@@ -1,0 +1,31 @@
+.panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.legend {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* The chart sizes itself to this box (autoSize). */
+.box {
+  position: relative;
+  height: 380px;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .box {
+    height: 280px;
+  }
+}

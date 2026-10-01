@@ -1,0 +1,73 @@
+.body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.stage {
+  display: grid;
+  place-items: center;
+}
+
+/* A new Mooner pops in on every roll. */
+.reveal {
+  display: block;
+  line-height: 0;
+  animation: reveal 0.32s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.86) rotate(-4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
+}
+
+.side {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.kicker {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.lede {
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.reroll {
+  justify-self: start;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+.note {
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

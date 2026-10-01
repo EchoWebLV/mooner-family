@@ -1,0 +1,7 @@
+/* The file's moon is cut out of a black square; white behind it shows the moon. */
+.logo {
+  flex: none;
+  display: block;
+  background: #fff;
+  border-radius: 24%;
+}

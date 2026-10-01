@@ -1,0 +1,203 @@
+.lobby {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Rows of circles; --size comes from the participant count (64 → 44 → 32 px). */
+.circles {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--size) + 24px), 1fr));
+  gap: 16px 8px;
+  justify-items: center;
+}
+
+.circles > li {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.circle,
+.join {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 0 2px;
+  border-radius: var(--radius);
+}
+
+/* A rim in the colour of their best title's rarity. */
+.ring {
+  position: relative;
+  display: block;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--ring, var(--line-strong));
+}
+
+.badge {
+  position: absolute;
+  right: -6px;
+  bottom: -4px;
+}
+
+.crown {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--r-legendary);
+}
+
+.crown svg {
+  fill: currentColor;
+}
+
+.handle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.circle:hover .handle {
+  color: var(--text-0);
+}
+
+.me .ring {
+  box-shadow: 0 0 0 2px var(--gold);
+}
+
+.me .handle {
+  font-weight: 600;
+  color: var(--gold);
+}
+
+.fresh .ring {
+  animation: enter 0.4s ease-out;
+}
+
+[data-size='44'] .handle {
+  font-size: 11px;
+}
+
+[data-size='32'] .handle {
+  font-size: 10px;
+}
+
+[data-size='32'] .badge {
+  right: -5px;
+  bottom: -3px;
+}
+
+.join {
+  color: var(--text-1);
+}
+
+.plus {
+  display: grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  border: 1px dashed var(--line-strong);
+  border-radius: 50%;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.join:hover {
+  color: var(--text-0);
+}
+
+.join:hover .plus {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.joinLabel {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- player card ---- */
+
+.card {
+  display: grid;
+  gap: 16px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cardHandle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.you {
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cardStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+}
+
+.titles {
+  list-style: none;
+  display: grid;
+  gap: 12px;
+}
+
+.titleItem {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.titleBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.titleName {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+  }
+}

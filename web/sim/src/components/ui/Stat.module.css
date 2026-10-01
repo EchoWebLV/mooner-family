@@ -1,0 +1,18 @@
+.stat {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.value {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}

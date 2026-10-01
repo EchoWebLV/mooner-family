@@ -1,0 +1,90 @@
+/* Under the sticky top bar (z 50), over the page. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+  background: rgb(3 4 6 / 0.94);
+  animation: enter 0.3s ease both;
+}
+
+.card {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  width: min(440px, 100%);
+  text-align: center;
+}
+
+.headline {
+  min-height: 1.1em;
+  font-size: clamp(28px, 6vw, 40px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+}
+
+.enter {
+  display: inline-block;
+  animation: enter 0.3s ease-out both;
+}
+
+.steps {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.steps li[data-state='done'] {
+  color: var(--text-1);
+}
+
+.steps li[data-state='now'] {
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+[data-state='done'] .mark,
+.live [data-state='now'] .mark {
+  border-color: var(--up);
+  background: var(--up);
+  color: var(--bg-0);
+}
+
+[data-state='now'] .mark {
+  border-color: var(--accent);
+}
+
+.note {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+  }
+}

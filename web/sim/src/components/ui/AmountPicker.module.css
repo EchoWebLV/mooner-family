@@ -1,0 +1,51 @@
+.picker {
+  display: grid;
+  gap: 10px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.amount {
+  position: relative;
+  width: 136px;
+  flex: none;
+}
+
+.number {
+  height: 38px;
+  padding-right: 42px;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.unit {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-2);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.presets button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.adjusted {
+  color: var(--warn);
+}

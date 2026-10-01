@@ -1,0 +1,83 @@
+/* A Pulse column: a panel with a plain header over a scrolling list. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  flex: none;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  color: var(--text-0);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.count {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.hint {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.empty {
+  padding: 32px 12px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* The chat is a floating button here: leave room to scroll the last card clear of it. */
+@media (max-width: 1279px) {
+  .list {
+    padding-bottom: 72px;
+  }
+}
+
+@media (max-width: 959px) {
+  .rail[data-active='false'] {
+    display: none;
+  }
+
+  /* The tabs above name the rail here; its heading stays for screen readers. */
+  .head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .list {
+    overflow: visible;
+  }
+}

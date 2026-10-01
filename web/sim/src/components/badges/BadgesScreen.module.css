@@ -1,0 +1,167 @@
+.screen {
+  display: grid;
+  gap: 20px;
+}
+
+.head {
+  display: grid;
+  gap: 8px;
+}
+
+.lede {
+  max-width: 72ch;
+  color: var(--text-1);
+}
+
+/* ---- the gallery: one row per title, its five levels side by side ---- */
+
+.gallery {
+  display: grid;
+  min-width: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px 20px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowHead {
+  display: grid;
+  gap: 4px;
+}
+
+.rowTitle {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.measures {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* Narrow screens scroll a row sideways rather than wrap one level onto a line of its own. */
+.levels {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(148px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 2px;
+  padding: 16px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-0);
+  text-align: center;
+  scroll-snap-align: start;
+}
+
+.badge {
+  margin-bottom: 10px;
+  transition: transform 0.2s ease;
+}
+
+@media (hover: hover) {
+  .card:hover .badge {
+    transform: translateY(-4px) scale(1.04);
+  }
+}
+
+.name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.meta,
+.xp {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.meta {
+  color: var(--text-1);
+}
+
+.mine {
+  margin-top: 4px;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- how XP is earned ---- */
+
+.howto {
+  display: grid;
+  gap: 12px;
+}
+
+.howtoTitle {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.howList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.how {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.howTitle {
+  font-weight: 600;
+}
+
+.howText {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.try {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+@media (max-width: 1100px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .row {
+    padding: 14px 12px;
+  }
+
+  .howList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

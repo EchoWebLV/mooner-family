@@ -1,0 +1,556 @@
+:root { --font-geist-sans: "Geist"; --font-geist-mono: "Geist Mono"; }
+/* Design tokens and shared primitives (spec §6). Screens add CSS Modules on top.
+   The look is a trading terminal: near-black surfaces, hairline rims, one blue for actions, and colour only where it
+   means something (mint up, coral down, cyan presale pools, violet migrations). Gold is the game layer: XP, ranks
+   and you. Nothing glows, and every button is an oval. */
+
+:root {
+  --bg-0: #07080b;
+  --bg-1: #0d0e12;
+  --bg-2: #14161b;
+  --bg-3: #1b1e25;
+  --line: #1b1d24;
+  --line-strong: #2a2d37;
+  --text-0: #f3f4f6;
+  --text-1: #9a9eab;
+  --text-2: #636775;
+
+  /* Recessed wells: inputs and progress tracks. */
+  --well: #040507;
+  --well-line: #23262f;
+  --well-line-hot: #363a47;
+
+  /* Each colour also comes as bare channels, for tints: rgb(var(--up-rgb) / 0.12).
+     The hex values stay because the chart reads them (PriceChart.tsx). */
+  --up: #2ee6a0;
+  --up-rgb: 46 230 160;
+  --up-soft: rgb(var(--up-rgb) / 0.12);
+  --down: #ff4d6d;
+  --down-rgb: 255 77 109;
+  --down-soft: rgb(var(--down-rgb) / 0.12);
+  --warn: #ff8a3d;
+  --warn-rgb: 255 138 61;
+
+  /* Blue: actions, selection and focus. */
+  --accent: #5468ff;
+  --accent-rgb: 84 104 255;
+  --accent-hover: #6e80ff;
+  --accent-soft: rgb(var(--accent-rgb) / 0.14);
+  --accent-ink: #fff;
+
+  /* Gold: the game layer. XP, ranks, level-ups and you. */
+  --gold: #ffb23e;
+  --gold-rgb: 255 178 62;
+  --gold-soft: rgb(var(--gold-rgb) / 0.13);
+  --gold-ink: #1c1203;
+
+  /* Presale pools fill on MagicBlock's rollup in cyan; migrated coins are violet. */
+  --er: #3bd4ff;
+  --er-rgb: 59 212 255;
+  --migrated: #9d8cff;
+  --migrated-rgb: 157 140 255;
+
+  --r-common: #9aa4b8;
+  --r-uncommon: #3ddc84;
+  --r-rare: #4da3ff;
+  --r-epic: #b26bff;
+  --r-legendary: #ffc23d;
+
+  --font-ui: var(--font-geist-sans), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-s: 4px;
+  --radius: 6px;
+  --radius-l: 10px;
+  --topbar-h: 56px;
+  --shadow: 0 16px 48px rgb(0 0 0 / 0.6);
+  --focus: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--accent);
+
+  color-scheme: dark;
+}
+
+/* How full a progress ring is, 0..1 (ArtRing). Registered so the ring can animate as it fills; inherited so the
+   ring's ::before, which draws it, sees the value. */
+@property --fill {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/* The top bar takes two rows on tablets (TopBar.module.css). */
+@media (max-width: 1024px) {
+  :root {
+    --topbar-h: 96px;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  height: 100%;
+  background: var(--bg-0);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+img,
+svg {
+  display: block;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--radius-s);
+}
+
+::selection {
+  background: rgb(var(--accent-rgb) / 0.4);
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ---- text helpers ---- */
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.muted {
+  color: var(--text-1);
+}
+
+.faint {
+  color: var(--text-2);
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
+/* You, wherever you show up in a list. */
+.you {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 200;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  transform: translateY(-160%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
+/* ---- page frames ---- */
+
+.page {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+.page-narrow {
+  max-width: 760px;
+}
+
+.page-title {
+  color: var(--text-0);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---- buttons ---- */
+
+/* Every button is an oval: a dark face with a hairline rim, or solid for the action that matters. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-0);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--well-line-hot);
+  background: var(--bg-3);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+}
+
+.btn:focus-visible {
+  border-radius: 999px;
+  box-shadow: var(--focus);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-1);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+/* The action that matters: solid blue, or mint and coral to buy and sell. */
+.btn-primary,
+.btn-up,
+.btn-down {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent-hover);
+}
+
+.btn-up {
+  background: var(--up);
+  color: #032116;
+}
+
+.btn-up:hover:not(:disabled) {
+  border-color: transparent;
+  background: #5cf0b8;
+}
+
+.btn-down {
+  background: var(--down);
+}
+
+.btn-down:hover:not(:disabled) {
+  border-color: transparent;
+  background: #ff6b86;
+}
+
+.btn-sm {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.btn-lg {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 14px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* ---- inputs ---- */
+
+/* A recessed well. */
+.input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--well-line);
+  border-radius: var(--radius);
+  background: var(--well);
+  color: var(--text-0);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input::placeholder {
+  color: var(--text-2);
+}
+
+.input:hover {
+  border-color: var(--well-line-hot);
+}
+
+.input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--down);
+}
+
+textarea.input {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.field-error {
+  font-size: 12px;
+  color: var(--down);
+}
+
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type='range']:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ---- surfaces ---- */
+
+.panel {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.panel-title {
+  color: var(--text-0);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---- tabs ---- */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  color: var(--text-1);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text-0);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--text-0);
+}
+
+.tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* ---- data tables ---- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-weight: 500;
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table tbody tr:hover td {
+  background: rgb(255 255 255 / 0.025);
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table .right {
+  text-align: right;
+}
+
+/* ---- progress ---- */
+
+/* A thin track with a flat fill: cyan for a presale pool, mint for the bonding curve. */
+.bar {
+  --tone: var(--er);
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-3);
+}
+
+.bar > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  max-width: 100%;
+  border-radius: inherit;
+  background: var(--tone);
+  transition: width 0.6s ease;
+}
+
+.bar-up {
+  --tone: var(--up);
+}
+
+/* ---- shared motion ---- */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

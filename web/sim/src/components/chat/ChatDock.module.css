@@ -1,0 +1,128 @@
+.dock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.toggle {
+  display: none;
+}
+
+.close {
+  display: none;
+}
+
+/* Folding is for wide screens; below 1280 px the drawer takes over. */
+.strip {
+  display: none;
+}
+
+.fold {
+  display: inline-flex;
+}
+
+@media (min-width: 1280px) {
+  .drawer[data-folded='true'] .body {
+    display: none;
+  }
+
+  /* The folded chat: a slim bar standing where the panel was. */
+  .drawer[data-folded='true'] .strip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    padding: 14px 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-l);
+    background: var(--bg-1);
+    color: var(--text-1);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+
+  .strip > span {
+    writing-mode: vertical-rl;
+  }
+
+  .drawer[data-folded='true'] .strip:hover {
+    border-color: var(--well-line-hot);
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+@media (max-width: 1279px) {
+  .drawer .toggle {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 60;
+    display: inline-flex;
+    height: 44px;
+    padding: 0 18px;
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+
+  .drawer .body {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    width: min(380px, 100vw);
+    border-width: 0 0 0 1px;
+    border-color: var(--line-strong);
+    border-radius: 0;
+    box-shadow: var(--shadow);
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform 0.25s ease, visibility 0s linear 0.25s;
+  }
+
+  .drawer[data-open='true'] .body {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.25s ease;
+  }
+
+  .drawer .close {
+    display: inline-flex;
+  }
+
+  .fold {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .inline .toggle {
+    display: inline-flex;
+    width: 100%;
+  }
+
+  .inline .body {
+    display: none;
+  }
+
+  .inline[data-open='true'] .body {
+    display: flex;
+    height: 460px;
+    margin-top: 8px;
+  }
+}

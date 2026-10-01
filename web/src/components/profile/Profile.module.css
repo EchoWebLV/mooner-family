@@ -1,0 +1,377 @@
+.screen {
+  display: grid;
+  gap: 16px;
+}
+
+/* ---- header: who they are and their record ---- */
+
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px 20px;
+  padding: 20px;
+}
+
+/* The main-title badge sits on the avatar's corner, as on a presale circle. */
+.portrait {
+  position: relative;
+  width: 88px;
+  height: 88px;
+}
+
+.portraitBadge {
+  position: absolute;
+  right: -8px;
+  bottom: -6px;
+}
+
+.identity {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.handle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.handleText {
+  overflow-wrap: anywhere;
+}
+
+.you {
+  flex: none;
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fact + .fact::before {
+  content: '·' / '';
+  color: var(--text-2);
+}
+
+.stats {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 28px;
+}
+
+.stats dd {
+  font-size: 16px;
+}
+
+.rankLink:hover {
+  color: var(--accent-hover);
+}
+
+.of {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ---- the four titles ---- */
+
+.titles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.titleCard {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.titleTop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.titleText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.titleName {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.levelLine {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.titleRank {
+  align-self: start;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.titleRank:hover {
+  color: var(--accent-hover);
+}
+
+.next {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.nextName {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.titleStats {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.statRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.statRow dt {
+  color: var(--text-2);
+}
+
+.statRow dd {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+/* ---- panels: demo controls, badge cabinet, launch history ---- */
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panelNote {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.panelFoot {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.demoBody {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.demoNote {
+  max-width: 80ch;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.demoRow {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.demoLabel {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.demoButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.award {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.lower {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.shelves {
+  display: grid;
+  list-style: none;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shelf:last-child {
+  border-bottom: 0;
+}
+
+.shelfName {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.shelfBadges {
+  display: flex;
+  gap: 8px;
+}
+
+.history {
+  min-width: 0;
+}
+
+/* Wide enough for every column; a phone scrolls it sideways. */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.table th {
+  position: static;
+}
+
+.tokenCell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tokenLink,
+.tokenName {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.tokenLink:hover {
+  color: var(--accent-hover);
+}
+
+.empty {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  padding: 20px 16px;
+  color: var(--text-1);
+}
+
+/* ---- narrower screens ---- */
+
+@media (max-width: 1100px) {
+  .titles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lower {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .stats {
+    grid-column: 1 / -1;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 600px) {
+  .header {
+    padding: 16px;
+  }
+
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .titles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .demoRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shelf {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .colWhen {
+    display: none;
+  }
+}

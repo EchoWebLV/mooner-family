@@ -1,0 +1,40 @@
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  list-style: none;
+}
+
+/* Rows: round icon keys. They sit above the row's stretched link. */
+.icons {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  list-style: none;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--text-1);
+  transition: color 0.15s, background 0.15s;
+}
+
+a.icon:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+a.icon:focus-visible {
+  border-radius: 999px;
+  box-shadow: var(--focus);
+}
+
+.missing {
+  color: var(--text-2);
+  opacity: 0.35;
+}

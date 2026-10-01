@@ -1,0 +1,458 @@
+.screen {
+  display: grid;
+  gap: 20px;
+}
+
+.head {
+  display: grid;
+  gap: 8px;
+}
+
+.lede {
+  max-width: 72ch;
+  color: var(--text-1);
+}
+
+/* The tabs and columns answer to the list's own width, not the window's. */
+.board {
+  display: grid;
+  min-width: 0;
+  container: discover / inline-size;
+}
+
+.tabs {
+  padding: 6px 12px 0;
+}
+
+.count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.body {
+  display: grid;
+  min-width: 0;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 44px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.summaryText {
+  margin-right: auto;
+}
+
+/* Shown while the list holds its order for you. */
+.paused {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* A pause mark: two bars. */
+.pausedIcon {
+  width: 7px;
+  height: 8px;
+  border-inline: 2px solid currentColor;
+}
+
+.footnote {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.footLink {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-decoration-color: rgb(255 255 255 / 0.2);
+  text-underline-offset: 2px;
+}
+
+.footLink:hover {
+  color: var(--text-0);
+  text-decoration-color: currentColor;
+}
+
+.empty {
+  padding: 28px 12px;
+  color: var(--text-1);
+  text-align: center;
+}
+
+/* ---- table ---- */
+
+/* Fixed layout: widths come from the header, so columns hold still as the numbers tick and a long name ends in an
+   ellipsis instead of pushing the table wider. The coin column takes what's left. */
+.table {
+  --head-h: 34px;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+/* The header rides under the sticky top bar while the page scrolls. */
+.table th {
+  top: var(--topbar-h);
+  height: var(--head-h);
+  padding: 0 10px;
+}
+
+.table td {
+  padding: 8px 10px;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 16px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 16px;
+}
+
+.colMcap {
+  width: 150px;
+}
+
+.colChange {
+  width: 90px;
+}
+
+.colVolume {
+  width: 100px;
+}
+
+.colHolders {
+  width: 90px;
+}
+
+.colAge {
+  width: 70px;
+}
+
+.colSocials {
+  width: 96px;
+}
+
+.colAction {
+  width: 140px;
+}
+
+.table td.colVolume,
+.table td.colHolders {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A sortable header: the whole label is the button. Right-aligned columns put the arrow before the label, so the
+   label lines up with the numbers under it. */
+.sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  color: inherit;
+  font-weight: inherit;
+}
+
+:global(.right) > .sort {
+  flex-direction: row-reverse;
+}
+
+.sort:hover,
+th[aria-sort] .sort {
+  color: var(--text-0);
+}
+
+.arrow {
+  width: 8px;
+  color: var(--accent-hover);
+  font-size: 8px;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.table .row:hover td {
+  background: var(--bg-2);
+}
+
+/* A coin you're in: a gold edge. */
+.table .row[data-me] td:first-child {
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+
+.coin {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.art {
+  flex: none;
+}
+
+.coinText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nameLine,
+.subLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The ticker, then the stage and whether you hold it, each shown whole or not at all: one that doesn't fit wraps onto
+   a second line, which is clipped away. Screen readers still hear it, and the figure beside it says the stage anyway. */
+.subLine {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  height: 16px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.name {
+  color: var(--text-0);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.name:hover {
+  color: var(--accent-hover);
+}
+
+.lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-2);
+}
+
+.ticker {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage {
+  flex: none;
+  color: var(--text-2);
+}
+
+.stage::before {
+  content: '·' / '';
+  margin-right: 6px;
+  color: var(--text-2);
+}
+
+.mine {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- figures ---- */
+
+.figure {
+  display: block;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.value {
+  color: var(--text-0);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.sub abbr {
+  text-decoration: none;
+}
+
+.meter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.bar {
+  flex: 0 1 96px;
+  height: 4px;
+}
+
+/* ---- actions ---- */
+
+.act {
+  min-width: 80px;
+}
+
+.stack {
+  display: inline-grid;
+  justify-items: end;
+}
+
+.commit {
+  margin-top: 3px;
+}
+
+.note {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* ---- narrower lists: columns go in order of how much they add ---- */
+
+/* Each step keeps the coin column 260px or wider: room for a ten-letter ticker and its stage beside it. */
+
+@container discover (width < 1000px) {
+  .colSocials {
+    display: none;
+  }
+}
+
+@container discover (width < 900px) {
+  .colAge {
+    display: none;
+  }
+}
+
+@container discover (width < 830px) {
+  .colHolders {
+    display: none;
+  }
+}
+
+@container discover (width < 740px) {
+  .colVolume {
+    display: none;
+  }
+}
+
+@container discover (width < 640px) {
+  .colMcap {
+    width: 128px;
+  }
+
+  .colChange {
+    width: 80px;
+  }
+
+  .colAction {
+    width: 116px;
+  }
+}
+
+@container discover (width < 600px) {
+  .colChange {
+    display: none;
+  }
+}
+
+/* Phones: the coin, its headline number and what you can do. */
+@container discover (width < 520px) {
+  .target,
+  .commit {
+    display: none;
+  }
+
+  .colMcap {
+    width: 96px;
+  }
+
+  .colAction {
+    width: 84px;
+  }
+
+  .table th,
+  .table td {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .table th:first-child,
+  .table td:first-child {
+    padding-left: 12px;
+  }
+
+  .table th:last-child,
+  .table td:last-child {
+    padding-right: 12px;
+  }
+
+  .coin {
+    gap: 8px;
+  }
+
+  /* All four stages in view, counts and all. */
+  .tabs {
+    padding: 4px 4px 0;
+  }
+
+  .tabs :global(.tab) {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .summary {
+    padding: 6px 12px;
+  }
+
+  .act {
+    min-width: 0;
+  }
+
+  /* Seen, the figure says the stage (the pool, the curve or its liquidity), the gold edge says you hold it and the
+     icon says quick buy; screen readers still hear the words. */
+  .stage,
+  .actText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* The top bar scrolls away here, so the header sticks to the very top. */
+@media (max-width: 768px) {
+  .table th {
+    top: 0;
+  }
+}

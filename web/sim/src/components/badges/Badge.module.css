@@ -1,0 +1,14 @@
+.badge {
+  flex: none;
+  overflow: visible;
+}
+
+.locked {
+  filter: grayscale(1) brightness(0.55);
+  opacity: 0.75;
+}
+
+.numeral {
+  font-weight: 700;
+  font-size: 13px;
+}

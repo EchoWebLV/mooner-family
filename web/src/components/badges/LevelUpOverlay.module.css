@@ -1,0 +1,111 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: rgb(3 4 6 / 0.94);
+  cursor: pointer;
+  animation: fade 0.35s ease both;
+}
+
+.overlay:focus-visible {
+  box-shadow: none;
+}
+
+.content {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  text-align: center;
+  margin-top: -6vh;
+}
+
+.badge {
+  width: 184px;
+  height: 184px;
+  margin-bottom: 12px;
+  animation: scale-in 0.6s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+.kicker {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rarity);
+  animation: rise 0.4s 0.4s ease both;
+}
+
+.headline {
+  font-size: clamp(24px, 4vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  animation: rise 0.4s 0.5s ease both;
+}
+
+.rarity {
+  color: var(--text-1);
+  animation: rise 0.4s 0.6s ease both;
+}
+
+.unlocks {
+  max-width: 44ch;
+  color: var(--rarity);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  animation: rise 0.4s 0.75s ease both;
+}
+
+.xp {
+  width: 100%;
+  margin-top: 8px;
+  animation: rise 0.4s 0.7s ease both;
+}
+
+.hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  animation: rise 0.4s 1s ease both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+/* Reduced motion: a plain fade (spec §4.4). */
+@media (prefers-reduced-motion: reduce) {
+  .overlay {
+    animation: fade 0.4s ease both !important;
+  }
+
+  .badge,
+  .kicker,
+  .headline,
+  .rarity,
+  .unlocks,
+  .xp,
+  .hint {
+    animation: none !important;
+  }
+}

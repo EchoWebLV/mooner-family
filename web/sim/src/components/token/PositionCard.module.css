@@ -1,0 +1,32 @@
+.panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+
+.grid dd {
+  font-size: 14px;
+}
+
+/* The % drops under the SOL figure when the card is narrow. */
+.pnl dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+}
+
+.pct {
+  font-size: 12px;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--text-1);
+}

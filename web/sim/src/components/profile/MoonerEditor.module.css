@@ -1,0 +1,142 @@
+.editor {
+  display: grid;
+}
+
+.signedOut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  color: var(--text-1);
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px;
+}
+
+.preview {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 12px;
+}
+
+.traits {
+  justify-content: center;
+}
+
+.picker {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tabPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.note {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.option {
+  --c: var(--r-common);
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--bg-2);
+  color: var(--text-0);
+  text-align: center;
+  cursor: pointer;
+}
+
+.option:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--bg-3);
+}
+
+.option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.option[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.option:disabled {
+  cursor: not-allowed;
+}
+
+.option:disabled .thumb > :not(.lock) {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
+.thumb {
+  position: relative;
+  line-height: 0;
+}
+
+.lock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-0);
+}
+
+.name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--c);
+}
+
+.option[data-rarity='uncommon'] {
+  --c: var(--r-uncommon);
+}
+.option[data-rarity='rare'] {
+  --c: var(--r-rare);
+}
+.option[data-rarity='epic'] {
+  --c: var(--r-epic);
+}
+.option[data-rarity='legendary'] {
+  --c: var(--r-legendary);
+}
+.option:disabled .meta {
+  color: var(--text-2);
+}
+
+@media (max-width: 700px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

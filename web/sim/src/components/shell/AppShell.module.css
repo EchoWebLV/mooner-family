@@ -1,0 +1,25 @@
+.main {
+  display: block;
+  min-height: calc(100vh - var(--topbar-h));
+}
+
+.main:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Says on every page that this is the simulation; the real app is at the site's root. */
+.sim {
+  margin: 0;
+  padding: 6px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #07080b;
+  background: #ffd84a;
+}
+
+.sim a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}

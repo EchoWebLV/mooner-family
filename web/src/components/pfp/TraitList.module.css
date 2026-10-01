@@ -1,0 +1,47 @@
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.chip {
+  --c: var(--r-common);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 10%, transparent);
+  color: var(--text-0);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.slot {
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chip[data-rarity='uncommon'] {
+  --c: var(--r-uncommon);
+}
+.chip[data-rarity='rare'] {
+  --c: var(--r-rare);
+}
+.chip[data-rarity='epic'] {
+  --c: var(--r-epic);
+}
+.chip[data-rarity='legendary'] {
+  --c: var(--r-legendary);
+}
+.chip:not([data-rarity='common']) {
+  color: var(--c);
+}

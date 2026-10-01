@@ -1,0 +1,306 @@
+.screen {
+  display: grid;
+  gap: 16px;
+}
+
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+.main,
+.side {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.chat {
+  height: 540px;
+}
+
+/* ---- Find Match banner ---- */
+
+.match {
+  display: grid;
+  gap: 2px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.matchTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.matchHint {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.found {
+  border-left-color: var(--up);
+}
+
+/* ---- expired banner ---- */
+
+.expired {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--down);
+  border-radius: var(--radius-l);
+  background: var(--bg-1);
+}
+
+.expired > svg {
+  flex: none;
+  color: var(--down);
+}
+
+.expiredText {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.expiredTitle {
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+/* ---- header ---- */
+
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  padding: 16px;
+}
+
+.identity {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.name {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.ticker {
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.creatorLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.creatorLink:hover {
+  color: var(--accent-hover);
+}
+
+.desc {
+  max-width: 64ch;
+  color: var(--text-1);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fact + .fact::before {
+  content: '·' / '';
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.clock {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 108px;
+}
+
+.clockLabel {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* The last minute turns the clock red. */
+.clockValue {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--text-0);
+}
+
+.clock[data-urgent='true'] .clockValue {
+  color: var(--down);
+}
+
+/* ---- pool ---- */
+
+.poolPanel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.poolText {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.poolText strong {
+  font-size: 20px;
+  color: var(--text-0);
+}
+
+/* The .bar track, one segment per participant. */
+.segments {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-3);
+}
+
+/* Each segment is one participant's commit; the gap keeps neighbours apart. */
+.segments > span {
+  flex: none;
+  height: 100%;
+  border-right: 2px solid var(--bg-1);
+  transition: width 0.4s ease;
+}
+
+.segA {
+  background: var(--er);
+}
+
+.segB {
+  background: rgb(var(--er-rgb) / 0.7);
+}
+
+/* Yours is gold, like everything that's you. */
+.segMine {
+  background: var(--gold);
+}
+
+@media (max-width: 1024px) {
+  /* One column: header, pool, your commit, the lobby, then the chat toggle. */
+  .cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .main,
+  .side {
+    display: contents;
+  }
+
+  .head {
+    order: 1;
+  }
+
+  .pool {
+    order: 2;
+  }
+
+  .commit {
+    order: 3;
+  }
+
+  .lobby {
+    order: 4;
+  }
+
+  .chat {
+    order: 5;
+    height: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .header {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .art {
+    width: 56px;
+    height: 56px;
+  }
+
+  .name {
+    font-size: 20px;
+  }
+
+  .clock {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .clockValue {
+    font-size: 22px;
+  }
+}

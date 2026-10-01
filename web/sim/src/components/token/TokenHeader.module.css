@@ -1,0 +1,181 @@
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px 16px;
+  padding: 16px;
+}
+
+.identity {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.name {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.ticker {
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.address {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.creator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.creatorLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.creatorLink:hover {
+  color: var(--accent);
+}
+
+.desc {
+  display: -webkit-box;
+  max-width: 72ch;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text-1);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ---- market strip ---- */
+
+.market {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 32px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 28px;
+}
+
+.stats > div > dd {
+  font-size: 15px;
+}
+
+.mcap {
+  display: grid;
+  gap: 2px;
+}
+
+.mcapLabel {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.stats .mcapValue {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.change {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.curve {
+  display: grid;
+  flex: 1 1 260px;
+  gap: 6px;
+  max-width: 480px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.curveText {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.curveHint {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.migrated {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+@media (max-width: 600px) {
+  .header {
+    gap: 12px;
+  }
+
+  .name {
+    font-size: 19px;
+  }
+
+  .market {
+    gap: 12px;
+  }
+
+  .stats {
+    gap: 10px 20px;
+  }
+
+  .stats .mcapValue {
+    font-size: 22px;
+  }
+
+  .curve,
+  .migrated {
+    flex-basis: 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+}

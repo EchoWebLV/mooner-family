@@ -1,0 +1,17 @@
+/* A photo's credit: small print, with links that show themselves on hover. */
+.credit {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.link {
+  color: var(--text-1);
+  text-decoration: underline;
+  text-decoration-color: rgb(255 255 255 / 0.2);
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--text-0);
+  text-decoration-color: currentColor;
+}

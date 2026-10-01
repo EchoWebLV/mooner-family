@@ -1,0 +1,512 @@
+.screen {
+  display: grid;
+  gap: 20px;
+}
+
+.head {
+  display: grid;
+  gap: 8px;
+}
+
+.lede {
+  max-width: 68ch;
+  color: var(--text-1);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  align-items: start;
+}
+
+/* minmax(0, 1fr): one wide row (a long button, a long word) can't stretch the whole panel. */
+.wizard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.stepTitle {
+  scroll-margin-top: calc(var(--topbar-h) + 16px);
+}
+
+/* ---- stepper: numbered steps you can go back to ---- */
+
+.steps {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+}
+
+.steps > li {
+  min-width: 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 12px 0 4px;
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  transition: color 0.15s, background 0.15s;
+}
+
+.step:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+.stepNum {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.stepLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step[data-state='current'] {
+  color: var(--text-0);
+}
+
+.step[data-state='current'] .stepNum {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.step[data-state='done'] {
+  color: var(--text-1);
+}
+
+.step[data-state='done'] .stepNum {
+  color: var(--up);
+}
+
+/* ---- fields ---- */
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+}
+
+/* A fieldset's legend sits outside its grid, so the gap doesn't reach it. */
+.group > legend {
+  margin-bottom: 8px;
+}
+
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.count {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 12px;
+  align-items: start;
+}
+
+.linkGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.tickerBox {
+  position: relative;
+}
+
+.dollar {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+.tickerInput {
+  padding-left: 22px;
+}
+
+.artRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.art {
+  flex: none;
+}
+
+.artText {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.artTitle {
+  font-weight: 600;
+}
+
+/* ---- radio cards ---- */
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice,
+.timer {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-1);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+/* The native radio stays for keyboard and screen readers; the card shows its state. */
+.choice input,
+.timer input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choice:hover,
+.timer:hover {
+  border-color: var(--well-line-hot);
+  background: var(--bg-2);
+}
+
+.choice:has(input:checked),
+.timer:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--bg-2);
+}
+
+.choice:has(input:focus-visible),
+.timer:has(input:focus-visible) {
+  box-shadow: var(--focus);
+}
+
+.choice {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 40px 14px 16px;
+  border-radius: var(--radius-l);
+}
+
+/* A radio mark in the corner, filled on the picked card. */
+.choice::after {
+  content: '';
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.choice:has(input:checked)::after {
+  border: 5px solid var(--accent);
+}
+
+.choiceTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.choiceText {
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.timers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--text-1);
+}
+
+.timer:has(input:checked) {
+  color: var(--text-0);
+}
+
+.timerValue {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.timerUnit {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.note > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--er);
+}
+
+/* ---- review ---- */
+
+.review {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row dt {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.row dd {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reviewToken {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.reviewArt {
+  flex: none;
+}
+
+.reviewDesc {
+  overflow-wrap: anywhere;
+}
+
+.wallet {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ---- footer ---- */
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.next {
+  margin-left: auto;
+}
+
+.open {
+  flex: 1;
+}
+
+/* ---- preview column ---- */
+
+.aside {
+  position: sticky;
+  top: calc(var(--topbar-h) + 16px);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.asideTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.how {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.howList {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  counter-reset: how;
+}
+
+.howList li {
+  position: relative;
+  padding-left: 30px;
+  font-size: 13px;
+  color: var(--text-1);
+  counter-increment: how;
+}
+
+.howList li::before {
+  content: counter(how);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.howList strong {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aside {
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .wizard {
+    padding: 14px;
+  }
+
+  .pair,
+  .linkGrid,
+  .choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Only the current step keeps its label on screen; the others shrink to their numbers. */
+  .steps > li {
+    flex: 0 0 auto;
+  }
+
+  .steps > li:has([aria-current='step']) {
+    flex: 1 1 auto;
+  }
+
+  .step:not([aria-current='step']) .stepLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .row dt {
+    grid-column: 1 / -1;
+  }
+
+  /* Back and Open presale share a 360 px row; below that, Open drops to its own line. */
+  .nav {
+    flex-wrap: wrap;
+  }
+
+  .open {
+    padding-inline: 14px;
+    font-size: 14px;
+  }
+}
+
+.artButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -1,0 +1,9 @@
+.main {
+  display: block;
+  min-height: calc(100vh - var(--topbar-h));
+}
+
+.main:focus {
+  outline: none;
+  box-shadow: none;
+}

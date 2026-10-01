@@ -1,0 +1,129 @@
+.panel {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tabs {
+  padding: 4px 8px 0;
+}
+
+.count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Scrolls on its own so the sticky table header stays put. */
+.body {
+  max-height: 440px;
+  overflow: auto;
+}
+
+.body:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus);
+}
+
+/* A row that's you: a gold edge. */
+.body tr[data-me] td:first-child {
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+
+.trader {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+}
+
+.traderLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-0);
+}
+
+.traderLink:hover {
+  color: var(--accent-hover);
+}
+
+.you {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tags {
+  display: inline-flex;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tag + .tag::before {
+  content: '·' / '';
+  margin-right: 6px;
+}
+
+.summary {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.empty {
+  padding: 24px 12px;
+  color: var(--text-1);
+  text-align: center;
+}
+
+.holdsAll {
+  color: var(--up);
+}
+
+.holdsSome {
+  color: var(--warn);
+}
+
+.holdsNone {
+  color: var(--text-2);
+}
+
+/* Phones: tighter cells, no avatars, shorter handles, and the columns the spec doesn't list drop out. */
+@media (max-width: 600px) {
+  .body :global(.table) :is(th, td) {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .body :global(.table) :is(th, td):first-child {
+    padding-left: 12px;
+  }
+
+  .body :global(.table) :is(th, td):last-child {
+    padding-right: 12px;
+  }
+
+  .trader {
+    max-width: 124px;
+  }
+
+  .avatar,
+  .wide {
+    display: none;
+  }
+}
+
+/* Small phones (360–400 px): a notch smaller so the presale table still fits without scrolling. */
+@media (max-width: 400px) {
+  .body :global(.table) {
+    font-size: 11px;
+  }
+
+  .trader {
+    max-width: 112px;
+  }
+}

@@ -1,0 +1,278 @@
+/* Pulse cards for New Pairs, Final Stretch and Migrated. Every card has the same rows at the same fixed heights, so
+   the three rails line up card for card: the art beside three lines (name and headline number, stats, progress), then
+   socials and the action across the bottom. */
+
+.card {
+  --row: var(--bg-1);
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: 64px 28px;
+  gap: 8px 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--row);
+  transition: background 0.15s;
+}
+
+.card:hover,
+.card:focus-within {
+  --row: var(--bg-2);
+}
+
+.fresh {
+  animation: enter 0.4s ease-out;
+}
+
+.expired {
+  opacity: 0.5;
+}
+
+/* A square ring around the art that fills clockwise in the stage's colour (--fill, 0..1, set inline): the pool on a
+   presale, the curve once live, full once migrated. The mask keeps only the 2px edge, so the card shows through the
+   gap between ring and art. */
+.ring {
+  --tone: var(--er-rgb);
+  position: relative;
+  display: block;
+  padding: 4px;
+  border-radius: 8px;
+  transition: --fill 0.6s ease;
+}
+
+.ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  background: conic-gradient(rgb(var(--tone)) calc(var(--fill) * 1turn), rgb(255 255 255 / 0.09) 0);
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+
+.ring[data-stage='live'] {
+  --tone: var(--up-rgb);
+}
+
+.ring[data-stage='migrated'] {
+  --tone: var(--migrated-rgb);
+}
+
+.ring[data-stage='expired'] {
+  --tone: var(--down-rgb);
+}
+
+/* A size container, so a card sheds numbers by its own width, whatever the rails and chat are doing. */
+.main {
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: 20px 16px 16px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Pushes what follows to the right edge. */
+.end {
+  margin-left: auto;
+}
+
+.name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The title link covers the whole card; the socials and the action sit above it. */
+.stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.stretch:focus-visible {
+  box-shadow: none;
+}
+
+.stretch:focus-visible::after {
+  box-shadow: inset var(--focus);
+}
+
+.ticker {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.lock {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-2);
+}
+
+/* The headline number on the right: the pool on a presale, the market cap once it trades. */
+.figure {
+  flex: none;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.figure abbr {
+  text-decoration: none;
+}
+
+.value {
+  color: var(--text-0);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat abbr {
+  text-decoration: none;
+}
+
+.stat > :last-child {
+  color: var(--text-1);
+}
+
+.urgent,
+.urgent > :last-child {
+  color: var(--down);
+}
+
+.change {
+  font-size: 12px;
+}
+
+/* The pool filling, or the bonding curve, with its percentage. */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.progress > :first-child {
+  flex: 1;
+}
+
+.foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.action {
+  position: relative;
+  z-index: 1;
+}
+
+/* A presale's participants between the socials and the action, overlapping, each ringed in the card's colour. */
+.faces {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  padding-left: 6px;
+  overflow: hidden;
+  list-style: none;
+}
+
+.faces > li {
+  display: flex;
+  margin-left: -6px;
+}
+
+.faces svg {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--row);
+}
+
+.faces > .more {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+/* Where the action would be, when there's nothing to press. */
+.note {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mine {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+/* Narrow cards drop what they can spare rather than clip: the pool target, the MC label, then holders. The token page
+   has them all. */
+@container (max-width: 249px) {
+  .target {
+    display: none;
+  }
+}
+
+@container (max-width: 239px) {
+  /* "MC" stays for screen readers. */
+  .figure abbr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@container (max-width: 224px) {
+  .holders {
+    display: none;
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+  }
+}

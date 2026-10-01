@@ -1,0 +1,67 @@
+.screen {
+  display: grid;
+  gap: 16px;
+}
+
+.cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+.main,
+.side {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.chat {
+  height: 520px;
+}
+
+@media (max-width: 1024px) {
+  .cols {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  /* The chat sits behind its toggle here (ChatDock). */
+  .chat {
+    height: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  /* One column: chart, trade, your position, the chat toggle, then trades and holders. */
+  .cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .main,
+  .side {
+    display: contents;
+  }
+
+  .chart {
+    order: 1;
+  }
+
+  .trade {
+    order: 2;
+  }
+
+  .position {
+    order: 3;
+  }
+
+  .chat {
+    order: 4;
+  }
+
+  .tabs {
+    order: 5;
+  }
+}
