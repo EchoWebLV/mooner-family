@@ -1,23 +1,14 @@
 // Sign-in: connect Seed Vault (or any Solana wallet on the phone), or look around first.
 // It opens on a cold start (index.js replaces itself with it) or on top of the app (Live's
 // header, a presale's "Connect to join"); either way it leaves for where the person was.
-import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
-import * as Haptics from "expo-haptics";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { explain } from "../../engine/src/flows.js";
 import { browse } from "../src/session";
-import { useWalletActions } from "../src/wallet";
+import { useConnect } from "../src/useConnect";
 import { Logo } from "../src/ui/Logo";
 import { Button, T } from "../src/ui/kit";
 import { C, F, S } from "../src/ui/theme";
-
-// The wallet's Decline on the approval screen: an MWA protocol error with
-// ERROR_AUTHORIZATION_FAILED (-1, @solana-mobile/mobile-wallet-adapter-protocol) and the
-// wallet's own wording, which explain() doesn't know.
-const AUTHORIZATION_FAILED = -1;
-const reason = (e) => (e?.code === AUTHORIZATION_FAILED ? "You cancelled it in your wallet." : explain(e));
 
 /** Back to the screen that opened Connect, or into the tabs when nothing did (cold start). */
 function leave() {
@@ -26,23 +17,7 @@ function leave() {
 }
 
 export default function Connect() {
-  const { connect } = useWalletActions();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-
-  async function onConnect() {
-    setError(null);
-    setBusy(true);
-    try {
-      await connect();
-    } catch (e) {
-      setError(reason(e));
-      setBusy(false);
-      return;
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    leave();
-  }
+  const { connect, busy, error } = useConnect({ onDone: leave });
 
   function lookAround() {
     browse();
@@ -63,7 +38,7 @@ export default function Connect() {
       </View>
       <View style={{ flex: 1, justifyContent: "flex-end", gap: 12 }}>
         {error ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{error}</T> : null}
-        <Button title="Connect Seed Vault" onPress={onConnect} busy={busy} />
+        <Button title="Connect Seed Vault" onPress={connect} busy={busy} />
         <Pressable
           accessibilityRole="button"
           onPress={lookAround}
