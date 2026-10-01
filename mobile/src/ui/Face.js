@@ -1,7 +1,12 @@
 import { useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
+import * as Haptics from "expo-haptics";
 import { usePfp } from "../pfp/PfpRenderer";
+import { shortWallet } from "./format";
 import { C, F, R } from "./theme";
+
+/** The smallest tap target a face gets when it can be tapped. */
+const TAP = 36;
 
 const hue = (wallet) => {
   let sum = 0;
@@ -36,19 +41,38 @@ export function Face({ wallet, size = 32, ring }) {
   );
 }
 
-/** Faces side by side, each overlapping the one before; "+N" when there are more than `max`. */
-export function Faces({ wallets, size = 28, max = 6 }) {
+/** Faces side by side, each overlapping the one before; "+N" when there are more than `max`.
+ *  `ring` (a colour) rims each face. With `onPress(wallet)` each face is a button, its tap
+ *  target at least TAP points. */
+export function Faces({ wallets, size = 28, max = 6, ring, onPress }) {
   const list = wallets ?? [];
   const shown = list.slice(0, max);
   const more = list.length - shown.length;
   const shift = (i) => (i === 0 ? 0 : -size * 0.3);
+  const slop = Math.max(0, (TAP - size) / 2);
   return (
     <View style={{ flexDirection: "row", alignItems: "center" }}>
-      {shown.map((w, i) => (
-        <View key={`${w}:${i}`} style={{ marginLeft: shift(i) }}>
-          <Face wallet={w} size={size} />
-        </View>
-      ))}
+      {shown.map((w, i) =>
+        onPress ? (
+          <Pressable
+            key={`${w}:${i}`}
+            accessibilityRole="button"
+            accessibilityLabel={shortWallet(w)}
+            hitSlop={slop}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              onPress(w);
+            }}
+            style={({ pressed }) => [{ marginLeft: shift(i) }, pressed && { opacity: 0.7 }]}
+          >
+            <Face wallet={w} size={size} ring={ring} />
+          </Pressable>
+        ) : (
+          <View key={`${w}:${i}`} style={{ marginLeft: shift(i) }}>
+            <Face wallet={w} size={size} ring={ring} />
+          </View>
+        ),
+      )}
       {more > 0 ? (
         <View
           style={{

@@ -5,7 +5,7 @@ export const C = {
   text0: "#f3f4f6", text1: "#9a9eab", text2: "#636775",
   well: "#040507", wellLine: "#23262f",
   up: "#2ee6a0", down: "#ff4d6d", warn: "#ff8a3d",
-  accent: "#5468ff", accentInk: "#ffffff",
+  accent: "#5468ff", accentInk: "#ffffff", accentSoft: "#5468ff24", // --accent-soft: the accent at 0.14
   gold: "#ffb23e", goldInk: "#1c1203",
   er: "#3bd4ff", migrated: "#9d8cff",
 };

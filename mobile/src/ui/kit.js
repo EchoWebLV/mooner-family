@@ -85,13 +85,46 @@ export function Button({ title, onPress, kind = "primary", disabled, busy, icon 
   );
 }
 
-/** A panel: bg1, a hairline rim, round corners. Pressable when onPress is given. */
-export function Card({ children, onPress, style }) {
+/** A panel: bg1, a hairline rim, round corners. Pressable when onPress is given: then it's a
+ *  button, and `accessibilityLabel` is what a screen reader says for it. */
+export function Card({ children, onPress, style, accessibilityLabel }) {
   const base = { backgroundColor: C.bg1, borderRadius: R.l, borderWidth: 1, borderColor: C.line, padding: 14 };
   if (!onPress) return <View style={[base, style]}>{children}</View>;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [base, style, pressed && { opacity: 0.85 }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      style={({ pressed }) => [base, style, pressed && { opacity: 0.85 }]}
+    >
       {children}
+    </Pressable>
+  );
+}
+
+/** A small quiet oval button that hugs its title ("Connect", "Copy"). `color` tints the
+ *  title; `accessibilityLabel` defaults to it. `live` makes a screen reader say the new
+ *  label when it changes ("Copied"). */
+export function PillButton({ title, onPress, color = C.text0, accessibilityLabel, live }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityLiveRegion={live ? "polite" : undefined}
+      hitSlop={8}
+      onPress={(e) => {
+        Haptics.selectionAsync().catch(() => {});
+        onPress?.(e);
+      }}
+      style={({ pressed }) => [
+        {
+          height: 34, paddingHorizontal: 14, borderRadius: R.pill, backgroundColor: C.bg2,
+          borderWidth: 1, borderColor: C.lineStrong, alignItems: "center", justifyContent: "center",
+        },
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <Text style={{ fontFamily: F.semi, fontSize: 14, color }}>{title}</Text>
     </Pressable>
   );
 }
@@ -138,7 +171,12 @@ export function Sheet({ open, onClose, children, title }) {
   return (
     <Modal visible={!!open} transparent animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, justifyContent: "flex-end" }}>
-        <Pressable accessibilityLabel="Close" onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.6)" }]} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          onPress={onClose}
+          style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.6)" }]}
+        />
         <View
           style={{
             backgroundColor: C.bg1, borderTopLeftRadius: 24, borderTopRightRadius: 24,

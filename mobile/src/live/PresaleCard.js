@@ -22,6 +22,7 @@ export function PresaleCard({ view, info, profiles, onPress }) {
   return (
     <View style={up ? { opacity: 0.5 } : null}>
       <Card
+        accessibilityLabel={`$${token.symbol}, ${solText(view.raised)} of ${solText(info.N.TARGET)} SOL`}
         onPress={() => {
           Haptics.selectionAsync().catch(() => {});
           onPress?.();
