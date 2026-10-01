@@ -6,7 +6,7 @@ import { createMoonerStore, launchedList, liveList, myPresales } from "../src/st
 const W = "Wallet1111";
 const signer = { publicKey: { toBase58: () => W }, signTransaction: async (t) => t, sendTransaction: async () => "SIG", signMessage: async () => new Uint8Array(64) };
 
-function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000, wrapSaved = (base) => base } = {}) {
+function rig({ flows: over = {}, api: apiOver = {}, market: marketOver = {}, now = 1_000_000, wrapSaved = (base) => base } = {}) {
   const clock = typeof now === "function" ? now : () => now;
   const subs = new Map(); // topic -> Set<fn>
   const status = new Set();
@@ -52,7 +52,17 @@ function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000, wrapSaved =
     sendChat: async (token, channel, text) => (calls.push(["chat", token, channel, text]), { id: 1 }),
     ...apiOver,
   };
-  const store = createMoonerStore({ live, api, flows, saved, now: clock });
+  const market = {
+    quote: async (side, mint, amount) => (calls.push(["quote", side, mint, amount]), { side, inAmount: amount, outAmount: 7n, route: [] }),
+    holding: async (wallet, mint) => (calls.push(["holding", wallet, mint]), { raw: 5_000_000n, decimals: 6, ui: 5 }),
+    swap: async (q, s, onStep) => {
+      calls.push(["swap", q, s]);
+      onStep("Sign the trade in your wallet");
+      return "SIG";
+    },
+    ...marketOver,
+  };
+  const store = createMoonerStore({ live, api, flows, saved, market, now: clock });
   const goUp = (up) => [...status].forEach((fn) => fn(up));
   return { store, push, pushRaw, listening, disk, calls, info, goUp, status };
 }
@@ -452,4 +462,126 @@ test("signOut: forgets the sign-in and the wallet, keeps what it joined", async 
   assert.equal(listening(`wallet:${W}`), false);
   assert.equal(disk.has(`mooner:login:${W}`), false, "the saved sign-in is gone");
   assert.equal(disk.get(`mooner:mine:${W}`).A.deposit, "100000000", "its presales are still saved");
+});
+
+// ---- a launched coin: its stats, the wallet's balance of it, buy and sell ----
+
+const MINT = "Mint1111";
+const holdingReads = (calls) => calls.filter((c) => c[0] === "holding").length;
+
+test("watchCoin: the coin's stats while a screen shows it; missing and errors say so", () => {
+  const { store, push, listening } = rig();
+  const offA = store.getState().watchCoin(MINT);
+  const offB = store.getState().watchCoin(MINT);
+  assert.ok(listening(`coin:${MINT}`));
+  push(`coin:${MINT}`, "error", undefined);
+  assert.equal(store.getState().coinError[MINT], "couldn't read this right now");
+  const stats = { mint: MINT, venue: "dbc", candles: [], volume24hUsd: 812.5 };
+  push(`coin:${MINT}`, "snapshot", stats);
+  assert.equal(store.getState().coins[MINT], stats);
+  assert.equal(store.getState().coinError[MINT], undefined, "a snapshot clears the error");
+  push(`coin:${MINT}`, "missing", undefined);
+  assert.equal(store.getState().coinMissing[MINT], true);
+  offA();
+  offA(); // counts once
+  assert.ok(listening(`coin:${MINT}`), "the second screen still watches");
+  offB();
+  assert.equal(listening(`coin:${MINT}`), false);
+});
+
+test("the wallet's balance of a coin: read when the screen opens and when the wallet's SOL moves, never on a timer", async () => {
+  const { store, push, calls } = rig();
+  store.getState().watchCoin(MINT);
+  await tick();
+  assert.equal(holdingReads(calls), 0, "no wallet, no read");
+  await store.getState().setWallet(W);
+  await tick();
+  assert.deepEqual(calls.filter((c) => c[0] === "holding"), [["holding", W, MINT]], "connecting reads the watched coin");
+  assert.deepEqual(store.getState().holdings[MINT], { raw: 5_000_000n, decimals: 6, ui: 5 });
+  push(`wallet:${W}`, "snapshot", { lamports: "900000000" });
+  await tick();
+  assert.equal(holdingReads(calls), 1, "the first SOL figure is no change");
+  push(`wallet:${W}`, "snapshot", { lamports: "800000000" });
+  await tick();
+  assert.equal(holdingReads(calls), 2, "the SOL moved: read again");
+  await store.getState().setWallet(null);
+  assert.deepEqual(store.getState().holdings, {}, "another wallet's balances go with it");
+});
+
+test("a coin screen that stops watching reads no more", async () => {
+  const { store, push, calls } = rig();
+  await store.getState().setWallet(W);
+  push(`wallet:${W}`, "snapshot", { lamports: "900000000" });
+  const off = store.getState().watchCoin(MINT);
+  await tick();
+  assert.equal(holdingReads(calls), 1, "opening reads once");
+  off();
+  push(`wallet:${W}`, "snapshot", { lamports: "800000000" });
+  await tick();
+  assert.equal(holdingReads(calls), 1);
+});
+
+test("a balance read that lands after a newer one, or after the wallet changed, is dropped", async () => {
+  const waits = [];
+  const { store, push } = rig({ market: { holding: () => new Promise((resolve) => waits.push(resolve)) } });
+  await store.getState().setWallet(W);
+  push(`wallet:${W}`, "snapshot", { lamports: "900000000" });
+  store.getState().watchCoin(MINT);
+  push(`wallet:${W}`, "snapshot", { lamports: "800000000" });
+  assert.equal(waits.length, 2);
+  waits[1]({ raw: 2n, decimals: 6, ui: 0.000002 });
+  await tick();
+  waits[0]({ raw: 1n, decimals: 6, ui: 0.000001 });
+  await tick();
+  assert.equal(store.getState().holdings[MINT].raw, 2n, "the older read lost");
+  push(`wallet:${W}`, "snapshot", { lamports: "700000000" });
+  await store.getState().setWallet(null);
+  waits[2]({ raw: 3n, decimals: 6, ui: 0.000003 });
+  await tick();
+  assert.deepEqual(store.getState().holdings, {});
+});
+
+test("preview: Jupiter's quote, or the no-route words the sheet shows", async () => {
+  const noRoute = Object.assign(new Error("no route for this trade yet"), { noRoute: true });
+  let fail = null;
+  const { store, calls } = rig({ market: { quote: async (side, mint, amount) => { if (fail) throw fail; calls.push(["quote", side, mint, amount]); return { outAmount: 7n }; } } });
+  assert.deepEqual(await store.getState().preview("buy", MINT, 100_000_000n), { ok: true, value: { outAmount: 7n } });
+  assert.deepEqual(calls, [["quote", "buy", MINT, 100_000_000n]]);
+  fail = noRoute;
+  assert.deepEqual(await store.getState().preview("buy", MINT, 1n), { ok: false, error: "No route for this trade yet. Try again in a moment.", noRoute: true });
+  fail = new Error("Rate limit exceeded");
+  assert.deepEqual(await store.getState().preview("sell", MINT, 1n), { ok: false, error: "Rate limit exceeded", noRoute: false });
+});
+
+test("trade: a fresh quote, the swap with the screen's signer, then the balance; one at a time", async () => {
+  const { store, calls } = rig();
+  await store.getState().setWallet(W);
+  const steps = [];
+  const unsub = store.subscribe((s, was) => s.busy && s.busy !== was.busy && steps.push([s.busy.kind, s.busy.step]));
+  const r = await store.getState().trade("sell", MINT, 2_500_000n, signer);
+  unsub();
+  assert.deepEqual(r, { ok: true, value: { sig: "SIG", quote: { side: "sell", inAmount: 2_500_000n, outAmount: 7n, route: [] } } });
+  assert.deepEqual(calls.map((c) => c[0]), ["quote", "swap", "holding"], "no coin screen open: the trade reads the balance after");
+  assert.equal(calls[1][2], signer);
+  assert.deepEqual(steps, [["sell", null], ["sell", "Getting a price from Jupiter"], ["sell", "Sign the trade in your wallet"]]);
+  assert.equal(store.getState().busy, null);
+});
+
+test("trade: a failed swap in plain words; a second trade waits for the first", async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const JUP = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+  const { store } = rig({
+    market: {
+      swap: async () => {
+        await gate;
+        throw new Error(`trade (SIG): ix 3 (${JUP}): custom 6001`);
+      },
+    },
+  });
+  const first = store.getState().trade("buy", MINT, 100_000_000n, signer);
+  await tick();
+  assert.deepEqual(await store.getState().trade("buy", MINT, 100_000_000n, signer), { ok: false, error: "Wait for the last one to finish." });
+  release();
+  assert.deepEqual(await first, { ok: false, error: "The price moved more than 3% before your trade landed, so it didn't go through. Try again." });
 });

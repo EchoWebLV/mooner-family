@@ -1,11 +1,13 @@
 // The phone app's state: what the server pushes (presales, one presale's view and chat,
-// launched coins, Mooner pictures' traits, SOL/USD, the wallet's SOL) and what the user does
-// (sign in, join, get SOL back, chat). Screens read it with zustand's useStore and call its
-// actions. Nothing here imports React Native, so it runs in Node tests with fakes.
+// launched coins, one coin's stats, Mooner pictures' traits, SOL/USD, the wallet's SOL), the
+// wallet's balance of an open coin, and what the user does (sign in, join, get SOL back, chat,
+// buy, sell). Screens read it with zustand's useStore and call its actions. Nothing here
+// imports React Native, so it runs in Node tests with fakes.
 
 import { createStore } from "zustand/vanilla";
 import { explain } from "../../engine/src/flows.js";
 import { signIn as walletSignIn } from "../../engine/src/signin.js";
+import { explainSwap } from "../../engine/src/swap.js";
 
 const CHAT_KEEP = 200;
 const loginName = (w) => `mooner:login:${w}`;
@@ -22,10 +24,14 @@ const keep = (fn) => Promise.resolve().then(fn).catch(() => undefined);
  * api:   engine/src/apiclient.js makeApi(BASE)
  * flows: engine/src/flows.js makeFlows(...)
  * saved: (name) -> { get(), set(value), clear() }                securekeys.js secureJson
+ * market: { quote(side, mint, amount), holding(wallet, mint), swap(q, signer, onStep) }
+ *                                                                 trading.js makeMarket
  */
-export function createMoonerStore({ live, api, flows, saved, now = () => Date.now() }) {
+export function createMoonerStore({ live, api, flows, saved, market, now = () => Date.now() }) {
   let walletOff = null;
   let running = null; // { users, offs } while any start() is on
+  const watching = new Map(); // mint -> how many screens watch the coin
+  const reads = new Map(); // mint -> the latest balance read's number: an older one landing late is dropped
   const store = createStore(() => ({
     socketUp: false,
     info: null, // flows.loadInfo(): numbers as BigInt in info.N
@@ -44,7 +50,11 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     session: null, // { token, exp }: Mooner sign-in, for chat
     mine: {}, // presale key -> { deposit, at, back? }: joined from this phone
     chats: {}, // channel -> rows, oldest first
-    busy: null, // { key, kind: "join" | "back", step }
+    coins: {}, // mint -> the coin's stats (chart, volume, liquidity, holders), while a screen watches it
+    coinMissing: {}, // mint -> true: the server has no such coin
+    coinError: {}, // mint -> the server's words when it couldn't read the stats; the next snapshot clears it
+    holdings: {}, // mint -> { raw (BigInt), decimals, ui }: the connected wallet's balance of a watched coin
+    busy: null, // { key, kind: "join" | "back" | "buy" | "sell", step }
   }));
   const get = store.getState;
   const set = store.setState;
@@ -100,6 +110,12 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     patch("chats", (c) => ({ ...c, [channel]: rows.slice(-CHAT_KEEP) }));
   };
 
+  const onCoin = (mint) => (m) => {
+    if (m.type === "snapshot") set((s) => ({ coins: { ...s.coins, [mint]: m.data }, coinMissing: without(s.coinMissing, mint), coinError: without(s.coinError, mint) }));
+    else if (m.type === "missing") set((s) => ({ coinMissing: { ...s.coinMissing, [mint]: true }, coinError: without(s.coinError, mint) }));
+    else if (m.type === "error") patch("coinError", (x) => ({ ...x, [mint]: m.error || "couldn't read this right now" }));
+  };
+
   async function loadInfo() {
     try {
       set({ info: await flows.loadInfo(), infoError: null });
@@ -148,6 +164,40 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     return () => offs.forEach((off) => off());
   }
 
+  /** One launched coin's stats and the wallet's balance of it while a screen shows it.
+   *  Returns off(); each off counts once. */
+  function watchCoin(mint) {
+    patch("coinError", (x) => without(x, mint));
+    watching.set(mint, (watching.get(mint) ?? 0) + 1);
+    const off = live.subscribe(`coin:${mint}`, onCoin(mint));
+    readHolding(mint);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      off();
+      const n = watching.get(mint) - 1;
+      if (n > 0) watching.set(mint, n);
+      else watching.delete(mint);
+    };
+  }
+
+  /** Reads the connected wallet's balance of `mint` once: when a coin screen opens, when the
+   *  wallet's SOL changes (the server pushes it: a trade moved it), after a trade here. A
+   *  failed read leaves the last one. */
+  async function readHolding(mint) {
+    const wallet = get().wallet;
+    if (!wallet) return;
+    const n = (reads.get(mint) ?? 0) + 1;
+    reads.set(mint, n);
+    try {
+      const b = await market.holding(wallet, mint);
+      if (get().wallet === wallet && reads.get(mint) === n) patch("holdings", (h) => ({ ...h, [mint]: b }));
+    } catch {
+      // the screen keeps what it had; the next push or trade reads again
+    }
+  }
+
   // ---- the wallet ----
 
   /** The connected wallet (base58), or null: its SOL, its saved sign-in and presales. */
@@ -155,11 +205,16 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     if (wallet === get().wallet) return;
     walletOff?.();
     walletOff = null;
-    set({ wallet, lamports: null, session: null, mine: {} });
+    set({ wallet, lamports: null, session: null, mine: {}, holdings: {} });
     if (!wallet) return;
     walletOff = live.subscribe(`wallet:${wallet}`, (m) => {
-      if (m.type === "snapshot" && m.data?.lamports != null) set({ lamports: Number(m.data.lamports) });
+      if (m.type !== "snapshot" || m.data?.lamports == null) return;
+      const was = get().lamports;
+      set({ lamports: Number(m.data.lamports) });
+      // the wallet's SOL moved: a trade (here or elsewhere) may have moved its coins too
+      if (was != null) for (const mint of watching.keys()) readHolding(mint);
     });
+    for (const mint of watching.keys()) readHolding(mint);
     const [session, mine] = await Promise.all([
       keep(() => saved(loginName(wallet)).get()),
       keep(() => saved(mineName(wallet)).get()),
@@ -219,14 +274,14 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
 
   // ---- actions ----
 
-  /** Runs one action at a time; `busy.step` is what it waits for. */
-  async function run(key, kind, fn) {
+  /** Runs one action at a time; `busy.step` is what it waits for. `why` words an error. */
+  async function run(key, kind, fn, why = explain) {
     if (get().busy) return { ok: false, error: "Wait for the last one to finish." };
     set({ busy: { key, kind, step: null } });
     try {
       return { ok: true, value: await fn((step) => set({ busy: { key, kind, step } })) };
     } catch (e) {
-      return { ok: false, error: explain(e) };
+      return { ok: false, error: why(e) };
     } finally {
       set({ busy: null });
     }
@@ -255,6 +310,34 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     });
   }
 
+  /** What a trade would get, for the sheet before anything is signed: { ok: true, value:
+   *  quote } or { ok: false, error, noRoute }. `side` "buy" spends `amount` lamports, "sell"
+   *  `amount` raw tokens (BigInt). */
+  async function preview(side, mint, amount) {
+    try {
+      return { ok: true, value: await market.quote(side, mint, amount) };
+    } catch (e) {
+      return { ok: false, error: explainSwap(e), noRoute: !!e?.noRoute };
+    }
+  }
+
+  /** Buys or sells coin `mint` at a fresh quote (the price may have moved since the sheet's).
+   *  Returns { ok, value: { sig, quote } } or { ok: false, error }. */
+  function trade(side, mint, amount, signer) {
+    return run(
+      mint,
+      side,
+      async (onStep) => {
+        onStep("Getting a price from Jupiter");
+        const q = await market.quote(side, mint, amount);
+        const sig = await market.swap(q, signer, onStep);
+        await readHolding(mint);
+        return { sig, quote: q };
+      },
+      explainSwap,
+    );
+  }
+
   /** What a join takes from the wallet besides the deposit (BigInt lamports). */
   const joinCost = async () => (await flows.joinCost()).total;
 
@@ -279,7 +362,7 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     }
   }
 
-  set({ start, watch, setWallet, signIn, signOut, join, getBack, joinCost, sendChat });
+  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, preview, trade });
   return store;
 }
 
