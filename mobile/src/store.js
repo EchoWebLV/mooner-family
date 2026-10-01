@@ -50,10 +50,13 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     session: null, // { token, exp }: Mooner sign-in, for chat
     mine: {}, // presale key -> { deposit, at, back? }: joined from this phone
     chats: {}, // channel -> rows, oldest first
-    coins: {}, // mint -> the coin's stats (chart, volume, liquidity, holders), while a screen watches it
+    coins: {}, // mint -> the coin's stats (chart, volume, liquidity, holders): pushed while a screen watches it; the last ones stay after
     coinMissing: {}, // mint -> true: the server has no such coin
     coinError: {}, // mint -> the server's words when it couldn't read the stats; the next snapshot clears it
-    holdings: {}, // mint -> { raw (BigInt), decimals, ui }: the connected wallet's balance of a watched coin
+    // mint -> { raw (BigInt), decimals, ui }: the connected wallet's balance of a coin, read when a
+    // screen opens it, on SOL moves while one is open, and after a trade here (watched or not);
+    // the last read stays after the screen closes; a wallet change empties it
+    holdings: {},
     busy: null, // { key, kind: "join" | "back" | "buy" | "sell", step }
   }));
   const get = store.getState;
@@ -211,7 +214,9 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       if (m.type !== "snapshot" || m.data?.lamports == null) return;
       const was = get().lamports;
       set({ lamports: Number(m.data.lamports) });
-      // the wallet's SOL moved: a trade (here or elsewhere) may have moved its coins too
+      // the wallet's SOL moved: a trade (here or elsewhere) may have moved its coins too. A
+      // snapshot re-sent with the same SOL (a reconnect subscribes again) reads too, on
+      // purpose: the coins may have moved while the socket was down
       if (was != null) for (const mint of watching.keys()) readHolding(mint);
     });
     for (const mint of watching.keys()) readHolding(mint);
@@ -322,7 +327,8 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   }
 
   /** Buys or sells coin `mint` at a fresh quote (the price may have moved since the sheet's).
-   *  Returns { ok, value: { sig, quote } } or { ok: false, error }. */
+   *  Returns { ok, value: { sig, quote } } or { ok: false, error } once the swap is confirmed;
+   *  the balance read it starts lands in `holdings` on its own. */
   function trade(side, mint, amount, signer) {
     return run(
       mint,
@@ -331,7 +337,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
         onStep("Getting a price from Jupiter");
         const q = await market.quote(side, mint, amount);
         const sig = await market.swap(q, signer, onStep);
-        await readHolding(mint);
+        readHolding(mint); // catches its own errors; a hung read mustn't hold the lock
         return { sig, quote: q };
       },
       explainSwap,

@@ -541,6 +541,46 @@ test("a balance read that lands after a newer one, or after the wallet changed, 
   assert.deepEqual(store.getState().holdings, {});
 });
 
+test("a balance read from before a switch away and back to the same wallet is dropped", async () => {
+  const W2 = "Other2222";
+  const waits = [];
+  const { store } = rig({ market: { holding: (wallet) => new Promise((resolve) => waits.push({ wallet, resolve })) } });
+  store.getState().watchCoin(MINT);
+  await store.getState().setWallet(W);
+  await store.getState().setWallet(W2);
+  await store.getState().setWallet(W);
+  assert.deepEqual(waits.map((w) => w.wallet), [W, W2, W]);
+  waits[0].resolve({ raw: 1n, decimals: 6, ui: 0.000001 });
+  waits[1].resolve({ raw: 2n, decimals: 6, ui: 0.000002 });
+  await tick();
+  assert.equal(store.getState().holdings[MINT], undefined, "W's first read and W2's are both stale");
+  waits[2].resolve({ raw: 3n, decimals: 6, ui: 0.000003 });
+  await tick();
+  assert.equal(store.getState().holdings[MINT].raw, 3n);
+});
+
+test("a failed balance read leaves the last one", async () => {
+  let fail = false;
+  const { store, push } = rig({
+    market: {
+      holding: async () => {
+        if (fail) throw new Error("fetch failed");
+        return { raw: 5_000_000n, decimals: 6, ui: 5 };
+      },
+    },
+  });
+  await store.getState().setWallet(W);
+  push(`wallet:${W}`, "snapshot", { lamports: "900000000" });
+  store.getState().watchCoin(MINT);
+  await tick();
+  const had = store.getState().holdings[MINT];
+  assert.deepEqual(had, { raw: 5_000_000n, decimals: 6, ui: 5 });
+  fail = true;
+  push(`wallet:${W}`, "snapshot", { lamports: "800000000" });
+  await tick();
+  assert.equal(store.getState().holdings[MINT], had);
+});
+
 test("preview: Jupiter's quote, or the no-route words the sheet shows", async () => {
   const noRoute = Object.assign(new Error("no route for this trade yet"), { noRoute: true });
   let fail = null;
@@ -565,6 +605,17 @@ test("trade: a fresh quote, the swap with the screen's signer, then the balance;
   assert.equal(calls[1][2], signer);
   assert.deepEqual(steps, [["sell", null], ["sell", "Getting a price from Jupiter"], ["sell", "Sign the trade in your wallet"]]);
   assert.equal(store.getState().busy, null);
+});
+
+test("trade: a balance read that never answers doesn't hold the trade or the next one", async () => {
+  const { store, calls } = rig({ market: { holding: () => new Promise(() => {}) } });
+  await store.getState().setWallet(W);
+  const r = await store.getState().trade("buy", MINT, 100_000_000n, signer);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.sig, "SIG");
+  assert.equal(store.getState().busy, null);
+  assert.equal((await store.getState().trade("buy", MINT, 100_000_000n, signer)).ok, true, "the next trade isn't told to wait");
+  assert.equal(calls.filter((c) => c[0] === "swap").length, 2);
 });
 
 test("trade: a failed swap in plain words; a second trade waits for the first", async () => {

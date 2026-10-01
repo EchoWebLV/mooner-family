@@ -44,6 +44,13 @@ test("quote: a buy spends SOL, a sell spends the coin", async () => {
   assert.match(fetch.calls[1].url, new RegExp(`inputMint=${MINT}&outputMint=${WSOL}&amount=5&`));
 });
 
+test("quote: a side other than buy or sell asks Jupiter nothing", async () => {
+  const fetch = fakeFetch();
+  const m = makeMarket({ conn: {}, priority: 100_000, fetch });
+  for (const side of ["Buy", "sel", undefined]) await assert.rejects(m.quote(side, MINT, 5n), { name: "RangeError", message: `a trade is "buy" or "sell", not ${side}` });
+  assert.equal(fetch.calls.length, 0);
+});
+
 test("holding: the wallet's associated token account of the mint over the phone's RPC", async () => {
   let asked;
   // getParsedTokenAccountsByOwner's item: the account's address (the wallet's ATA) and its token program
