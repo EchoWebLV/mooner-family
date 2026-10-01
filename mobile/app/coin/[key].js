@@ -61,7 +61,7 @@ export default function Coin() {
               <T v="num" color={C.text1}>{`$${token.symbol}`}</T>
             </View>
           </View>
-          <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={row.pool?.sqrtPrice} />
+          <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={atMigration(row.pool) ? null : row.pool?.sqrtPrice} />
           {position ? (
             <Card style={{ gap: 6 }}>
               <T v="label">{`Your $${token.symbol}`}</T>
@@ -177,7 +177,7 @@ function Holders({ stats, wallet }) {
     <Card style={{ gap: 10 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
         <T v="label">Top holders</T>
-        {count ? <T v="small">{`${count} holders`}</T> : null}
+        {count ? <T v="small">{count}</T> : null}
       </View>
       {rows == null ? (
         <T v="small" color={C.text2}>Couldn't read the holders right now</T>

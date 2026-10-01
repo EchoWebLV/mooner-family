@@ -94,7 +94,9 @@ test("liquidity, volume, holders: from the pool before migration, Meteora after;
   assert.equal(liquidityText(null, null), null);
   assert.equal(volumeText({ volume24hUsd: 3754478.47 }), "$3.75M");
   assert.equal(volumeText({ volume24hUsd: null }), null);
-  assert.equal(holdersText({ holders: 1256 }), "1.26K");
+  assert.equal(holdersText({ holders: 1256 }), "1.26K holders");
+  assert.equal(holdersText({ holders: 1 }), "1 holder");
+  assert.equal(holdersText({ holders: 0 }), "0 holders");
   assert.equal(holdersText({ holders: null }), null);
   assert.equal(volumeText(undefined), null);
 });
@@ -117,9 +119,19 @@ test("holderRows: the pool and presale by name, you as You, a share of the suppl
   assert.deepEqual(holderRows([], "W", "1"), []);
 });
 
+test("holderRows: each row's key is its own, even for the same owner or amount twice", () => {
+  const twice = [
+    { owner: "Wallet1111", amount: "5000000", label: null },
+    { owner: "Wallet1111", amount: "5000000", label: null },
+    { amount: "5000000", label: "Pool" },
+    { amount: "5000000", label: "Pool" },
+  ];
+  const keys = holderRows(twice, "W", "100000000").map((r) => r.key);
+  assert.equal(new Set(keys).size, keys.length, keys.join(", "));
+});
+
 test("positionOf: what the wallet holds and its worth at the pool's price", () => {
   // 28 SOL market cap: 2.8e-8 SOL per token
-  const START = "97610994635780032";
   assert.deepEqual(positionOf({ raw: 1_000_000_000_000n, decimals: 6, ui: 1e6 }, START, 150), { tokens: "1M", sol: "0.028 SOL", usd: "$4.20" });
   assert.deepEqual(positionOf({ raw: 500_000n, decimals: 6, ui: 0.5 }, null, 150), { tokens: "0.5", sol: null, usd: null });
   assert.equal(positionOf({ raw: 0n, decimals: 6, ui: 0 }, START, 150), null);

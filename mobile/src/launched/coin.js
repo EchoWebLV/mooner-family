@@ -85,10 +85,15 @@ export function liquidityText(pool, stats) {
 export const volumeText = (stats) => (stats?.volume24hUsd != null ? usd(stats.volume24hUsd) : null);
 
 /** The holder count: Meteora's, after migration; before it nobody counts them (the coin
- *  screen lists the top holders instead). */
-export const holdersText = (stats) => (stats?.holders != null ? compact(stats.holders) : null);
+ *  screen lists the top holders instead). "1.26K holders", "1 holder", or null. */
+export function holdersText(stats) {
+  const n = stats?.holders;
+  if (n == null) return null;
+  return n === 1 ? "1 holder" : `${compact(n)} holders`;
+}
 
-/** The top holders as rows: { key, who (the pool, the presale, "You", or a short wallet),
+/** The top holders as rows: { key (its place and owner: the same owner or amount can be
+ *  listed twice), who (the pool, the presale, "You", or a short wallet),
  *  tokens ("1.2M"), share ("12.3%" of the supply, or null when the server couldn't read the
  *  supply) }. `supply`: the coin's supply in raw units as the server read it (stats.supply);
  *  not the 1B of views.js SUPPLY, which a coin's real supply needn't match. null when the
@@ -96,10 +101,10 @@ export const holdersText = (stats) => (stats?.holders != null ? compact(stats.ho
 export function holderRows(top, wallet, supply) {
   if (!top) return null;
   const all = Number(supply);
-  return top.map((h) => {
+  return top.map((h, i) => {
     const n = Number(h.amount) / RAW_PER_TOKEN;
     return {
-      key: h.owner ?? h.amount,
+      key: `${i}:${h.owner ?? ""}`,
       who: h.label ?? (h.owner && h.owner === wallet ? "You" : shortWallet(h.owner ?? "")),
       tokens: n >= 1000 ? compact(n) : sig3(n),
       share: all > 0 ? `${sig3((Number(h.amount) / all) * 100)}%` : null,

@@ -6,13 +6,14 @@ import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 import { priceFromSqrt } from "../../../engine/src/views.js";
 import { Card, T } from "../ui/kit";
 import { C } from "../ui/theme";
-import { changeText, chartPath, pointsOf, SOURCES, spanText } from "./chart";
+import { changeText, chartPath, emptyChartText, pctOf, pointsOf, SOURCES, spanText } from "./chart";
 
 const HEIGHT = 160;
 
 /** `stats`: the coin's stats (undefined until the first snapshot); `missing`: the server has
  *  no stats for this coin; `error`: its words when the last read failed; `sqrtPrice`: the
- *  pool's live price. */
+ *  pool's live price, or null when there's none (a migrated coin whose DAMM v2 pool isn't
+ *  found yet: its DBC price stopped at migration). */
 export function PriceChart({ stats, missing, error, sqrtPrice }) {
   const [width, setWidth] = useState(0);
   // the live point sits at the time this screen heard the price (or the stats) last
@@ -21,13 +22,15 @@ export function PriceChart({ stats, missing, error, sqrtPrice }) {
   const live = sqrtPrice ? priceFromSqrt(sqrtPrice) : null;
   const pts = useMemo(() => pointsOf(stats?.candles, live, heardAt), [stats, live, heardAt]);
   const path = useMemo(() => (width > 0 ? chartPath(pts, width, HEIGHT) : null), [pts, width]);
-  const color = !path || path.change >= 0 ? C.up : C.down;
-  const empty = missing ? "No chart for this coin" : stats ? "The chart starts with the first trades" : "Loading the chart";
+  // the change's text and its color come from the same rounding: "0%" is never red
+  const pct = path ? pctOf(path.change) : null;
+  const change = path ? changeText(path.change) : null;
+  const color = pct != null && pct < 0 ? C.down : C.up;
   return (
     <Card style={{ gap: 10 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
         <T v="label">Chart</T>
-        {path ? <T v="num" color={color}>{`${changeText(path.change)} · ${spanText(pts[0].t, heardAt)}`}</T> : null}
+        {path ? <T v="num" color={color}>{change ? `${change} · ${spanText(pts[0].t, heardAt)}` : spanText(pts[0].t, heardAt)}</T> : null}
       </View>
       <View style={{ height: HEIGHT }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
         {path ? (
@@ -43,7 +46,7 @@ export function PriceChart({ stats, missing, error, sqrtPrice }) {
           </Svg>
         ) : (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <T v="small" color={C.text2}>{empty}</T>
+            <T v="small" color={C.text2}>{emptyChartText({ missing, stats, error })}</T>
           </View>
         )}
       </View>
