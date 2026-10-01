@@ -35,8 +35,8 @@ export function pfpKey(wallet, pfp, px, version) {
 /**
  * The pictures wanted in this app run, and the page that draws them, one at a time. A picture
  * the page couldn't draw is tried once per run; once the page is down (it didn't load, it
- * crashed, it got stuck) nothing more is drawn until the app starts again. Faces without a
- * picture show their fallback.
+ * crashed, it got stuck while pictures waited) nothing more is drawn until the app starts
+ * again. Faces without a picture show their fallback.
  *
  * files:       the cache folder, by paths in it ("pfp-v17/pfp-….png"):
  *              { uri(path), exists(path), list(path) (names in a folder, "" the cache folder
@@ -47,6 +47,8 @@ export function pfpKey(wallet, pfp, px, version) {
  * origin:      where the page is served; messages from anywhere else are ignored
  * readyMs:     how long an opened page has to say it's ready
  * drawMs:      how long one picture may take; a page slower than this is stuck: down
+ * firstDrawMs: the same for a page's first picture, which fetches the renderer (three.js)
+ *              too; it holds until the page has saved a picture
  * idleMs:      how long the page stays wanted with nothing to draw
  *
  * subscribe(fn) hears wanted() (a page should be mounted) and version() change.
@@ -56,6 +58,7 @@ export function makePfpCache({
   origin,
   readyMs = 20_000,
   drawMs = 20_000,
+  firstDrawMs = 60_000,
   idleMs = 60_000,
 }) {
   const uris = new Map(); // name -> file uri, for pictures on disk
@@ -63,7 +66,7 @@ export function makePfpCache({
   const failed = new Set(); // names the page couldn't draw this run
   const queue = []; // jobs not sent yet
   const listeners = new Set();
-  let page = null; // { post, ready, readyTimer } while a WebView is mounted
+  let page = null; // { post, ready, readyTimer, drew } while a WebView is mounted
   let drawing = null; // the job the page is drawing
   let down = null; // the Error that took the page down
   let wanted = false;
@@ -129,7 +132,7 @@ export function makePfpCache({
     if (drawing || !page?.ready || !queue.length) return;
     const job = queue.shift();
     job.id = String(++ids);
-    job.timer = setTimeout(() => fail(new Error("a picture took too long to draw")), drawMs);
+    job.timer = setTimeout(() => fail(new Error("a picture took too long to draw")), page.drew ? drawMs : firstDrawMs);
     drawing = job;
     page.post(JSON.stringify({ id: job.id, ...job.ask }));
   }
@@ -230,6 +233,7 @@ export function makePfpCache({
       files.rename(pathOf(`${job.name}.part`), pathOf(job.name));
       uri = files.uri(pathOf(job.name));
       uris.set(job.name, uri);
+      page.drew = true; // the renderer is loaded: the next pictures get drawMs
     } catch (e) {
       failed.add(job.name);
       console.warn("pfp:", e.message);
@@ -243,7 +247,7 @@ export function makePfpCache({
   function open(post) {
     if (down) return;
     close();
-    page = { post, ready: false, readyTimer: setTimeout(() => fail(new Error("the picture page didn't load")), readyMs) };
+    page = { post, ready: false, drew: false, readyTimer: setTimeout(() => fail(new Error("the picture page didn't load")), readyMs) };
   }
 
   /** The WebView is unmounted: the picture it was drawing waits for the next one. */
@@ -260,7 +264,7 @@ export function makePfpCache({
 
   /** The page's process is gone. The first time Android stops it (it does that to save
    *  memory, didCrash false) this returns true: mount the page again. A crash, or a second
-   *  stop, takes the page down. */
+   *  stop, is a fail(). */
   function gone(didCrash) {
     if (didCrash || killed) {
       fail(new Error(didCrash ? "the picture page crashed" : "the picture page was stopped twice"));
@@ -272,12 +276,23 @@ export function makePfpCache({
   }
 
   /** The page can't draw (a load or HTTP error, a crash, too slow): every waiting picture is
-   *  dropped and none is drawn for the rest of the run. */
+   *  dropped and none is drawn for the rest of the run. With no picture waiting (the version
+   *  check, offline or before the page is deployed) it is only let go: a missing picture
+   *  loads it again. */
   function fail(error) {
     if (down) return;
+    close();
+    if (!jobs.size) {
+      if (!wanted) return; // let go already
+      console.warn("pfp page let go:", error.message);
+      clearTimeout(idleTimer);
+      idleTimer = null;
+      wanted = false;
+      emit();
+      return;
+    }
     down = error;
     console.warn("pfp page down:", error.message);
-    close();
     queue.length = 0;
     jobs.clear();
     clearTimeout(idleTimer);

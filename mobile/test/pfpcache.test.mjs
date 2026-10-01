@@ -39,13 +39,21 @@ test("no saved picture (the default) has one stable name, apart from any traits"
   assert.notEqual(pfpKey(W, null, 128, "17"), pfpKey(W, PFP, 128, "17"));
 });
 
+/** Test contexts whose timers are mocked already. */
+const mocked = new WeakSet();
+
 /**
  * A cache over a fake cache folder and page. `disk` maps file paths to contents, `dirs` holds
  * the folders; the folder of renderer `version` is there at the start (null: none). `sent`
  * holds what was posted, `answer(msg)` replies from the page's origin, `got` collects the uris
- * handed out. Writes throw while `full.on`. console.warn is caught in `warned`.
+ * handed out. Writes throw while `full.on`. console.warn is caught in `warned`. Timers are
+ * mocked (t.mock.timers.tick), so no real minute-long timer keeps the tests running.
  */
 function rig(t, { onDisk = [], version = "17", ...opts } = {}) {
+  if (!mocked.has(t)) {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    mocked.add(t);
+  }
   const warned = [];
   t.mock.method(console, "warn", (...args) => warned.push(args.join(" ")));
   const disk = new Map(onDisk.map((p) => [p, "x"]));
@@ -75,7 +83,7 @@ function rig(t, { onDisk = [], version = "17", ...opts } = {}) {
       for (const p of disk.keys()) if (p === path || p.startsWith(`${path}/`)) disk.delete(p);
     },
   };
-  const cache = makePfpCache({ files, origin: ORIGIN, readyMs: 1_000, drawMs: 2_000, idleMs: 60_000, ...opts });
+  const cache = makePfpCache({ files, origin: ORIGIN, readyMs: 1_000, drawMs: 2_000, firstDrawMs: 6_000, idleMs: 60_000, ...opts });
   const sent = [];
   const got = [];
   let changes = 0;
@@ -175,7 +183,6 @@ test("a picture nobody waits for any more is dropped unless it is being drawn", 
 });
 
 test("the page is let go after a minute with nothing to draw", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   const r = rig(t);
   r.want(W, PFP, 128);
   r.open();
@@ -242,7 +249,6 @@ test("a page that says no version counts as version 0", (t) => {
 });
 
 test("a page that never says ready is down: logged, the WebView let go, later asks ignored", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   const r = rig(t);
   r.want(W, PFP, 128);
   r.open();
@@ -271,16 +277,85 @@ test("a load or HTTP error takes the page down once", (t) => {
 });
 
 test("a picture that takes too long takes the page down", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   const r = rig(t);
   r.want(W, PFP, 128);
   r.want(W, null, 128);
   r.open();
   r.answer({ ready: true, version: "17" });
-  t.mock.timers.tick(2_000);
+  t.mock.timers.tick(6_000);
   assert.equal(r.cache.wanted(), false);
   assert.deepEqual(r.warned, ["pfp page down: a picture took too long to draw"]);
   assert.equal(r.sent.length, 1);
+});
+
+test("a page's first picture gets firstDrawMs (it fetches the renderer), the next ones drawMs", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.want(W, null, 128);
+  r.want(V, null, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  t.mock.timers.tick(2_000);
+  assert.equal(r.cache.wanted(), true, "the first ask outlives drawMs");
+  r.answer({ id: "1", error: "Failed to fetch dynamically imported module" });
+  t.mock.timers.tick(2_000);
+  assert.equal(r.cache.wanted(), true, "nothing saved yet: the retry gets firstDrawMs too");
+  r.answer({ id: "2", png: `${PNG}AAAA` });
+  t.mock.timers.tick(1_999);
+  assert.equal(r.cache.wanted(), true);
+  t.mock.timers.tick(1);
+  assert.equal(r.cache.wanted(), false, "after a saved picture: drawMs");
+  assert.deepEqual(r.warned, ["pfp: Failed to fetch dynamically imported module", "pfp page down: a picture took too long to draw"]);
+
+  const s = rig(t);
+  s.want(W, PFP, 128);
+  s.open();
+  s.answer({ ready: true, version: "17" });
+  t.mock.timers.tick(5_999);
+  assert.equal(s.cache.wanted(), true);
+  t.mock.timers.tick(1);
+  assert.equal(s.cache.wanted(), false, "the first ask fails at firstDrawMs");
+});
+
+test("a page remounted after Android stopped it gets firstDrawMs again", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.want(W, null, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.equal(r.cache.gone(false), true);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  t.mock.timers.tick(5_999);
+  assert.equal(r.cache.wanted(), true);
+  r.answer({ id: "3", png: `${PNG}BBBB` });
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128), r.uri(W, null, 128)]);
+});
+
+test("a version check that fails only lets the page go: a later missing picture opens it again", (t) => {
+  const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
+  r.cache.check();
+  r.open();
+  r.cache.fail(new Error("the picture page answered HTTP 404"));
+  r.cache.fail(new Error("the picture page didn't load: net::ERR_FAILED")); // onError after onHttpError
+  assert.equal(r.cache.wanted(), false);
+  assert.deepEqual(r.warned, ["pfp page let go: the picture page answered HTTP 404"]);
+  r.want(V, null, 128);
+  assert.equal(r.cache.wanted(), true, "not down");
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.deepEqual(r.got, [r.uri(V, null, 128)]);
+
+  const s = rig(t);
+  s.cache.check();
+  s.open();
+  t.mock.timers.tick(1_000); // offline: the page never says ready
+  assert.equal(s.cache.wanted(), false);
+  assert.deepEqual(s.warned, ["pfp page let go: the picture page didn't load"]);
+  s.want(W, PFP, 128);
+  assert.equal(s.cache.wanted(), true);
 });
 
 test("Android stopping the page once mounts it again; a crash or a second stop takes it down", (t) => {
@@ -296,6 +371,7 @@ test("Android stopping the page once mounts it again; a crash or a second stop t
   assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
   assert.equal(r.cache.gone(false), false);
   assert.equal(r.cache.wanted(), false);
+  assert.deepEqual(r.warned, ["pfp page let go: the picture page was stopped twice"], "nothing waited: not down");
 
   const c = rig(t);
   c.want(W, PFP, 128);
@@ -360,7 +436,6 @@ test("the first page of a run clears out other versions, the first build's loose
 });
 
 test("a phone with every picture on disk loads the page once, only to hear the version", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
   r.want(W, PFP, 128);
   assert.equal(r.cache.wanted(), false);
@@ -381,7 +456,6 @@ test("a phone with every picture on disk loads the page once, only to hear the v
 });
 
 test("a new version heard by the check renames every picture, so faces get them drawn again", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   const r = rig(t, { onDisk: [at(pfpKey(W, PFP, 128, "17"))] });
   let seen = null;
   r.cache.subscribe(() => (seen = r.cache.version()));
