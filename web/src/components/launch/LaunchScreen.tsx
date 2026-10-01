@@ -1,7 +1,9 @@
 'use client'
 // Launch wizard (spec §5.6): token, presale, your commit. Opening the presale puts it at the
 // top of New Pairs and lands you on its page. An open that may have gone through leaves its
-// coin pending (the store's `opening`): until that clears, the only way on is the same coin.
+// coin pending (the store's `opening`): until that clears, the way on is the same coin, with
+// the same SOL, or, once the store allows it (mayStartOver), a new coin. When its presale
+// shows up (the store's watch, or another tab), the screen goes to it.
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
@@ -79,6 +81,8 @@ export function LaunchScreen() {
   const connect = useApp((s) => s.connectWallet)
   const busyStep = useApp((s) => s.step)
   const opening = useApp((s) => s.opening)
+  const mayStartOver = useApp((s) => s.mayStartOver)
+  const startOver = useApp((s) => s.startOver)
   const router = useRouter()
   const artRef = useRef<HTMLDivElement>(null)
   const [picture, setPicture] = useState<Picture | null>(null)
@@ -104,6 +108,17 @@ export function LaunchScreen() {
   useEffect(() => {
     if (!pendingId) setSubmitError(null)
   }, [pendingId])
+  // the pending coin's presale: once the coin clears and its presale is in the world, the
+  // screen goes there (a submit goes there itself; a coin left by start over never shows)
+  const leftFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (opening) leftFor.current = opening.presale
+    else if (!busy && leftFor.current && world.tokens[leftFor.current]) {
+      const id = leftFor.current
+      leftFor.current = null
+      router.push(`/presale/${id}`)
+    }
+  }, [opening, busy, world.tokens, router])
 
   // Your commit can't go over what your wallet holds, or leave no room for anyone else.
   const maxCommit = Math.max(MIN_COMMIT, Math.min(MAX_CREATOR_COMMIT, Math.floor(world.walletLamports / COMMIT_STEP) * COMMIT_STEP))
@@ -157,6 +172,7 @@ export function LaunchScreen() {
     }
     if (busy) return
     setBusy(true)
+    leftFor.current = null // this submit says where to go
     try {
       // a pending coin is tried again as it was: no picture, no new coin
       let image: Uint8Array | null = null
@@ -167,7 +183,8 @@ export function LaunchScreen() {
       }
       const r = await createLaunch(current, image)
       if (!r.ok) return setSubmitError(r.error)
-      notify('good', `$${r.symbol} presale is open. Share it to fill the pool.`)
+      leftFor.current = null
+      notify('good', r.note)
       router.push(`/presale/${r.tokenId}`)
     } catch (err) {
       setSubmitError((err as Error).message)
@@ -200,7 +217,7 @@ export function LaunchScreen() {
       <div className={styles.layout}>
         <form className={`panel ${styles.wizard}`} onSubmit={submit} noValidate aria-labelledby="launch-step-title">
           {opening ? (
-            <Pending opening={opening} />
+            <Pending opening={opening} mayStartOver={mayStartOver && !busy} />
           ) : (
             <>
               <Stepper step={step} onPick={goTo} />
@@ -241,8 +258,21 @@ export function LaunchScreen() {
                 <Link href={`/presale/${opening.presale}`} className="btn">
                   See the presale
                 </Link>
+                {mayStartOver && !busy && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      leftFor.current = null
+                      setSubmitError(null)
+                      startOver()
+                    }}
+                  >
+                    Start over with a new coin
+                  </button>
+                )}
                 <button type="submit" className={`btn btn-primary btn-lg ${styles.open}`} disabled={busy}>
-                  {busy ? 'Opening…' : `Try again with $${opening.symbol}`}
+                  {busy ? 'Opening…' : `Try again with $${opening.symbol} · ${fmtSol(opening.commit)} SOL`}
                 </button>
               </>
             ) : (
@@ -324,8 +354,10 @@ function Stepper({ step, onPick }: { step: number; onPick: (step: number) => voi
   )
 }
 
-/** A coin whose open may have gone through: the only way on is that coin again. */
-function Pending({ opening }: { opening: Opening }) {
+/** A coin whose open may have gone through: the way on is that coin again, with the same
+ *  SOL; `mayStartOver`: or a new coin (the store found no presale, and the last open is too
+ *  old to land). */
+function Pending({ opening, mayStartOver }: { opening: Opening; mayStartOver: boolean }) {
   return (
     <div className={styles.fields}>
       <h2 id="launch-step-title" tabIndex={-1} className={`panel-title ${styles.stepTitle}`}>
@@ -334,7 +366,11 @@ function Pending({ opening }: { opening: Opening }) {
       <p className="field-error" role="alert">
         {OUTCOME_UNKNOWN}
       </p>
-      <p className="field-hint">Trying again opens the same ${opening.symbol}, never a new coin.</p>
+      <p className="field-hint">
+        {mayStartOver
+          ? `No $${opening.symbol} presale showed up, and its last open is too old to land now. Try it again with ${fmtSol(opening.commit)} SOL, or start over with a new coin.`
+          : `Trying again opens the same $${opening.symbol} with ${fmtSol(opening.commit)} SOL, never a new coin.`}
+      </p>
     </div>
   )
 }
