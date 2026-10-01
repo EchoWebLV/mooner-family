@@ -9,21 +9,29 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PROJECT=14215b7b-adff-430c-81f8-71e01298c7c3
+usage() {
+  echo "usage: sh deploy/railway.sh app|site [--dry]" >&2
+  exit 2
+}
+[ $# -le 2 ] || usage
 case "${2:-}" in
   --dry) DRY=1 ;;
   "") DRY= ;;
-  *)
-    echo "usage: sh deploy/railway.sh app|site [--dry]" >&2
-    exit 2
-    ;;
+  *) usage ;;
 esac
 STAGE=$(mktemp -d)
+SRC=
+trap 'rm -rf "$STAGE" ${SRC:+"$SRC"}' EXIT
+# dash skips the EXIT trap on a signal: exiting runs it, so ^C or a kill still removes both folders
+trap 'exit 1' HUP INT TERM
 SRC=$(mktemp -d)
-trap 'rm -rf "$STAGE" "$SRC"' EXIT
 case "${1:-}" in
   app)
     REV=$(git -C "$ROOT" rev-parse HEAD)
-    git -C "$ROOT" archive "$REV" engine/package.json engine/package-lock.json engine/src engine/server web deploy/app.Dockerfile | tar -x -C "$SRC"
+    # to a file, not a pipe: a failed archive stops here (a pipe would report only tar's status)
+    git -C "$ROOT" archive -o "$SRC/head.tar" "$REV" engine/package.json engine/package-lock.json engine/src engine/server web deploy/app.Dockerfile
+    tar -x -C "$SRC" -f "$SRC/head.tar"
+    rm "$SRC/head.tar"
     # what git doesn't hold: the packages (engine's for @noble/curves, which engine/src/walletcheck.js imports)
     # and web/.env, whose VITE_PRIVY_APP_ID is built into the bundle; .env files go to the build folder only
     ln -s "$ROOT/web/node_modules" "$SRC/web/node_modules"
@@ -40,7 +48,8 @@ case "${1:-}" in
     HEALTH=/api/health
     SERVICE=app
     echo "deploying $(git -C "$ROOT" log -1 --format='%h (%s)' "$REV")"
-    if [ -n "$(git -C "$ROOT" status --porcelain -- engine web deploy)" ]; then
+    # --no-optional-locks: never take .git/index.lock while others commit
+    if [ -n "$(git -C "$ROOT" --no-optional-locks status --porcelain -- engine web deploy)" ]; then
       echo "note: uncommitted changes in engine/, web/ or deploy/ are not included"
     fi
     ;;
@@ -52,10 +61,7 @@ case "${1:-}" in
     HEALTH=/
     SERVICE=web
     ;;
-  *)
-    echo "usage: sh deploy/railway.sh app|site [--dry]" >&2
-    exit 2
-    ;;
+  *) usage ;;
 esac
 cp "$FROM/deploy/$1.Dockerfile" "$STAGE/Dockerfile"
 # a failed deploy leaves the last good one serving
