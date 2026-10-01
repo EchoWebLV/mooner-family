@@ -7,17 +7,18 @@
 //   server -> { error }                    (a bad request; the socket stays open)
 //
 // Topics: presales, launched, profiles, sol, chat:global, chat:<presale>, presale:<presale>,
-// wallet:<wallet>.
+// wallet:<wallet>, coin:<mint>.
 
 import { WebSocketServer } from "ws";
 import { Limiter, clientIp, toJson } from "./http.js";
 
-export const TOPIC = /^(presales|launched|profiles|sol|chat:global|(chat|presale|wallet):[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+export const TOPIC = /^(presales|launched|profiles|sol|chat:global|(chat|presale|wallet|coin):[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 
 export const HUB_LIMITS = {
   socketsPerIp: 20,
   topicsPerSocket: 64,
   walletsPerSocket: 4,
+  coinsPerSocket: 4,
   messages: [120, 60_000], // per socket
   maxBuffered: 4 * 1024 * 1024, // a socket this far behind is dropped
 };
@@ -108,6 +109,9 @@ export class Hub {
     if (ws.subs.size >= this.L.topicsPerSocket) return this.send(ws, { error: `at most ${this.L.topicsPerSocket} topics` });
     if (topic.startsWith("wallet:") && [...ws.subs].filter((t) => t.startsWith("wallet:")).length >= this.L.walletsPerSocket) {
       return this.send(ws, { error: `at most ${this.L.walletsPerSocket} wallets` });
+    }
+    if (topic.startsWith("coin:") && [...ws.subs].filter((t) => t.startsWith("coin:")).length >= this.L.coinsPerSocket) {
+      return this.send(ws, { error: `at most ${this.L.coinsPerSocket} coins` });
     }
     ws.subs.add(topic);
     let set = this.topics.get(topic);

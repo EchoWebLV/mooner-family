@@ -9,6 +9,7 @@ import { DBC, DELEGATION_PROGRAM, MOONER_DBC_CONFIG, WSOL } from "../src/consts.
 import { DAMM_V2, MIGRATION_CONFIGS, dammPoolAddress } from "../src/damm.js";
 import { P, PRESALE_LEN, PRESALE_VERSION, S, SEAT_LEN, SEAT_VERSION, STATE } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
+import { priceFromSqrt } from "../src/views.js";
 import { Bot } from "../src/bot.js";
 import { createServer, toJson } from "../server/http.js";
 import { makeReads } from "../server/api.js";
@@ -113,7 +114,7 @@ function pythData(price, expo = -8, at = 1_790_000_000) {
 }
 
 /** `before({ l1, store })` runs before the feed starts: what was there while the server was
- *  down. `feed`: more Feed options (they win over the ones here). */
+ *  down. `feed`: more Feed options (fetch, statsMs, ...; they win over the ones here). */
 async function startLive({ paceMs = 60, hub: hubOpts = {}, feed: feedOpts = {}, before = () => {} } = {}) {
   const l1 = fakeChain("l1");
   const er = fakeChain("er");
@@ -122,7 +123,7 @@ async function startLive({ paceMs = 60, hub: hubOpts = {}, feed: feedOpts = {}, 
   const bot = new Bot({ pid, l1, ers: { [validator.toBase58()]: er }, bot: Keypair.generate(), dbcConfig: MOONER_DBC_CONFIG, canary: true, log: () => {} });
   const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG, damm: (mint) => feed.dammOf(mint) });
   const logs = [];
-  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, log: (m) => logs.push(m), ...feedOpts });
+  const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, fetch: noFetch, log: (m) => logs.push(m), ...feedOpts });
   before({ l1, store });
   const routes = makeSocialRoutes({ store, isPresale: () => true, onChat: (r) => feed.chat(r), onProfile: (w, p) => feed.profile(w, p) });
   const server = createServer(routes, { log: () => {} });
@@ -175,6 +176,8 @@ async function client(url) {
 }
 
 const on = (topic, type) => (m) => m.topic === topic && (!type || m.type === type);
+/** No market API in tests unless one is handed in: every call is a 404. */
+const noFetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function newPresale(l1, store, { owner = pid, ...p } = {}) {
@@ -409,7 +412,7 @@ test("limits: sockets per address, and a socket that sends too much", async () =
   }
 });
 
-// ---- migration and the DAMM v2 pool ----
+// ---- migration, the DAMM v2 pool, coin stats ----
 
 const fixtureBytes = (name) => Buffer.from(JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8")).data, "base64");
 /** The trial DBC pool's bytes, with the migrated flag (byte 305) set or not. */
@@ -549,6 +552,128 @@ test("at start: a coin that migrated while the server was down gets its DAMM v2 
     assert.ok(s.l1.accountSubs().includes(coin.damm.toBase58()), "subscribed to the DAMM v2 pool");
     assert.deepEqual(events, []);
     assert.deepEqual(s.feed.status().damm, 1);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("coin:<mint>: stats when it's opened, again only after its pool changed and a statsMs passed", async () => {
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    if (url.includes("/ohlcv/")) return { ok: true, status: 200, json: async () => ({ data: { attributes: { ohlcv_list: [[1790854740, 2e-8, 3e-8, 2e-8, 3e-8, 1]] } } }) };
+    return { ok: true, status: 200, json: async () => ({ data: { attributes: { reserve_in_usd: "10", volume_usd: { h24: String(calls.length) } } } }) };
+  };
+  const s = await startLive({ feed: { fetch, statsMs: 300 } });
+  const coin = launchedCoin(s.l1, s.store);
+  s.feed.launched(coin.presale);
+  const c = await s.client();
+  const topic = `coin:${coin.mint.toBase58()}`;
+  try {
+    await wait(50);
+    c.sub(topic);
+    const snap = (await c.next(on(topic, "snapshot"))).data;
+    assert.deepEqual([snap.venue, snap.pool, snap.source, snap.candles.length, snap.volume24hUsd, snap.top], ["dbc", coin.pool.toBase58(), "geckoterminal", 1, 2, null]);
+    assert.equal(calls.length, 2);
+
+    // nothing changed: nothing is read again
+    await wait(400);
+    assert.equal(calls.length, 2, "no reads while the pool is still");
+
+    // the pool trades: read again now (the last read is older than statsMs) and pushed
+    s.l1.write(coin.pool, DBC, dbcPool(false));
+    assert.equal((await c.next(on(topic, "snapshot"))).data.volume24hUsd, 4);
+    // and again right away: once more, statsMs after the last read, not before
+    s.l1.write(coin.pool, DBC, dbcPool(false));
+    await wait(150);
+    s.l1.write(coin.pool, DBC, dbcPool(false));
+    assert.equal(calls.length, 4, "not before statsMs");
+    assert.equal((await c.next(on(topic, "snapshot"))).data.volume24hUsd, 6);
+    await wait(400);
+    assert.equal(calls.length, 6, "one read for both changes");
+
+    // nobody on it: a change reads nothing
+    c.unsub(topic);
+    await wait(50);
+    s.l1.write(coin.pool, DBC, dbcPool(false));
+    await wait(400);
+    assert.equal(calls.length, 6);
+    assert.equal(s.feed.status().coins, 0);
+
+    // a mint that isn't a Mooner coin: missing, and no API call
+    const other = `coin:${Keypair.generate().publicKey.toBase58()}`;
+    c.sub(other);
+    assert.equal((await c.next(on(other))).type, "missing");
+    assert.equal(calls.length, 6);
+
+    // at most 4 coins per socket
+    const e = await s.client();
+    e.sub(...Array.from({ length: 5 }, () => `coin:${Keypair.generate().publicKey.toBase58()}`));
+    assert.match((await e.next((m) => m.error)).error, /at most 4 coins/);
+    e.close();
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("coin:<mint>: nothing is read after stop", async () => {
+  const calls = [];
+  const fetch = async (url) => (calls.push(url), { ok: false, status: 404, json: async () => ({}) });
+  const s = await startLive({ feed: { fetch, statsMs: 0 } });
+  const coin = launchedCoin(s.l1, s.store);
+  s.feed.launched(coin.presale);
+  await wait(50);
+  await s.close();
+  // a pool change that was still being pushed at stop, for a coin someone had open
+  s.feed.first(`coin:${coin.mint.toBase58()}`);
+  s.feed.statsSoon(coin.mint.toBase58());
+  await wait(50);
+  assert.deepEqual(calls, []);
+});
+
+test("own candles: the feed records the DBC pool's price, then the DAMM v2 pool's once the coin moved", async () => {
+  const T = 1_790_854_800_000; // on a minute: every price below lands in its candle
+  const s = await startLive({ feed: { now: () => T + 30_000 } });
+  const coin = launchedCoin(s.l1, s.store);
+  const mint = coin.mint.toBase58();
+  const [dbc, found, traded] = [98247117170863603n, 185460299076988380n, 200000000000000000n].map(priceFromSqrt);
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    await c.next(on("launched", "upsert"));
+    assert.deepEqual(s.store.candles(mint), [{ t: T, o: dbc, h: dbc, l: dbc, c: dbc }], "the DBC pool's price");
+
+    s.l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    await c.next((m) => on("launched", "upsert")(m) && m.data.pool.damm);
+    assert.deepEqual(s.store.candles(mint), [{ t: T, o: dbc, h: found, l: dbc, c: found }], "the DAMM v2 pool's price when it's found");
+
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n));
+    await c.next((m) => on("launched", "upsert")(m) && m.data.pool.sqrtPrice === "200000000000000000");
+    assert.deepEqual(s.store.candles(mint), [{ t: T, o: dbc, h: traded, l: dbc, c: traded }], "and as it trades there");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("own candles: a price the store can't take is logged, and the pool's row still goes out", async () => {
+  const s = await startLive();
+  const coin = launchedCoin(s.l1, s.store);
+  s.store.addPrice = () => {
+    throw new Error("database is not open");
+  };
+  const c = await s.client();
+  try {
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    assert.equal((await c.next(on("launched", "upsert"))).data.mint, coin.mint.toBase58());
+    assert.ok(s.logs.includes(`live candle ${coin.mint.toBase58()}: database is not open`), "logged");
   } finally {
     c.close();
     await s.close();

@@ -5,6 +5,8 @@
 //   - each launched token's DBC pool, and its DAMM v2 pool once it migrated: pushed to
 //     `launched` as it trades; the flip of the DBC pool's migrated flag is the "migrated"
 //     event (feed.on("migrated", row))
+//   - one coin's chart, volume, liquidity and holders while someone has it open:
+//     `coin:<mint>`, read again at most once a `statsMs`, and only after its pool changed
 //   - each watched wallet's SOL: `wallet:<wallet>`
 //   - SOL/USD from Pyth's price account: `sol`
 //   - chat messages and pictures as the server saves them: `chat:<channel>`, `profiles`
@@ -14,10 +16,12 @@ import { EventEmitter } from "node:events";
 import { PublicKey } from "@solana/web3.js";
 import { DELEGATION_PROGRAM } from "../src/consts.js";
 import { decodeDammPool, findDammPool } from "../src/damm.js";
+import { priceFromSqrt } from "../src/views.js";
 import { PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, SEAT_VERSION, decodePresale, decodeSeat } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
 import { accountsOf, listItem } from "./api.js";
+import { coinStats } from "./coinstats.js";
 import { allProfiles, chatRows } from "./social.js";
 
 /** Pyth's SOL/USD price account (push oracle, shard 0), the same address on every cluster. */
@@ -47,17 +51,19 @@ export class Feed extends EventEmitter {
   /**
    * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
    * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
-   * `db`: the server's SQLite (chat and pictures). `dammTries`: reads of the DAMM v2 pool
-   * after a migration, `retryMs` apart; if none finds it, the feed looks again the next time
-   * the DBC pool changes (or at the next start).
+   * `db`: the server's SQLite (chat and pictures). `fetch`: for the market APIs
+   * (coinstats.js). `dammTries`: reads of the DAMM v2 pool after a migration, `retryMs`
+   * apart; if none finds it, the feed looks again the next time the DBC pool changes (or at
+   * the next start).
    */
-  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, dammTries = 10, log = console.log }) {
+  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, statsMs = 60_000, dammTries = 10, fetch = globalThis.fetch, now = Date.now, log = console.log }) {
     super({ captureRejections: true });
-    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, dammTries, log });
+    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, statsMs, dammTries, fetch, now, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
     this.wallets = new Map(); // topic -> listener id
     this.pools = new Map(); // mint -> { row, pool, data, migrated, damm, dammState, dammData, finding, retry }
+    this.coins = new Map(); // mint -> { stats, at, timer, reading } while `coin:<mint>` has sockets
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
@@ -95,6 +101,7 @@ export class Feed extends EventEmitter {
     }
     for (const p of this.paced.values()) clearTimeout(p.timer);
     for (const p of this.pools.values()) clearTimeout(p.retry);
+    for (const c of this.coins.values()) clearTimeout(c.timer);
   }
 
   sub(conn, kind, id) {
@@ -220,6 +227,7 @@ export class Feed extends EventEmitter {
       const was = p.migrated;
       p.migrated = s.migrated;
       if (s.migrated && !p.damm) this.lookDamm(mint);
+      if (!s.migrated) this.notePrice(mint, s.sqrtPrice);
       const row = this.pushPool(p);
       if (s.migrated && was === false) {
         this.log(`$${p.row.token?.symbol} (${mint}) migrated to DAMM v2`);
@@ -246,7 +254,18 @@ export class Feed extends EventEmitter {
     const row = this.poolRow(p);
     if (!row) return null;
     this.publish("launched", { type: "upsert", data: row });
+    this.statsSoon(p.row.mint);
     return row;
+  }
+
+  /** Records the coin's price at `sqrtPrice` in the server's own candles (store.addPrice).
+   *  A store that can't take it is logged; what follows (the pool's push) still runs. */
+  notePrice(mint, sqrtPrice) {
+    try {
+      this.store.addPrice(mint, priceFromSqrt(sqrtPrice), this.now());
+    } catch (e) {
+      this.log(`live candle ${mint}: ${e?.message ?? e}`);
+    }
   }
 
   /** Starts findDamm without awaiting it: what it throws is logged, never left as an
@@ -280,6 +299,7 @@ export class Feed extends EventEmitter {
     p.dammState = found.state;
     this.reads.forgetLaunched();
     this.sub(this.l1, "account", this.l1.onAccountChange(found.pool, (acc) => this.onDamm(mint, acc.data), { commitment: "confirmed" }));
+    this.notePrice(mint, found.state.sqrtPrice);
     this.pushPool(p);
   }
 
@@ -292,8 +312,43 @@ export class Feed extends EventEmitter {
       const s = decodeDammPool(p.dammData);
       if (!s) return;
       p.dammState = s;
+      this.notePrice(mint, s.sqrtPrice);
       this.pushPool(p);
     });
+  }
+
+  // ---- one coin's stats (coin:<mint>) ----
+
+  /** The coin's stats, read at most once a `statsMs` (callers in between share them). */
+  async stats(mint) {
+    const c = this.coins.get(mint) ?? { stats: null, at: 0, timer: null, reading: null };
+    if (c.stats && this.now() - c.at < this.statsMs) return c.stats;
+    if (c.reading) return c.reading;
+    const p = this.pools.get(mint);
+    c.reading = coinStats({ conn: this.l1, p, store: this.store, fetch: this.fetch, nowMs: this.now() }).finally(() => (c.reading = null));
+    c.stats = await c.reading;
+    c.at = this.now();
+    return c.stats;
+  }
+
+  /** The coin's pool changed: if someone has it open, its stats are read again and pushed,
+   *  now if the last read is `statsMs` old, else once when it will be. A coin whose pool
+   *  doesn't change isn't read again, and nothing is read after stop. */
+  statsSoon(mint) {
+    const c = this.coins.get(mint);
+    if (!c || c.timer || this.stopped) return;
+    const wait = Math.max(0, c.at + this.statsMs - this.now());
+    c.timer = setTimeout(async () => {
+      c.timer = null;
+      if (this.stopped || this.coins.get(mint) !== c) return;
+      try {
+        const data = await this.stats(mint);
+        if (this.coins.get(mint) === c) this.publish(`coin:${mint}`, { type: "snapshot", data });
+      } catch (e) {
+        this.log(`live coin:${mint}: ${e?.message ?? e}`);
+      }
+    }, wait);
+    c.timer.unref?.();
   }
 
   // ---- SOL ----
@@ -332,16 +387,23 @@ export class Feed extends EventEmitter {
   /** What the feed is watching and what it heard, for /api/health. */
   status() {
     const damm = [...this.pools.values()].filter((p) => p.damm).length;
-    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, damm, sol: this.sol };
+    return { sockets: this.hub?.sockets ?? 0, heard: { ...this.heard }, wallets: this.wallets.size, pools: this.pools.size, damm, coins: this.coins.size, sol: this.sol };
   }
 
   // ---- the hub's hooks ----
 
   first(topic) {
     if (topic.startsWith("wallet:")) this.watchWallet(topic);
+    if (topic.startsWith("coin:")) this.coins.set(topic.slice("coin:".length), { stats: null, at: 0, timer: null, reading: null });
   }
 
   last(topic) {
+    if (topic.startsWith("coin:")) {
+      const mint = topic.slice("coin:".length);
+      clearTimeout(this.coins.get(mint)?.timer);
+      this.coins.delete(mint);
+      return;
+    }
     const id = this.wallets.get(topic);
     if (id === undefined) return;
     this.wallets.delete(topic);
@@ -359,6 +421,7 @@ export class Feed extends EventEmitter {
       if (topic === "sol") return this.sol && send({ type: "snapshot", data: this.sol });
       if (kind === "chat") return send({ type: "snapshot", data: chatRows(this.db, arg) });
       if (kind === "wallet") return send({ type: "snapshot", data: { lamports: await this.reads.balance(new PublicKey(arg)) } });
+      if (kind === "coin") return this.pools.has(arg) ? send({ type: "snapshot", data: await this.stats(arg) }) : send({ type: "missing" });
       if (kind === "presale") {
         try {
           return send({ type: "snapshot", data: await this.reads.presale(new PublicKey(arg)) });

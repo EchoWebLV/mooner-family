@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS launches (
   tokens   TEXT NOT NULL,
   units    INTEGER NOT NULL,
   at       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS candles (
+  mint TEXT NOT NULL,
+  t    INTEGER NOT NULL,
+  o    REAL NOT NULL,
+  h    REAL NOT NULL,
+  l    REAL NOT NULL,
+  c    REAL NOT NULL,
+  PRIMARY KEY (mint, t)
 );`;
 
 const publicToken = (r) =>
@@ -121,6 +130,22 @@ export class Store {
         token: publicToken(r),
         launch: { sig: r.sig, released: r.released, cost: r.cost, tokens: r.tokens, units: r.units, at: r.at },
       }));
+  }
+
+  /** A launched coin's price (SOL per token) seen at `at` (ms): it goes into that minute's
+   *  candle, which opens at its first price and closes at its last. A price that isn't a
+   *  finite number above 0 is left out. */
+  addPrice(mint, price, at = Date.now()) {
+    if (!(Number.isFinite(price) && price > 0)) return;
+    const t = Math.floor(at / 60_000) * 60_000;
+    this.db
+      .prepare("INSERT INTO candles (mint, t, o, h, l, c) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (mint, t) DO UPDATE SET h = max(h, excluded.h), l = min(l, excluded.l), c = excluded.c")
+      .run(mint, t, price, price, price, price);
+  }
+
+  /** The coin's one-minute candles from `since` (ms) on, oldest first: { t, o, h, l, c }. */
+  candles(mint, since = 0) {
+    return this.db.prepare("SELECT t, o, h, l, c FROM candles WHERE mint = ? AND t >= ? ORDER BY t").all(mint, since).map((r) => ({ ...r }));
   }
 
   /** The token opened as `presale`, for a presale that has closed since. */
