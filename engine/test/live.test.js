@@ -549,9 +549,13 @@ function holdNext(reads, name) {
   return { go, called };
 }
 
-/** Waits until `ok()`, checking every 20 ms, 2 s at most. */
+/** Waits until `ok()`, checking every 20 ms; still false after 2 s, it throws. */
 async function until(ok) {
-  for (let i = 0; i < 100 && !ok(); i++) await wait(20);
+  for (let i = 0; i < 100; i++) {
+    if (ok()) return;
+    await wait(20);
+  }
+  if (!ok()) throw new Error(`still false after 2 s: ${ok}`);
 }
 
 /** Two live.js listeners on `topic` over the real hub; the second one's snapshot read
@@ -653,6 +657,98 @@ test("launched, a migrated coin: a list read that ends after its DAMM v2 pool's 
   }
 });
 
+/** A coin that migrated before the start, its DAMM v2 pool there: the feed finds and watches it. */
+async function migratedLive(opts = {}) {
+  let coin;
+  const s = await startLive({
+    ...opts,
+    before: ({ l1, store }) => {
+      coin = launchedCoin(l1, store, { migrated: true });
+      l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    },
+  });
+  await until(() => s.feed.dammOf(coin.mint.toBase58()));
+  return { s, coin };
+}
+const saidPrice = (m) => (m.type === "snapshot" ? `list ${m.data[0].pool.sqrtPrice}` : `${m.type} ${m.data.pool.sqrtPrice}`);
+
+test("launched, two DAMM v2 trades in one pace window: a list read in the window isn't kept once the newer price is pushed", async () => {
+  const { s, coin } = await migratedLive({ paceMs: 300 });
+  const a = await s.client();
+  let c;
+  try {
+    a.sub("launched");
+    await until(() => a.got.length);
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 190000000000000000n)); // a trade: pushed now
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n)); // the next, in the pace window: pushed at its end
+    const mid = await s.feed.reads.listLaunched(); // GET /api/launched, or any snapshot read, in the window
+    assert.equal(String(mid[0].pool.sqrtPrice), "190000000000000000", "read in the window, before the newer price is applied");
+    await until(() => a.got.some((m) => m.type === "upsert" && m.data.pool.sqrtPrice === "200000000000000000"));
+    assert.deepEqual(a.got.map(saidPrice), ["list 185460299076988380", "upsert 190000000000000000", "upsert 200000000000000000"]);
+    c = await s.client();
+    c.sub("launched");
+    await until(() => c.got.length);
+    assert.deepEqual(c.got.map(saidPrice), ["list 200000000000000000"], "a later socket gets the newest price");
+  } finally {
+    a.close();
+    c?.close();
+    await s.close();
+  }
+});
+
+test("launched, two DAMM v2 trades in one pace window: a socket's list read started in the window is read again, not sent after the newer price", async () => {
+  const { s, coin } = await migratedLive({ paceMs: 300 });
+  const a = await s.client();
+  const b = await s.client();
+  try {
+    a.sub("launched");
+    await until(() => a.got.length);
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 190000000000000000n)); // pushed now
+    s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n)); // in the pace window
+    const { go, called } = holdNext(s.feed.reads, "listLaunched");
+    b.sub("launched");
+    await called; // its read sees 190, and is held
+    await until(() => b.got.some((m) => m.type === "upsert" && m.data.pool.sqrtPrice === "200000000000000000")); // the window's end
+    go();
+    await until(() => b.got.some((m) => m.type === "snapshot"));
+    await wait(100);
+    assert.deepEqual(b.got.map(saidPrice), ["upsert 200000000000000000", "list 200000000000000000"]);
+  } finally {
+    a.close();
+    b.close();
+    await s.close();
+  }
+});
+
+test("wallet:<w>: a balance read out across the last unsub, a change while nobody is on it (no chain listener), then a sub again: the old read is read again", async () => {
+  const s = await startLive();
+  const w = Keypair.generate().publicKey;
+  const system = new PublicKey("11111111111111111111111111111111");
+  s.l1.put(w, system, Buffer.alloc(0), 5_000);
+  const topic = `wallet:${w.toBase58()}`;
+  const c = await s.client();
+  const heard = () => c.got.filter(on(topic, "snapshot")).map((m) => m.data.lamports);
+  try {
+    const { go, called } = holdNext(s.feed.reads, "balance");
+    c.sub(topic);
+    await called; // reads 5000, held (a slow RPC answer: tx.js's patient waits out 429s)
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic));
+    assert.ok(!s.l1.accountSubs().includes(w.toBase58()), "nobody on it: no chain listener for it");
+    s.l1.write(w, system, Buffer.alloc(0), 9_000);
+    s.feed.reads.forgetBalance(w); // the balance cache's 5 s are up
+    c.sub(topic);
+    await until(() => heard().length); // the new sub's read: 9000
+    go();
+    await until(() => heard().length > 1);
+    await wait(100);
+    assert.deepEqual(heard(), [9_000, 9_000], "never 5000 after 9000");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
 test("a socket that leaves while its snapshot read is out, and comes back after a change: the old read is read again, not sent after the new state", async () => {
   const s = await startLive();
   const { presale, mint } = newPresale(s.l1, s.store);
@@ -676,7 +772,7 @@ test("a socket that leaves while its snapshot read is out, and comes back after 
     // nothing is kept for a topic nobody is on: at its last unsub, or once its last read is in
     c.unsub(topic);
     await until(() => !s.hub.has(topic));
-    assert.deepEqual([s.feed.changes.has(topic), s.feed.reading.has(topic)], [false, false], "at the unsub");
+    assert.deepEqual([s.feed.changes.has(topic), s.feed.readsOut.has(topic)], [false, false], "at the unsub");
     const held = holdNext(s.feed.reads, "presale");
     c.sub(topic);
     await held.called;
@@ -685,7 +781,7 @@ test("a socket that leaves while its snapshot read is out, and comes back after 
     s.l1.write(presale, pid, presaleData(mint, { raised: 6n }));
     assert.ok(s.feed.changes.has(topic), "a change while its read is out is noted");
     held.go();
-    await until(() => !s.feed.reading.has(topic));
+    await until(() => !s.feed.readsOut.has(topic));
     assert.equal(s.feed.changes.has(topic), false, "once that read is in");
   } finally {
     c.close();

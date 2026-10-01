@@ -71,8 +71,8 @@ export class Feed extends EventEmitter {
     this.sol = null;
     this.paced = new Map();
     this.seq = 0;
-    this.changes = new Map(); // topic -> the number of its last change, while it has sockets or a read out (see fresh)
-    this.reading = new Map(); // topic -> snapshot reads out for it
+    this.readsOut = new Map(); // topic -> snapshot reads out for it (see fresh)
+    this.changes = new Map(); // topic -> the number of its last change, while a read is out for it
     this.heard = {}; // chain notifications of our accounts, by source (for /api/health)
   }
 
@@ -124,21 +124,24 @@ export class Feed extends EventEmitter {
     return !!this.hub?.has(topic);
   }
 
-  /** `topic`'s state changed (its cache is forgotten and a push is on its way): a snapshot
-   *  read already out for it reads again (see fresh). Nobody on it and no read out: nothing
-   *  to note. A read out with nobody on the topic still counts: its socket may have left
-   *  and come back, and its answer would land after the new sub's newer one. */
+  /** What a snapshot read of `topic` sees changed: a read out for it reads again (see
+   *  fresh); with none out there's nothing to note. Called where the change is applied, so
+   *  a read after it sees it. The chain subscriptions behind presale:<key> and presales
+   *  (our program's accounts, on Solana and the ERs) and launched (each launch's DBC and
+   *  DAMM v2 pools) last as long as the feed, so a change while nobody is on those topics
+   *  is still heard. wallet:<w>'s account subscription lives only while sockets are on it;
+   *  first() covers the gap. */
   changed(topic) {
-    if (this.has(topic) || this.reading.has(topic)) this.changes.set(topic, ++this.seq);
+    if (this.readsOut.has(topic)) this.changes.set(topic, ++this.seq);
   }
 
   /** `read()`, and again while `topic` changed during it, up to `reads` reads in all; the
    *  last read is what it returns. A change during a read may have pushed its newer state
    *  already, and this older answer, sent after it, would set every listener on the topic
-   *  back (live.js hands a snapshot to all of them). The topic's number goes once its last
-   *  read is in and nobody is on it. */
+   *  back (live.js hands a snapshot to all of them). After `reads` reads that each saw a
+   *  change, the last one is sent anyway, and may be older than a push. */
   async fresh(topic, read, reads = 3) {
-    this.reading.set(topic, (this.reading.get(topic) ?? 0) + 1);
+    this.readsOut.set(topic, (this.readsOut.get(topic) ?? 0) + 1);
     try {
       for (let n = 1; ; n++) {
         const was = this.changes.get(topic);
@@ -146,11 +149,11 @@ export class Feed extends EventEmitter {
         if (n >= reads || this.changes.get(topic) === was) return got;
       }
     } finally {
-      const left = this.reading.get(topic) - 1;
-      if (left) this.reading.set(topic, left);
+      const left = this.readsOut.get(topic) - 1;
+      if (left) this.readsOut.set(topic, left);
       else {
-        this.reading.delete(topic);
-        if (!this.has(topic)) this.changes.delete(topic);
+        this.readsOut.delete(topic);
+        this.changes.delete(topic);
       }
     }
   }
@@ -354,11 +357,11 @@ export class Feed extends EventEmitter {
     const p = this.pools.get(mint);
     if (!p) return;
     p.dammData = data;
-    this.forgetLaunched();
     this.pace(`damm:${mint}`, this.poolPaceMs, async () => {
       const s = decodeDammPool(p.dammData);
       if (!s) return;
       p.dammState = s;
+      this.forgetLaunched(); // listLaunched takes the DAMM v2 price from dammState (dammOf), so the change is here, not at the notification
       this.notePrice(mint, s.sqrtPrice);
       this.pushPool(p);
     });
@@ -487,13 +490,17 @@ export class Feed extends EventEmitter {
   // ---- the hub's hooks ----
 
   first(topic) {
-    if (topic.startsWith("wallet:")) this.watchWallet(topic);
+    if (topic.startsWith("wallet:")) {
+      // unwatched since its last socket left: a change then went unheard, so a read still
+      // out from before reads again
+      this.changed(topic);
+      this.watchWallet(topic);
+    }
     // a mint that isn't a pool yet too: when its pool comes, pushPool reads and pushes it
     if (topic.startsWith("coin:")) this.coins.add(topic.slice("coin:".length));
   }
 
   last(topic) {
-    if (!this.reading.has(topic)) this.changes.delete(topic); // else the last read out drops it (fresh)
     if (topic.startsWith("coin:")) {
       const mint = topic.slice("coin:".length);
       this.coins.delete(mint);
