@@ -6,6 +6,7 @@
 
 import { createStore } from "zustand/vanilla";
 import { explain } from "../../engine/src/flows.js";
+import { refFor, withRef, withoutRef } from "../../engine/src/refs.js";
 import { signIn as walletSignIn } from "../../engine/src/signin.js";
 import { explainSwap } from "../../engine/src/swap.js";
 import { SNIPE_S, TAX_MARGIN_S } from "../../engine/src/views.js";
@@ -23,6 +24,8 @@ export const NO_MINIMUM = "Get a price first, then press again.";
 const SEEN_LIVE_MS = (SNIPE_S + TAX_MARGIN_S + 30) * 1000;
 const loginName = (w) => `mooner:login:${w}`;
 const mineName = (w) => `mooner:mine:${w}`;
+/** Share-link refs, { presale: { ref, at } } (engine/src/refs.js), one record per phone. */
+const REFS = "mooner:refs";
 const without = (o, k) => {
   const { [k]: _, ...rest } = o;
   return rest;
@@ -317,14 +320,41 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
+  // ---- share links ----
+
+  let refs = {}; // the saved refs once read, and every change since
+  let refsRead = null; // the one read of the saved refs, shared by whoever asks first
+  const loadRefs = () => (refsRead ??= keep(() => saved(REFS).get()).then((v) => void (refs = v ?? {})));
+
+  /** Applies `change` to the refs and saves them. Reads and writes `refs` with no await in
+   *  between, so two at once can't lose one. */
+  async function changeRefs(change) {
+    await loadRefs();
+    const next = change(refs);
+    if (next === refs) return;
+    refs = next;
+    await keep(() => saved(REFS).set(next));
+  }
+
+  /** A presale opened from a link that carries `?ref=<wallet>`: kept until a join there lands,
+   *  and `join` sends it (never the joiner's own wallet). The newest link wins, except the
+   *  connected wallet's own, which never replaces a friend's; junk is ignored. */
+  const noteRef = (key, ref) => changeRefs((r) => withRef(r, key, ref, now(), get().wallet));
+
+  /** The join landed: its ref went with it. */
+  const dropRef = (key) => changeRefs((r) => withoutRef(r, key));
+
   /** Join presale `key` with `amount` (BigInt lamports, a valid seat). */
   function join(key, amount, signer) {
     return run(key, "join", async (onStep) => {
       const info = get().info ?? (await flows.loadInfo());
       const view = await api.presale(key);
-      await flows.joinPresale({ info, wallet: signer.publicKey, signTransaction: signer.signTransaction, view, amount, onStep });
+      await loadRefs();
+      const ref = refFor(refs, key, signer.publicKey.toBase58()); // a share link's, if one is kept
+      await flows.joinPresale({ info, wallet: signer.publicKey, signTransaction: signer.signTransaction, view, amount, onStep, ...(ref && { ref }) });
       // a join after a get-back is a new seat: the old `back` mustn't outlive it
       await remember(signer.publicKey.toBase58(), key, { deposit: String(amount), at: now(), back: null });
+      await dropRef(key); // the join landed: its ref went with it
     });
   }
 
@@ -410,7 +440,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, preview, trade });
+  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade });
   return store;
 }
 

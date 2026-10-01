@@ -794,3 +794,84 @@ test("trade: a fresh quote with no minimum of its own is never signed, however f
     assert.deepEqual(asked, atLeast === 998n ? [undefined] : [undefined, 1_000], `${atLeast}: quoted again only with 0.5% or more to spare`);
   }
 });
+
+// ---- share links ----
+
+const KEY = "K".repeat(44);
+const SHARER = "S".repeat(44);
+const ME = "M".repeat(44);
+const me = { ...signer, publicKey: { toBase58: () => ME } };
+
+test("noteRef: a link's ref goes with the next join there, once", async () => {
+  const { store, calls, disk } = rig();
+  await store.getState().noteRef(KEY, SHARER);
+  assert.deepEqual(disk.get("mooner:refs"), { [KEY]: { ref: SHARER, at: 1_000_000 } }, "kept on the phone");
+  assert.equal((await store.getState().join(KEY, 100_000_000n, me)).ok, true);
+  assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER);
+  assert.deepEqual(disk.get("mooner:refs"), {}, "dropped once the join landed");
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.equal("ref" in calls.filter((c) => c[0] === "join")[1][1], false, "the next join sends none");
+});
+
+test("noteRef: never your own wallet, another presale's, or junk", async () => {
+  const { store, calls } = rig();
+  await store.getState().noteRef(KEY, ME);
+  await store.getState().noteRef("P".repeat(44), SHARER);
+  await store.getState().noteRef(KEY, "not a wallet");
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.equal("ref" in calls.find((c) => c[0] === "join")[1], false);
+});
+
+test("noteRef: a join that fails keeps the ref for the next try", async () => {
+  let fail = true;
+  const { store, calls, disk } = rig({
+    flows: {
+      joinPresale: async (a) => {
+        calls.push(["join", a]);
+        if (fail) throw new Error("User rejected the request");
+      },
+    },
+  });
+  await store.getState().noteRef(KEY, SHARER);
+  assert.equal((await store.getState().join(KEY, 100_000_000n, me)).ok, false);
+  assert.equal(disk.get("mooner:refs")[KEY].ref, SHARER);
+  fail = false;
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.deepEqual(calls.map((c) => c[1].ref), [SHARER, SHARER]);
+});
+
+test("noteRef: a ref saved before the app restarted still goes with the join", async () => {
+  const wrapSaved = (base) => (name) => {
+    const s = base(name);
+    if (name === "mooner:refs") s.get = async () => ({ [KEY]: { ref: SHARER, at: 1 } });
+    return s;
+  };
+  const { store, calls } = rig({ wrapSaved });
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER);
+});
+
+test("noteRef: storage that throws still keeps the ref for this session", async () => {
+  const wrapSaved = () => () => ({ get: () => { throw new Error("storage is gone"); }, set: () => { throw new Error("storage is gone"); }, clear: async () => {} });
+  const { store, calls } = rig({ wrapSaved });
+  await store.getState().noteRef(KEY, SHARER);
+  assert.equal((await store.getState().join(KEY, 100_000_000n, me)).ok, true);
+  assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER);
+});
+
+test("noteRef: two links noted at once both stay", async () => {
+  const { store, disk } = rig();
+  const OTHER = "P".repeat(44);
+  await Promise.all([store.getState().noteRef(KEY, SHARER), store.getState().noteRef(OTHER, SHARER)]);
+  assert.deepEqual(Object.keys(disk.get("mooner:refs")).sort(), [KEY, OTHER].sort());
+});
+
+test("noteRef: your own link never replaces a friend's ref", async () => {
+  const { store, calls, disk } = rig();
+  await store.getState().setWallet(ME);
+  await store.getState().noteRef(KEY, SHARER);
+  await store.getState().noteRef(KEY, ME);
+  assert.deepEqual(disk.get("mooner:refs"), { [KEY]: { ref: SHARER, at: 1_000_000 } }, "the friend's ref stays");
+  await store.getState().join(KEY, 100_000_000n, me);
+  assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER);
+});
