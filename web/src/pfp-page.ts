@@ -1,9 +1,12 @@
-// Draws Mooner pictures for the phone app, which loads this page in a hidden WebView:
-// the app posts { id, wallet, pfp | null, px }, the page answers { id, png } (a data URL)
-// or { id, error }. A wallet with no saved picture gets its default (handlePfp), as on the
-// web. renderPfp draws one picture at a time (its own queue), so asks may overlap.
+// Draws Mooner pictures for the phone app, which loads this page in a hidden WebView. The
+// page first says { ready: true, version } (the renderer's version: the app draws its saved
+// pictures again when it changes); the app posts { id, wallet, pfp | null, px }, the page
+// answers { id, png } (a data URL) or { id, error }. A wallet with no saved picture gets its
+// default (handlePfp), as on the web. renderPfp draws one picture at a time (its own
+// queue), so asks may overlap.
 import { renderPfp } from './lib/pfp/render'
 import { handlePfp, sanitizePfp } from './lib/pfp/traits'
+import { RENDER_VERSION } from './lib/pfp/version'
 
 type Ask = { id: string; wallet: string; pfp: unknown; px: number }
 type RNWindow = Window & { ReactNativeWebView?: { postMessage(s: string): void } }
@@ -40,4 +43,4 @@ function onMessage(e: MessageEvent) {
 // react-native-webview delivers postMessage on window and on document, depending on platform
 window.addEventListener('message', onMessage)
 document.addEventListener('message', onMessage as EventListener)
-reply({ ready: true })
+reply({ ready: true, version: RENDER_VERSION })

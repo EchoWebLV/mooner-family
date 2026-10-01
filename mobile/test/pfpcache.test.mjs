@@ -4,170 +4,306 @@ import assert from "node:assert/strict";
 import { makePfpCache, pfpKey } from "../src/pfp/cache.js";
 
 const W = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+const V = "W2222222222222222222222222222222222222222222";
 const PFP = { skin: "moon", eyes: "stars", mouth: "grin", head: "none", face: "none", outfit: "tee", neck: "none", aura: "none", bg: "night" };
 const PNG = "data:image/png;base64,";
+const ORIGIN = "https://app.mooner.family";
 
 test("the same picture gets the same name, a short png file name", () => {
-  const name = pfpKey(W, PFP, 128);
+  const name = pfpKey(W, PFP, 128, "17");
   assert.match(name, /^pfp-[0-9a-f]{24}\.png$/);
-  assert.equal(pfpKey(W, { ...PFP }, 128), name);
+  assert.equal(pfpKey(W, { ...PFP }, 128, "17"), name);
 });
 
-test("a changed trait, wallet or size gets a different name", () => {
-  const name = pfpKey(W, PFP, 128);
-  assert.notEqual(pfpKey(W, { ...PFP, eyes: "laser" }, 128), name);
-  assert.notEqual(pfpKey("Other111", PFP, 128), name);
-  assert.notEqual(pfpKey(W, PFP, 256), name);
+test("a changed trait, wallet, size or renderer version gets a different name", () => {
+  const name = pfpKey(W, PFP, 128, "17");
+  assert.notEqual(pfpKey(W, { ...PFP, eyes: "laser" }, 128, "17"), name);
+  assert.notEqual(pfpKey(V, PFP, 128, "17"), name);
+  assert.notEqual(pfpKey(W, PFP, 256, "17"), name);
+  assert.notEqual(pfpKey(W, PFP, 128, "18"), name);
+  assert.notEqual(pfpKey(W, PFP, 128, null), name);
 });
 
 test("the order of the traits doesn't matter", () => {
   const reversed = Object.fromEntries(Object.entries(PFP).reverse());
-  assert.equal(pfpKey(W, reversed, 128), pfpKey(W, PFP, 128));
+  assert.equal(pfpKey(W, reversed, 128, "17"), pfpKey(W, PFP, 128, "17"));
   assert.equal(pfpKey(W, { b: { y: 1, x: 2 }, a: 1 }, 128), pfpKey(W, { a: 1, b: { x: 2, y: 1 } }, 128));
 });
 
 test("no saved picture (the default) has one stable name, apart from any traits", () => {
-  assert.equal(pfpKey(W, null, 128), pfpKey(W, null, 128));
-  assert.equal(pfpKey(W, undefined, 128), pfpKey(W, null, 128));
-  assert.notEqual(pfpKey(W, null, 128), pfpKey(W, PFP, 128));
+  assert.equal(pfpKey(W, null, 128, "17"), pfpKey(W, null, 128, "17"));
+  assert.equal(pfpKey(W, undefined, 128, undefined), pfpKey(W, null, 128, null));
+  assert.notEqual(pfpKey(W, null, 128, "17"), pfpKey(W, PFP, 128, "17"));
 });
 
-/** A cache over a fake folder and page: `sent` holds what was posted, `answer()` replies;
- *  writes throw while `full.on`. */
-function rig(onDisk = []) {
+/**
+ * A cache over a fake folder and page. `sent` holds what was posted, `answer(msg)` replies
+ * from the page's origin, `got` collects the uris handed out. Writes throw while `full.on`.
+ * console.warn is caught in `warned`.
+ */
+function rig(t, { onDisk = [], version = "17", ...opts } = {}) {
+  const warned = [];
+  t.mock.method(console, "warn", (...args) => warned.push(args.join(" ")));
   const disk = new Map(onDisk.map((n) => [n, "x"]));
   const full = { on: false };
+  const ops = [];
   const files = {
     uri: (name) => `file:///cache/${name}`,
     exists: (name) => disk.has(name),
     write(name, base64) {
       if (full.on) throw new Error("disk full");
+      ops.push(`write ${name}`);
       disk.set(name, base64);
     },
+    rename(from, to) {
+      ops.push(`rename ${from} ${to}`);
+      disk.set(to, disk.get(from));
+      disk.delete(from);
+    },
+    remove: (name) => void disk.delete(name),
   };
-  const cache = makePfpCache({ files, readyMs: 1_000, drawMs: 2_000 });
+  const saved = [];
+  const cache = makePfpCache({ files, origin: ORIGIN, version, saveVersion: (v) => saved.push(v), readyMs: 1_000, drawMs: 2_000, idleMs: 60_000, ...opts });
   const sent = [];
-  let downs = 0;
-  const open = () => cache.open((text) => sent.push(JSON.parse(text)), () => downs++);
-  const answer = (msg) => cache.message(JSON.stringify(msg));
-  return { cache, disk, full, sent, open, answer, downs: () => downs };
+  const got = [];
+  let changes = 0;
+  cache.subscribe(() => changes++);
+  const open = () => cache.open((text) => sent.push(JSON.parse(text)));
+  const answer = (msg, from = `${ORIGIN}/pfp.html`) => cache.message(JSON.stringify(msg), from);
+  const want = (wallet, pfp, px) => cache.want(wallet, pfp, px, (uri) => got.push(uri));
+  const uri = (wallet, pfp, px, v = cache.version()) => `file:///cache/${pfpKey(wallet, pfp, px, v)}`;
+  return { cache, disk, full, ops, saved, sent, got, warned, open, answer, want, uri, changes: () => changes };
 }
 
-const settled = (p) => p.then((uri) => ({ uri }), (e) => ({ error: e.message }));
-const flush = () => new Promise((r) => setImmediate(r));
-
-test("a picture on disk resolves at once and nothing is sent", async () => {
-  const name = pfpKey(W, PFP, 128);
-  const r = rig([name]);
+test("messages count only from the page's origin or its URL", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
   r.open();
-  assert.equal(r.cache.cached(name), `file:///cache/${name}`);
-  assert.equal(await r.cache.request(W, PFP, 128), `file:///cache/${name}`);
-  r.answer({ ready: true });
+  r.answer({ ready: true, version: "17" }, "https://evil.example");
+  r.answer({ ready: true, version: "17" }, "https://app.mooner.family.evil.example");
+  r.answer({ ready: true, version: "17" }, null);
   assert.deepEqual(r.sent, []);
+  r.answer({ ready: true, version: "17" }, ORIGIN); // WebMessageListener: the bare origin
+  assert.equal(r.sent.length, 1);
+  r.answer({ id: "1", png: `${PNG}AAAA` }, "https://evil.example");
+  assert.deepEqual(r.got, []);
+  r.answer({ id: "1", png: `${PNG}AAAA` }, `${ORIGIN}/pfp.html`); // older WebViews: the page's URL
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
 });
 
-test("asks wait for the page to say ready, go one at a time, and land on disk", async () => {
-  const r = rig();
+test("a picture on disk is handed out at once, and no page is wanted", (t) => {
+  const r = rig(t, { onDisk: [pfpKey(W, PFP, 128, "17")] });
+  assert.equal(r.cache.cached(pfpKey(W, PFP, 128, "17")), r.uri(W, PFP, 128));
+  r.want(W, PFP, 128);
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
+  assert.equal(r.cache.wanted(), false);
+  assert.equal(r.changes(), 0);
+});
+
+test("a missing picture wants the page; asks wait for ready, go one at a time, and land whole on disk", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  assert.equal(r.cache.wanted(), true);
+  assert.equal(r.changes(), 1);
+  r.want(W, PFP, 128); // a second face, the same picture: one job
+  r.want(W, null, 256);
   r.open();
-  const a = r.cache.request(W, PFP, 128);
-  const b = r.cache.request(W, null, 256);
-  assert.equal(r.cache.request(W, PFP, 128), a, "asking again gives the same promise");
   assert.deepEqual(r.sent, []);
-  r.answer({ ready: true });
+  r.answer({ ready: true, version: "17" });
   assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: PFP, px: 128 }]);
   r.answer({ id: "1", png: `${PNG}AAAA` });
-  const name = pfpKey(W, PFP, 128);
-  assert.equal(await a, `file:///cache/${name}`);
+  const name = pfpKey(W, PFP, 128, "17");
+  assert.deepEqual(r.ops, [`write ${name}.part`, `rename ${name}.part ${name}`]);
   assert.equal(r.disk.get(name), "AAAA");
-  assert.equal(r.cache.cached(name), `file:///cache/${name}`);
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128), r.uri(W, PFP, 128)]);
   assert.deepEqual(r.sent[1], { id: "2", wallet: W, pfp: null, px: 256 });
   r.answer({ id: "2", png: `${PNG}BBBB` });
-  assert.equal(await b, `file:///cache/${pfpKey(W, null, 256)}`);
+  assert.equal(r.got[2], r.uri(W, null, 256));
+  assert.deepEqual(r.saved, [], "the same version isn't saved again");
 });
 
-test("a picture the page couldn't draw fails once, and the next one is drawn", async () => {
-  const r = rig();
+test("a picture the page couldn't draw is logged, tried once this run, and the next one is drawn", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.want(W, null, 128);
+  r.want(V, null, 128);
   r.open();
-  r.answer({ ready: true });
-  const a = r.cache.request(W, PFP, 128);
-  const b = r.cache.request(W, null, 128);
-  r.answer({ id: "1", error: "Could not draw the picture" });
-  assert.deepEqual(await settled(a), { error: "Could not draw the picture" });
-  assert.equal(r.cache.request(W, PFP, 128), a, "no second try this run");
-  assert.equal(r.sent.length, 2);
+  r.answer({ ready: true, version: "17" });
+  r.answer({ id: "1", error: "WebGL context lost" });
+  assert.deepEqual(r.warned, ["pfp: WebGL context lost"]);
+  r.want(W, PFP, 128);
+  assert.equal(r.sent.length, 2, "no second try");
   r.answer({ id: "1", png: `${PNG}AAAA` }); // a stray answer to an old id changes nothing
   r.answer({ id: "2", png: "data:text/html;base64,AAAA" });
-  assert.deepEqual(await settled(b), { error: "the page sent no picture" });
+  r.answer({ id: "3", png: PNG + "A".repeat(2_000_000) });
+  assert.deepEqual(r.warned.slice(1), ["pfp: the page sent no picture", "pfp: the page sent a picture too big to keep"]);
+  assert.deepEqual(r.got, []);
   assert.equal(r.disk.size, 0);
 });
 
-test("a page that never says ready fails everything waiting, and later asks too", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const r = rig();
+test("a picture nobody waits for any more is dropped unless it is being drawn", (t) => {
+  const r = rig(t);
+  const offDefault = r.want(W, null, 128); // before the profiles arrive: the default
+  const offOther = r.want(V, null, 128);
+  const offTwice = r.want(V, null, 128);
   r.open();
-  const a = r.cache.request(W, PFP, 128);
-  t.mock.timers.tick(999);
-  await flush();
-  assert.equal(r.downs(), 0);
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent.map((m) => m.wallet), [W]);
+  offDefault(); // being drawn: it finishes
+  offOther(); // another face still waits for it
+  r.want(W, PFP, 128); // the saved picture arrived
+  const offLate = r.want(V, PFP, 256);
+  offLate(); // queued, nobody waits: dropped
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.equal(r.disk.has(pfpKey(W, null, 128, "17")), true);
+  assert.deepEqual(r.sent.map((m) => [m.wallet, m.px]), [[W, 128], [V, 128]]);
+  r.answer({ id: "2", png: `${PNG}BBBB` });
+  assert.deepEqual(r.sent.map((m) => [m.wallet, m.pfp && "saved"]), [[W, null], [V, null], [W, "saved"]]);
+  offTwice();
+});
+
+test("the page is let go after a minute with nothing to draw", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  t.mock.timers.tick(59_999);
+  assert.equal(r.cache.wanted(), true);
+  r.want(V, null, 128); // more came: it stays
   t.mock.timers.tick(1);
-  assert.deepEqual(await settled(a), { error: "the picture page didn't load" });
-  assert.equal(r.downs(), 1);
-  assert.deepEqual(await settled(r.cache.request(W, null, 128)), { error: "the picture page didn't load" });
-  assert.deepEqual(r.sent, []);
-});
-
-test("a load or HTTP error takes the page down", async () => {
-  const r = rig();
+  assert.equal(r.cache.wanted(), true);
+  r.answer({ id: "2", png: `${PNG}BBBB` });
+  t.mock.timers.tick(60_000);
+  assert.equal(r.cache.wanted(), false);
+  r.cache.close(); // PfpRenderer unmounts the WebView
+  r.want(W, null, 512);
+  assert.equal(r.cache.wanted(), true, "a missing picture wants it again");
   r.open();
-  const a = r.cache.request(W, PFP, 128);
-  r.cache.fail(new Error("HTTP 404"));
-  r.cache.fail(new Error("again")); // only the first counts
-  assert.deepEqual(await settled(a), { error: "HTTP 404" });
-  assert.equal(r.downs(), 1);
-  r.answer({ ready: true });
-  assert.deepEqual(r.sent, []);
-  let reopened = 0;
-  r.cache.open(() => {}, () => reopened++);
-  assert.equal(reopened, 1, "a page opened after it went down is told at once");
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent.at(-1), { id: "3", wallet: W, pfp: null, px: 512 });
 });
 
-test("a picture that takes too long takes the page down", async (t) => {
+test("a new renderer version is saved, renames waiting pictures and forgets the old ones", (t) => {
+  const old = pfpKey(W, PFP, 128, "16");
+  const r = rig(t, { onDisk: [old, pfpKey(V, null, 128, "17")], version: "16" });
+  assert.equal(r.cache.cached(old), `file:///cache/${old}`);
+  r.want(W, null, 128);
+  r.want(V, null, 128); // drawn by 17 already (the saved version was lost)
+  r.open();
+  r.answer({ ready: true, version: 17 });
+  assert.deepEqual(r.saved, ["17"]);
+  assert.equal(r.cache.version(), "17");
+  assert.equal(r.changes(), 2, "wanted, then the version");
+  assert.deepEqual(r.got, [r.uri(V, null, 128, "17")]);
+  assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: null, px: 128 }]);
+  r.answer({ id: "1", png: `${PNG}AAAA` });
+  assert.equal(r.disk.has(pfpKey(W, null, 128, "17")), true);
+  assert.equal(r.got[1], r.uri(W, null, 128, "17"));
+  r.want(W, PFP, 128); // its 16 picture is old now: drawn again
+  assert.equal(r.sent.at(-1).wallet, W);
+  assert.equal(r.sent.length, 2);
+});
+
+test("a page that never says ready is down: logged, the WebView let go, later asks ignored", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const r = rig();
+  const r = rig(t);
+  r.want(W, PFP, 128);
   r.open();
-  r.answer({ ready: true });
-  const a = r.cache.request(W, PFP, 128);
-  const b = r.cache.request(W, null, 128);
+  t.mock.timers.tick(999);
+  assert.equal(r.cache.wanted(), true);
+  t.mock.timers.tick(1);
+  assert.equal(r.cache.wanted(), false);
+  assert.deepEqual(r.warned, ["pfp page down: the picture page didn't load"]);
+  r.want(W, null, 128);
+  r.cache.open(() => assert.fail("no page once down"));
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent, []);
+  assert.deepEqual(r.got, []);
+});
+
+test("a load or HTTP error takes the page down once", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.open();
+  r.cache.fail(new Error("the picture page answered HTTP 404"));
+  r.cache.fail(new Error("again"));
+  assert.deepEqual(r.warned, ["pfp page down: the picture page answered HTTP 404"]);
+  assert.equal(r.cache.wanted(), false);
+});
+
+test("a picture that takes too long takes the page down", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.want(W, null, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
   t.mock.timers.tick(2_000);
-  assert.deepEqual(await settled(a), { error: "a picture took too long to draw" });
-  assert.deepEqual(await settled(b), { error: "a picture took too long to draw" });
+  assert.equal(r.cache.wanted(), false);
+  assert.deepEqual(r.warned, ["pfp page down: a picture took too long to draw"]);
   assert.equal(r.sent.length, 1);
 });
 
-test("a WebView unmounted mid-draw hands the picture to the next one", async () => {
-  const r = rig();
+test("Android stopping the page once mounts it again; a crash or a second stop takes it down", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
   r.open();
-  r.answer({ ready: true });
-  const a = r.cache.request(W, PFP, 128);
+  r.answer({ ready: true, version: "17" });
+  assert.equal(r.cache.gone(false), true);
+  r.open(); // the new WebView
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent.map((m) => m.id), ["1", "2"], "the picture is asked of the new page");
+  r.answer({ id: "2", png: `${PNG}AAAA` });
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
+  assert.equal(r.cache.gone(false), false);
+  assert.equal(r.cache.wanted(), false);
+
+  const c = rig(t);
+  c.want(W, PFP, 128);
+  c.open();
+  assert.equal(c.cache.gone(true), false);
+  assert.deepEqual(c.warned.at(-1), "pfp page down: the picture page crashed");
+});
+
+test("a WebView unmounted mid-draw hands the picture to the next one", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
   r.cache.close();
   r.answer({ id: "1", png: `${PNG}AAAA` }); // nothing is open: ignored
   r.open();
-  r.answer({ ready: true });
+  r.answer({ ready: true, version: "17" });
   assert.deepEqual(r.sent.map((m) => m.id), ["1", "2"]);
   r.answer({ id: "2", png: `${PNG}AAAA` });
-  assert.equal(await a, `file:///cache/${pfpKey(W, PFP, 128)}`);
+  assert.deepEqual(r.got, [r.uri(W, PFP, 128)]);
 });
 
-test("a write that fails rejects that picture only", async () => {
-  const r = rig();
+test("a write that fails fails that picture only", (t) => {
+  const r = rig(t);
+  r.want(W, PFP, 128);
+  r.want(W, null, 128);
   r.open();
-  r.answer({ ready: true });
-  const a = r.cache.request(W, PFP, 128);
-  const b = r.cache.request(W, null, 128);
+  r.answer({ ready: true, version: "17" });
   r.full.on = true;
   r.answer({ id: "1", png: `${PNG}AAAA` });
-  assert.deepEqual(await settled(a), { error: "disk full" });
+  assert.deepEqual(r.warned, ["pfp: disk full"]);
   r.full.on = false;
   r.answer({ id: "2", png: `${PNG}BBBB` });
-  assert.equal(await b, `file:///cache/${pfpKey(W, null, 128)}`);
+  assert.deepEqual(r.got, [r.uri(W, null, 128)]);
+});
+
+test("a picture that wouldn't load is deleted and drawn again next time", (t) => {
+  const name = pfpKey(W, PFP, 128, "17");
+  const r = rig(t, { onDisk: [name, "pfp-version"] });
+  r.want(W, PFP, 128);
+  r.cache.forget(name);
+  r.cache.forget("pfp-version"); // not a picture: kept
+  assert.deepEqual([...r.disk.keys()], ["pfp-version"]);
+  r.want(W, PFP, 128);
+  r.open();
+  r.answer({ ready: true, version: "17" });
+  assert.deepEqual(r.sent, [{ id: "1", wallet: W, pfp: PFP, px: 128 }]);
 });

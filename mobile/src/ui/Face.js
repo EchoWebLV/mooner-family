@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { usePfp } from "../pfp/PfpRenderer";
+import { forgetPfp, usePfp } from "../pfp/PfpRenderer";
 import { shortWallet } from "./format";
 import { C, F, R } from "./theme";
 
@@ -33,7 +33,14 @@ export function Face({ wallet, size = 32, ring }) {
       }}
     >
       {picture ? (
-        <Image source={{ uri }} onError={() => setBad(uri)} style={{ width: inner, height: inner, borderRadius: inner / 2 }} />
+        <Image
+          source={{ uri }}
+          onError={() => {
+            setBad(uri);
+            forgetPfp(uri); // drawn again next time
+          }}
+          style={{ width: inner, height: inner, borderRadius: inner / 2 }}
+        />
       ) : (
         <Text style={{ fontFamily: F.mono, fontSize: size * 0.38, color: C.text0 }}>{w.slice(0, 2)}</Text>
       )}

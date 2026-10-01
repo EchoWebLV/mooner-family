@@ -2,9 +2,8 @@
 // The 3D studio renderer is only fetched when the first picture is asked for.
 import type { Pfp } from '../types'
 import { pfpKey } from './traits'
+import { RENDER_VERSION } from './version'
 
-/** Bump when the renderer's output changes, so stored pictures are drawn again. */
-const RENDER_VERSION = 17
 const CACHE = `mooner-pfp-v${RENDER_VERSION}`
 
 /** Pixel sizes pictures are drawn at. */
