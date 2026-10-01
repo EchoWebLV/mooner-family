@@ -358,7 +358,7 @@ test("a version check that fails only lets the page go: a later missing picture 
   assert.equal(s.cache.wanted(), true);
 });
 
-test("Android stopping the page once mounts it again; a crash or a second stop takes it down", (t) => {
+test("Android stopping the page once mounts it again; a crash or a second stop with a picture waiting takes it down", (t) => {
   const r = rig(t);
   r.want(W, PFP, 128);
   r.open();
@@ -378,6 +378,25 @@ test("Android stopping the page once mounts it again; a crash or a second stop t
   c.open();
   assert.equal(c.cache.gone(true), false);
   assert.deepEqual(c.warned.at(-1), "pfp page down: the picture page crashed");
+});
+
+test("a page that crashes keeps crashing at most twice a run: once for the check, once with a picture waiting", (t) => {
+  const r = rig(t);
+  r.cache.check();
+  r.open();
+  assert.equal(r.cache.gone(true), false);
+  assert.equal(r.cache.wanted(), false, "only the check wanted it: let go");
+  assert.deepEqual(r.warned, ["pfp page let go: the picture page crashed"]);
+  r.want(W, PFP, 128);
+  assert.equal(r.cache.wanted(), true);
+  r.open();
+  assert.equal(r.cache.gone(true), false);
+  assert.deepEqual(r.warned.at(-1), "pfp page down: the picture page crashed");
+  r.want(V, null, 128);
+  assert.equal(r.cache.wanted(), false, "down for the run: no third page");
+  r.cache.check();
+  assert.equal(r.cache.wanted(), false);
+  assert.deepEqual(r.got, []);
 });
 
 test("a WebView unmounted mid-draw hands the picture to the next one", (t) => {
