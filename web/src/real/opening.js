@@ -114,15 +114,18 @@ export function afterFailedOpen(e, pid, retrying) {
 /** Runs `open` (it signs and sends the open of `coin`) with the coin kept for `wallet` from
  *  before anything is signed, as of `clock()`: a reload or a closed tab mid-open still finds
  *  it. `open` gets `signed`, to call once the wallet has signed and before the open is sent:
- *  the coin is kept again as of then, since a wallet may change the tx (an instruction of its
- *  own, its fees, maybe its blockhash), and that is this try's `at` from then on. `coin.at`:
- *  the record's, on a retry. Another coin kept for the wallet (another tab's, since this page
- *  read none) stays, and `coin` isn't opened: { ok: false, error, verdict: "other", kept }.
- *  Gives { ok: true, value } with the coin still kept (the store clears it as the presale
- *  shows), or { ok: false, error, verdict } (afterFailedOpen): "failed" clears it; "pending"
- *  keeps it, as of when the unknown was reported (never back from a later save of it), or,
- *  if this try failed plainly (nothing from it can land), as storage held it before the try
- *  (none, if another tab had cleared it), or as of the sign if the wallet signed; "open"
+ *  the coin is kept again as of then (never back from another tab's later save of it), since
+ *  a wallet may change the tx (an instruction of its own, its fees, maybe its blockhash), and
+ *  that is this try's `at` from then on. If storage (or the copy in memory) no longer holds
+ *  the coin by then (another tab started over, or keeps another coin), `signed` throws and
+ *  the open isn't sent: a plain failure. `coin.at`: the record's, on a retry. Another coin
+ *  kept for the wallet (another tab's, since this page read none) stays, and `coin` isn't
+ *  opened: { ok: false, error, verdict: "other", kept }. Gives { ok: true, value } with the
+ *  coin still kept (the store clears it as the presale shows), or { ok: false, error,
+ *  verdict } (afterFailedOpen): "pending" for an unknown keeps it as of when that was
+ *  reported (never back from a later save of it); a plain failure ("failed", or "pending" on
+ *  a retry: nothing from this try can land) puts back the record as storage held it before
+ *  this try (or another tab's try of the coin, if the sign wrote over one), or none; "open"
  *  leaves it to the store. Except for an unknown of the coin, each of these writes only over
  *  this try's own save: another tab's since, a newer try of the coin or another coin, stands.
  *  A coin that can't be kept isn't opened.
@@ -140,11 +143,15 @@ export async function openKept(wallet, coin, open, { pid = null, retrying = fals
   }
   // whether storage still holds this try's own save
   const mine = (now) => now?.presale === coin.presale && now.at === at;
-  let signed = false;
+  let taken = null; // another tab's save of the coin (its try) that this try's sign wrote over
   const onSigned = () => {
-    signed = true;
-    if (!mine(readOpening(wallet, storage))) return;
-    at = Math.max(at, clock());
+    const now = readOpening(wallet, storage);
+    // another tab started over (or its open of the coin went through, or it keeps another
+    // coin): this one isn't sent, so it can't land beside that tab's new coin. The throw stops
+    // the send (flows.js signAndCosign cosigns only after signTransaction returns)
+    if (now?.presale !== coin.presale) throw new Error(`$${coin.symbol} was left in another tab, so it wasn't sent`);
+    if (!mine(now)) taken = now;
+    at = Math.max(at, now.at ?? 0, clock());
     saveOpening(wallet, { ...coin, at }, storage);
   };
   try {
@@ -156,14 +163,16 @@ export async function openKept(wallet, coin, open, { pid = null, retrying = fals
     // another tab's save since: this page's copy follows it, not this try's (a coin never sent,
     // or an older `at`), for when storage is emptied later
     if (!own && now) kept.set(wallet, now);
-    if (verdict === "failed") {
-      if (own) clearOpening(wallet, coin.presale, storage);
-    } else if (verdict === "pending" && error?.outcomeUnknown === true) {
+    if (verdict === "pending" && error?.outcomeUnknown === true) {
       // over another coin kept since, nothing
       if (!now || now.presale === coin.presale) saveOpening(wallet, { ...coin, at: Math.max(now?.at ?? 0, clock()) }, storage);
-    } else if (verdict === "pending" && own && !signed) {
-      // not the caller's copy, which may be older than another tab's save before this try
-      if (there) saveOpening(wallet, there, storage);
+    } else if (verdict !== "open" && own) {
+      // nothing of this try went out (a plain failure, also after the sign: the gate never
+      // co-signed it): the record as storage held it before this try, or another tab's try of
+      // the coin if the sign wrote over one (its open may be out); never the caller's copy,
+      // which may be older than another tab's save before this try
+      const before = taken ?? there;
+      if (before) saveOpening(wallet, before, storage);
       else clearOpening(wallet, coin.presale, storage);
     }
     return { ok: false, error, verdict };

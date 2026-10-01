@@ -224,7 +224,8 @@ const NO_STATS: TitleStats = {
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error })
 
 /** `sign`, then `signed()` once the wallet has signed, before the tx is sent (openKept keeps
- *  the coin as of then). */
+ *  the coin as of then). If `signed()` throws (another tab left the coin), so does this, and
+ *  flows.js doesn't send the tx. */
 const thenSigned =
   (sign: WalletLink['signTransaction'], signed: () => void) =>
   async <T,>(tx: T): Promise<T> => {
