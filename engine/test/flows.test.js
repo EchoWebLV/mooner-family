@@ -2000,3 +2000,32 @@ test("joinPresale: a share link's ref goes to the server beside the join, and no
   }
   assert.deepEqual(sent, [{ ref: sharer }, { ref: null }]);
 });
+
+test("joinPresale: a ref is cleaned before it leaves: junk sends none, a padded wallet goes trimmed", async () => {
+  const info = fakeInfo();
+  const api = fakeApi(info);
+  const cosign = api.cosign;
+  const sent = [];
+  api.cosign = (b64, opts) => (sent.push(opts), cosign(b64));
+  const f = flows({ api, keys: memoryKeys() });
+  const sharer = Keypair.generate().publicKey.toBase58();
+  for (const ref of [{ wallet: sharer }, "1".repeat(10_000), ` ${sharer}\n`]) {
+    const w = fakeWallet();
+    const { view } = joinable(info);
+    await f.joinPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, view, amount: 200_000_000n, ref });
+  }
+  assert.deepEqual(sent, [{ ref: null }, { ref: null }, { ref: sharer }]);
+});
+
+test("openPresale: an open sends no ref, even one handed a ref", async () => {
+  const info = fakeInfo();
+  const api = fakeApi(info);
+  const cosign = api.cosign;
+  const sent = [];
+  api.cosign = (b64, opts) => (sent.push(opts), cosign(b64));
+  const w = fakeWallet();
+  const ref = Keypair.generate().publicKey.toBase58();
+  await flows({ api }).openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: Keypair.generate().publicKey.toBase58(), commit: 100_000_000n, ref });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.ref ?? null, null);
+});

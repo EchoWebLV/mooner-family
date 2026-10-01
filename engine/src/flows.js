@@ -16,6 +16,7 @@ import { presalePda, seatPda } from "./pdas.js";
 import { connect, outcomeUnknown, send, sendSigned, sigOf, timedFetch, TxError } from "./tx.js";
 import { ApiError } from "./apiclient.js";
 import { cutToRoom, joinIxs, mintMessageText, openIxs, unsignedTx, validSeat } from "./client.js";
+import { cleanRef } from "./refs.js";
 
 /** Solana's public RPC for each cluster the server runs on (/api/info `cluster`). */
 export const PUBLIC_RPCS = { mainnet: "https://api.mainnet-beta.solana.com", devnet: "https://api.devnet.solana.com" };
@@ -392,7 +393,7 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
     const sk = await keyFor(view.presale, wallet.toBase58());
     onStep("Sign in your wallet to put the SOL in");
     const ixs = joinIxs(info.pid, { user: wallet, gate: info.gate, presale, sessionKey: sk.publicKey, deposit: amount, validator: new PublicKey(view.validator) });
-    const r = await signAndCosign(signTransaction, wallet, ixs, { ref });
+    const r = await signAndCosign(signTransaction, wallet, ixs, { ref: cleanRef(ref) });
     if (!r.confirmed) await waitSent(r, "join", presale, (v) => v.seats?.some((s) => s.user === wallet.toBase58()), { what: "your seat", timeoutMs: waitMs });
     onStep("Counting you in");
     return setCommit({ info, wallet, signTransaction, view, amount, retries: 8, key: sk });
