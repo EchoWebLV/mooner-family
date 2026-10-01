@@ -1,6 +1,6 @@
 // The server's live socket (/api/ws, same origin): one per tab, engine/src/live.js (the
 // phone app runs the same client).
-//   server -> { topic, type: "snapshot" | "upsert" | "remove" | "message" | "missing" | "error", data }
+// The messages it hands out are listed at the top of engine/src/live.js.
 
 import { makeLive } from "../../../engine/src/live.js";
 

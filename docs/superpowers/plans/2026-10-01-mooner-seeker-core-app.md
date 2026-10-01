@@ -1890,7 +1890,7 @@ export function useWalletActions() {
   - `expo-system-ui` `SystemUI.setBackgroundColorAsync(C.bg0)` once; `StatusBar style="light"` from expo-status-bar.
   - Wraps in `SafeAreaProvider` then `WalletProvider`.
   - Starts the store once: `useEffect(() => store.getState().start(), [])` (its return value is the stop function).
-  - Restarts the socket when the app comes back: `AppState.addEventListener("change", (s) => s === "active" && wasAway && live.restart())`, where `wasAway` is set when the state goes to `background`.
+  - Restarts the socket when the app comes back after a real absence: note `Date.now()` when AppState goes to `background`; on `active`, call `live.restart()` only if it was away 20 s or more. (Every wallet signature opens Seed Vault on top, which Android reports as background; a short trip to the wallet must not drop and re-snapshot every topic.)
   - `<Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg0 }, animation: "slide_from_right" }} />` with `presale/[key]` and `coin/[key]` as normal stack screens.
   - Above the Stack: a `Banner` "Reconnecting…" when `useStore(store, s => s.socketUp)` is false for more than 2 s (a timeout started when it goes false, cleared when true; so a normal first connect shows nothing).
 
