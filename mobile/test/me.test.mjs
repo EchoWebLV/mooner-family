@@ -43,10 +43,29 @@ test("statusOf: SOL got back from this phone reads SOL back, before any seat sti
   );
 });
 
-test("statusOf: a seat in the watched view reads In with its deposit", () => {
+test("statusOf: past OPEN (no users in the list), the seat in the room's view gives the amount", () => {
   assert.deepEqual(
-    status({ views: { [KEY]: detail([seat(OTHER, "500000000"), seat(ME, "250000000")], { state: "FULL" }) } }),
+    status({
+      presales: { [KEY]: listItem(undefined, { state: "FULL" }) },
+      views: { [KEY]: detail([seat(OTHER, "500000000"), seat(ME, "250000000")], { state: "FULL" }) },
+    }),
     { kind: "in", text: "In · 0.25 SOL", to: `/presale/${KEY}` },
+  );
+});
+
+test("statusOf: FULL or LAUNCHING with no view (after a restart), this phone's join gives the amount", () => {
+  for (const state of ["FULL", "LAUNCHING"]) {
+    assert.deepEqual(
+      status({ presales: { [KEY]: listItem(undefined, { state }) }, mine: { [KEY]: { deposit: "250000000", at: 1 } } }),
+      { kind: "in", text: "In · 0.25 SOL", to: `/presale/${KEY}` },
+    );
+  }
+});
+
+test("statusOf: OPEN without users (the server couldn't read the seats), this phone's join gives the amount", () => {
+  assert.equal(
+    status({ presales: { [KEY]: listItem(undefined) }, mine: { [KEY]: { deposit: "100000000", at: 1 } } }).text,
+    "In · 0.1 SOL",
   );
 });
 
@@ -57,13 +76,17 @@ test("statusOf: a row in the open list's users reads In with its commit", () => 
   );
 });
 
-test("statusOf: the seat's deposit wins over the list's commit", () => {
+test("statusOf: while OPEN the list's users decide, over a seat kept in a view", () => {
   assert.equal(
     status({
       views: { [KEY]: detail([seat(ME, "100000000", "50000000")]) },
       presales: { [KEY]: listItem([listUser(ME, "50000000")]) },
     }).text,
-    "In · 0.1 SOL",
+    "In · 0.05 SOL",
+  );
+  assert.equal(
+    status({ views: { [KEY]: detail([seat(ME, "250000000")]) }, presales: { [KEY]: listItem([listUser(OTHER, "250000000")]) } }).text,
+    "Closed",
   );
 });
 
@@ -74,10 +97,31 @@ test("statusOf: in a stale view without a seat but still in the list, it's In", 
   );
 });
 
+test("statusOf: EXPIRED or FAILED read Closed, even with the wallet's seat in a view (the keeper refunds it)", () => {
+  for (const state of ["EXPIRED", "FAILED"]) {
+    assert.deepEqual(
+      status({
+        presales: { [KEY]: listItem(undefined, { state }) },
+        views: { [KEY]: detail([seat(ME, "250000000")], { state: "OPEN" }) },
+        mine: { [KEY]: { deposit: "250000000", at: 1 } },
+      }),
+      { kind: "closed", text: "Closed", to: `/presale/${KEY}` },
+    );
+  }
+});
+
+test("statusOf: gone from the list, it's Closed, even with the wallet's seat in a view", () => {
+  assert.equal(status({ views: { [KEY]: detail([seat(ME, "250000000")], { state: "FULL" }) } }).text, "Closed");
+});
+
 test("statusOf: other wallets' seats, or nothing known, read Closed and open the presale", () => {
   const closed = { kind: "closed", text: "Closed", to: `/presale/${KEY}` };
   assert.deepEqual(
     status({ views: { [KEY]: detail([seat(OTHER, "250000000")]) }, presales: { [KEY]: listItem([listUser(OTHER, "250000000")]) } }),
+    closed,
+  );
+  assert.deepEqual(
+    status({ presales: { [KEY]: listItem(undefined, { state: "FULL" }) }, views: { [KEY]: detail([seat(OTHER, "250000000")]) } }),
     closed,
   );
   assert.deepEqual(status({ mine: { [KEY]: { deposit: "250000000", at: 1 } } }), closed);

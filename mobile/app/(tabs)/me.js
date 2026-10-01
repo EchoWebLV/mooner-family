@@ -39,10 +39,11 @@ export default function Me() {
     try {
       await store.getState().signOut();
       await disconnect().catch(() => {});
-      router.replace("/connect");
-    } finally {
+      router.replace("/connect"); // replaces the tabs, so the guard goes with this screen
+    } catch (e) {
       leavingNow.current = false;
       setLeaving(false);
+      throw e;
     }
   }
 
@@ -92,12 +93,15 @@ function Wallet({ wallet, leaving, onDisconnect }) {
   const views = useStore(store, (s) => s.views);
   const launched = useStore(store, (s) => s.launched);
   const mine = useStore(store, (s) => s.mine);
+  const presalesLoaded = useStore(store, (s) => s.loaded.presales);
+  const launchedLoaded = useStore(store, (s) => s.loaded.launched);
+  const ready = presalesLoaded && launchedLoaded;
   const rows = useMemo(
     () => rowsOf({ wallet, presales, views, launched, mine }),
     [wallet, presales, views, launched, mine],
   );
 
-  const renderItem = useCallback(({ item }) => <PresaleRow row={item} />, []);
+  const renderItem = useCallback(({ item }) => <PresaleRow row={item} ready={ready} />, [ready]);
 
   return (
     <FlatList
@@ -168,7 +172,7 @@ function CopyButton({ text, label }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={copied ? "Copied" : label}
       hitSlop={8}
       onPress={copy}
       style={({ pressed }) => [
@@ -185,8 +189,9 @@ function CopyButton({ text, label }) {
 }
 
 /** One of the wallet's presales: its coin (its short key while the coin isn't known yet) and
- *  where the wallet stands. A tap opens the presale, or the coin once it launched. */
-function PresaleRow({ row }) {
+ *  where the wallet stands, once `ready` (both feeds loaded: before that every row would read
+ *  Closed). A tap opens the presale, or the coin once it launched. */
+function PresaleRow({ row, ready }) {
   const { key, token, status } = row;
   return (
     <Card
@@ -204,7 +209,7 @@ function PresaleRow({ row }) {
             <T v="num" color={C.text2} numberOfLines={1}>{shortWallet(key)}</T>
           )}
         </View>
-        <Pill text={status.text} color={PILL[status.kind]} />
+        {ready ? <Pill text={status.text} color={PILL[status.kind]} /> : null}
       </View>
     </Card>
   );
