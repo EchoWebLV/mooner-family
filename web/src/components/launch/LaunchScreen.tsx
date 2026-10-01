@@ -1,6 +1,8 @@
 'use client'
 // Launch wizard (spec §5.6): token, presale, your commit. Opening the presale puts it at the
-// top of New Pairs and lands you on its page.
+// top of New Pairs and lands you on its page. An open that may have gone through leaves its
+// coin pending (the store's `opening`): until that clears, the only way on is the same coin.
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
@@ -17,9 +19,11 @@ import {
   DESCRIPTION_MAX, NAME_MAX, TICKER_MAX, cleanLinks, draftToken, normalizeTicker, validateLaunch,
   type LaunchErrors, type LaunchForm,
 } from '@/lib/launch'
+import type { Opening } from '@/lib/store'
 import type { TokenLinks, World } from '@/lib/types'
 import styles from './LaunchScreen.module.css'
 import { openCost } from '../../../../engine/src/flows.js'
+import { OUTCOME_UNKNOWN } from '../../../../engine/src/tx.js'
 
 type Field = keyof LaunchErrors
 type Patch = (change: Partial<LaunchForm>) => void
@@ -74,6 +78,7 @@ export function LaunchScreen() {
   const connected = useApp((s) => !!s.wallet)
   const connect = useApp((s) => s.connectWallet)
   const busyStep = useApp((s) => s.step)
+  const opening = useApp((s) => s.opening)
   const router = useRouter()
   const artRef = useRef<HTMLDivElement>(null)
   const [picture, setPicture] = useState<Picture | null>(null)
@@ -94,6 +99,11 @@ export function LaunchScreen() {
   const [tried, setTried] = useState<readonly boolean[]>(STEPS.map(() => false))
   const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // the pending coin cleared (its presale showed): what was said about it no longer holds
+  const pendingId = opening?.presale
+  useEffect(() => {
+    if (!pendingId) setSubmitError(null)
+  }, [pendingId])
 
   // Your commit can't go over what your wallet holds, or leave no room for anyone else.
   const maxCommit = Math.max(MIN_COMMIT, Math.min(MAX_CREATOR_COMMIT, Math.floor(world.walletLamports / COMMIT_STEP) * COMMIT_STEP))
@@ -139,19 +149,25 @@ export function LaunchScreen() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (step < LAST) return goTo(step + 1)
-    if (!connected) return connect()
-    // Something changed since you passed a step (say, someone took your ticker): go back to it.
-    if (STEPS.some((_, i) => firstError(errors, i))) return goTo(STEPS.length)
+    if (!opening) {
+      if (step < LAST) return goTo(step + 1)
+      if (!connected) return connect()
+      // Something changed since you passed a step (say, someone took your ticker): go back to it.
+      if (STEPS.some((_, i) => firstError(errors, i))) return goTo(STEPS.length)
+    }
     if (busy) return
     setBusy(true)
     try {
-      const svg = artRef.current?.querySelector('svg')
-      const image = picture?.bytes ?? (svg ? await artPng(svg) : null)
-      if (!image) return setSubmitError('Add a picture for your coin')
+      // a pending coin is tried again as it was: no picture, no new coin
+      let image: Uint8Array | null = null
+      if (!opening) {
+        const svg = artRef.current?.querySelector('svg')
+        image = picture?.bytes ?? (svg ? await artPng(svg) : null)
+        if (!image) return setSubmitError('Add a picture for your coin')
+      }
       const r = await createLaunch(current, image)
       if (!r.ok) return setSubmitError(r.error)
-      notify('good', `$${normalizeTicker(current.ticker)} presale is open. Share it to fill the pool.`)
+      notify('good', `$${r.symbol} presale is open. Share it to fill the pool.`)
       router.push(`/presale/${r.tokenId}`)
     } catch (err) {
       setSubmitError((err as Error).message)
@@ -183,23 +199,29 @@ export function LaunchScreen() {
 
       <div className={styles.layout}>
         <form className={`panel ${styles.wizard}`} onSubmit={submit} noValidate aria-labelledby="launch-step-title">
-          <Stepper step={step} onPick={goTo} />
-          <h2 id="launch-step-title" tabIndex={-1} className={`panel-title ${styles.stepTitle}`}>
-            Step {step + 1} of {STEPS.length} · {STEPS[step].label}
-          </h2>
+          {opening ? (
+            <Pending opening={opening} />
+          ) : (
+            <>
+              <Stepper step={step} onPick={goTo} />
+              <h2 id="launch-step-title" tabIndex={-1} className={`panel-title ${styles.stepTitle}`}>
+                Step {step + 1} of {STEPS.length} · {STEPS[step].label}
+              </h2>
 
-          {step === 0 && <TokenStep form={form} patch={patch} shown={shown} touch={touch} picture={picture} onPick={pick} onClear={() => setPicture(null)} />}
-          {step === 1 && <PresaleStep form={form} patch={patch} />}
-          {step === 2 && (
-            <CommitStep
-              form={current}
-              world={world}
-              maxCommit={maxCommit}
-              patch={patch}
-              error={connected ? errors.commit : undefined}
-              onEdit={goTo}
-              picture={picture}
-            />
+              {step === 0 && <TokenStep form={form} patch={patch} shown={shown} touch={touch} picture={picture} onPick={pick} onClear={() => setPicture(null)} />}
+              {step === 1 && <PresaleStep form={form} patch={patch} />}
+              {step === 2 && (
+                <CommitStep
+                  form={current}
+                  world={world}
+                  maxCommit={maxCommit}
+                  patch={patch}
+                  error={connected ? errors.commit : undefined}
+                  onEdit={goTo}
+                  picture={picture}
+                />
+              )}
+            </>
           )}
 
           {busy && busyStep && (
@@ -207,30 +229,44 @@ export function LaunchScreen() {
               {busyStep}…
             </p>
           )}
-          {submitError && (
+          {/* the pending panel says this one already */}
+          {submitError && !(opening && submitError === OUTCOME_UNKNOWN) && (
             <p className="field-error" role="alert">
               {submitError}
             </p>
           )}
           <div className={styles.nav}>
-            {step > 0 && (
-              <button type="button" className="btn" onClick={() => goTo(step - 1)}>
-                Back
-              </button>
-            )}
-            {step < LAST ? (
-              <button type="submit" className={`btn btn-primary ${styles.next}`}>
-                Next: {STEPS[step + 1].label}
-                <Icon name="arrow-right" size={14} />
-              </button>
+            {opening ? (
+              <>
+                <Link href={`/presale/${opening.presale}`} className="btn">
+                  See the presale
+                </Link>
+                <button type="submit" className={`btn btn-primary btn-lg ${styles.open}`} disabled={busy}>
+                  {busy ? 'Opening…' : `Try again with $${opening.symbol}`}
+                </button>
+              </>
             ) : (
-              <button
-                type="submit"
-                className={`btn btn-primary btn-lg ${styles.open}`}
-                disabled={busy || (connected && !!errors.commit)}
-              >
-                {!connected ? 'Connect wallet' : busy ? 'Opening…' : `Open presale · ${fmtSol(current.commit)} SOL`}
-              </button>
+              <>
+                {step > 0 && (
+                  <button type="button" className="btn" onClick={() => goTo(step - 1)}>
+                    Back
+                  </button>
+                )}
+                {step < LAST ? (
+                  <button type="submit" className={`btn btn-primary ${styles.next}`}>
+                    Next: {STEPS[step + 1].label}
+                    <Icon name="arrow-right" size={14} />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className={`btn btn-primary btn-lg ${styles.open}`}
+                    disabled={busy || (connected && !!errors.commit)}
+                  >
+                    {!connected ? 'Connect wallet' : busy ? 'Opening…' : `Open presale · ${fmtSol(current.commit)} SOL`}
+                  </button>
+                )}
+              </>
             )}
           </div>
         </form>
@@ -285,6 +321,21 @@ function Stepper({ step, onPick }: { step: number; onPick: (step: number) => voi
         </li>
       ))}
     </ol>
+  )
+}
+
+/** A coin whose open may have gone through: the only way on is that coin again. */
+function Pending({ opening }: { opening: Opening }) {
+  return (
+    <div className={styles.fields}>
+      <h2 id="launch-step-title" tabIndex={-1} className={`panel-title ${styles.stepTitle}`}>
+        Opening ${opening.symbol}
+      </h2>
+      <p className="field-error" role="alert">
+        {OUTCOME_UNKNOWN}
+      </p>
+      <p className="field-hint">Trying again opens the same ${opening.symbol}, never a new coin.</p>
+    </div>
   )
 }
 

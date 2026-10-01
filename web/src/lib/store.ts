@@ -9,6 +9,7 @@ import { api } from '@/real/api.js'
 import * as chain from '@/real/chain.js'
 import * as live from '@/real/live.js'
 import { candlesOf, quote, swap, tokenBalance, tradesOf, WSOL } from '@/real/market'
+import { afterFailedOpen, checkBeforeRetry, clearOpening, readOpening, saveOpening, shows } from '@/real/opening.js'
 import { COMMIT_STEP, MAX_CHAT_LENGTH, MAX_COMMIT, MAX_CREATOR_COMMIT, MIN_COMMIT, PRESALE_TARGET, setSolUsd, SOL_USD, TOAST_MS } from './constants'
 import { priceFromSqrt } from './curve'
 import { linkHref, normalizeTicker, notEnoughSol, type LaunchForm, NAME_MAX, TICKER_MAX } from './launch'
@@ -16,6 +17,7 @@ import { TITLES } from './levels'
 import { DEFAULT_PFP, handlePfp, sanitizePfp } from './pfp/traits'
 import { canJoin, pickMatch } from './presale'
 import { joinCost, openCost } from '../../../engine/src/flows.js'
+import { presalePda } from '../../../engine/src/pdas.js'
 import { signIn as engineSignIn } from '../../../engine/src/signin.js'
 import { stageOf as viewStage } from '../../../engine/src/views.js'
 import type {
@@ -47,6 +49,19 @@ export interface TradeDone {
   tokens: number
   sol: number
 }
+
+/** A coin whose open may have gone through (outcome unknown), kept for its wallet
+ *  (real/opening.js): Create tries it again, never a new coin, until it clears. `commit`:
+ *  what the first try put in, asked for again. */
+export interface Opening {
+  mint: string
+  presale: string
+  symbol: string
+  commit: Lamports
+}
+
+/** What createLaunch gives: a failure that leaves the coin pending carries it. */
+export type LaunchResult = Result<{ tokenId: string; symbol: string }> | { ok: false; error: string; pending: Opening }
 
 /** Your seat in a presale, as the chain holds it. `deposit` is the most you can commit. */
 export interface MySeat {
@@ -87,6 +102,8 @@ export interface AppState {
   held: Record<string, number>
   /** SOL in USD (Pyth, via the server); also in constants.SOL_USD for the formatters. */
   solUsd: number
+  /** The connected wallet's coin whose open may have gone through, or null. */
+  opening: Opening | null
   setWallet(w: WalletLink | null): void
   /** <WalletBridge> hands over the wallet picker. */
   setWalletPicker(open: () => void): void
@@ -104,7 +121,9 @@ export interface AppState {
   sendChat(channel: string, text: string): Promise<Result>
   buy(tokenId: string, sol: number): Promise<Result<TradeDone>>
   sell(tokenId: string, tokens: number): Promise<Result<TradeDone>>
-  createLaunch(form: LaunchForm, image: Uint8Array): Promise<Result<{ tokenId: string }>>
+  /** Opens a presale for a new coin; with a coin pending (`opening`), that coin again, and
+   *  `image` may be null. */
+  createLaunch(form: LaunchForm, image: Uint8Array | null): Promise<LaunchResult>
   notify(tone: Toast['tone'], text: string, href?: string): void
   dismissToast(id: number): void
   dismissLevelUp(): void
@@ -273,6 +292,7 @@ export function createAppStore(): AppStore {
   // the pages open now: their chart and your balance of the coin, refreshed on pushes
   const watched = new Map<string, { market: ReturnType<typeof pacer>; held: ReturnType<typeof pacer>; traded(r: LaunchedRow): void }>()
   let walletOff: (() => void) | null = null
+  let openingOff: (() => void) | null = null
   let login: { token: string; exp: number } | null = null
   let openModal: () => void = () => {}
 
@@ -468,6 +488,40 @@ export function createAppStore(): AppStore {
         : null
     }
 
+    /** The wallet's pending coin, as this device kept it (real/opening.js). */
+    function followOpening(wallet: string | null) {
+      if (wallet) return watchOpening(wallet, readOpening(wallet))
+      openingOff?.()
+      openingOff = null
+      set({ opening: null })
+    }
+
+    /** Holds `o` as the pending coin and watches for its presale, which clears it. */
+    function watchOpening(wallet: string, o: Opening | null) {
+      openingOff?.()
+      openingOff = null
+      set({ opening: o })
+      if (!o) return
+      // already read (the list, or its page): a topic held already sends no new snapshot
+      if (views.has(o.presale) || launched.has(o.presale)) return opened(wallet, o, true)
+      const off = live.subscribe(`presale:${o.presale}`, (m: Push) => {
+        if (openingOff === off && me() === wallet && shows(m)) opened(wallet, o, true)
+      })
+      openingOff = off
+    }
+
+    /** The pending coin's presale is there: the coin is no longer kept. `toast`: say so, as
+     *  an open does (createLaunch's own success leaves that to the screen). */
+    function opened(wallet: string, o: Opening, toast: boolean) {
+      clearOpening(wallet)
+      if (me() === wallet && get().opening?.presale === o.presale) {
+        openingOff?.()
+        openingOff = null
+        set({ opening: null })
+      }
+      if (toast) get().notify('good', `$${o.symbol} presale is open. Share it to fill the pool.`, `/presale/${o.presale}`)
+    }
+
     /** The pool's price now, as the last one-minute candle (GeckoTerminal fills the rest). */
     function liveCandle(id: string, price: number) {
       const m = markets.get(id)
@@ -590,6 +644,55 @@ export function createAppStore(): AppStore {
       }
     }
 
+    /** An open that failed. With a coin minted: kept pending if the open may have landed,
+     *  done if the program says the presale is there (real/opening.js afterFailedOpen). */
+    function failedOpen(e: unknown, wallet: string, coin: Opening | null, pid: string | null, retrying: boolean): LaunchResult {
+      if (!coin) return fail(chain.explain(e))
+      const verdict = afterFailedOpen(e, pid, retrying)
+      // the presale showed while it ran: that open went through
+      if (verdict === 'open' || (verdict === 'pending' && (views.has(coin.presale) || launched.has(coin.presale)))) {
+        opened(wallet, coin, false)
+        return { ok: true, tokenId: coin.presale, symbol: coin.symbol }
+      }
+      if (verdict === 'failed') return fail(chain.explain(e))
+      saveOpening(wallet, coin)
+      if (me() === wallet) watchOpening(wallet, coin)
+      return { ok: false, error: chain.explain(e), pending: coin }
+    }
+
+    /** Create with a coin pending: that coin again, never a new one. One read of its presale
+     *  first: if the server knows it in any state, that open landed (and a presale that has
+     *  closed since would let the same coin open twice). */
+    async function retryOpen(w: WalletLink, wallet: string, coin: Opening): Promise<LaunchResult> {
+      const done = (): LaunchResult => {
+        opened(wallet, coin, false)
+        return { ok: true, tokenId: coin.presale, symbol: coin.symbol }
+      }
+      const was = await checkBeforeRetry(() => readPresale(coin.presale))
+      if (was === 'open') return done()
+      if (was === 'unknown') return { ok: false, error: "Couldn't check the presale. Try again in a moment.", pending: coin }
+      const extra = await openCost().then((c) => Number(c.total), () => null)
+      if (coin.commit + (extra ?? 0) > get().world.walletLamports) {
+        return { ok: false, error: notEnoughSol('opening the presale', coin.commit, extra), pending: coin }
+      }
+      let pid: string | null = null
+      // no watch while it runs: its answer decides, and a new watch after it gets a fresh snapshot
+      openingOff?.()
+      openingOff = null
+      try {
+        const info = await chain.loadInfo()
+        pid = info.pid.toBase58()
+        await withSteps(async (onStep) => {
+          onStep(`Sign to open the $${coin.symbol} presale again`)
+          await chain.openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: coin.mint, commit: BigInt(coin.commit) })
+        })
+        await readPresale(coin.presale).catch(() => {})
+        return done()
+      } catch (e) {
+        return failedOpen(e, wallet, coin, pid, true)
+      }
+    }
+
     return {
       world: emptyWorld(),
       toasts: [],
@@ -605,6 +708,7 @@ export function createAppStore(): AppStore {
       step: null,
       held: {},
       solUsd: SOL_USD,
+      opening: null,
 
       setWallet(w) {
         const was = me()
@@ -617,6 +721,7 @@ export function createAppStore(): AppStore {
         set((s) => ({ wallet: w, signedIn: !!login, mine: {}, held: {}, world: { ...s.world, walletLamports: 0 } }))
         rebuild()
         followWallet(now)
+        followOpening(now)
       },
 
       setWalletPicker(open) {
@@ -763,7 +868,12 @@ export function createAppStore(): AppStore {
       async createLaunch(form, image) {
         const w = needWallet()
         if (!w) return fail('Connect your wallet first')
+        const wallet = w.publicKey.toBase58()
+        // an open that may have landed: its coin again, never a new one (another tab's too)
+        const pending = get().opening ?? readOpening(wallet)
+        if (pending) return retryOpen(w, wallet, pending)
         if (!w.signMessage) return fail("This wallet can't sign messages. Try Phantom or Solflare.")
+        if (!image) return fail('Add a picture for your coin')
         const name = form.name.trim()
         const ticker = normalizeTicker(form.ticker)
         if (name.length < 1 || new TextEncoder().encode(name).length > NAME_MAX) return fail(`Name: 1 to ${NAME_MAX} bytes`)
@@ -780,21 +890,28 @@ export function createAppStore(): AppStore {
         // what opening takes besides it
         const extra = await openCost().then((c) => Number(c.total), () => null)
         if (value + (extra ?? 0) > get().world.walletLamports) return fail(notEnoughSol('opening the presale', value, extra))
+        // the coin, once the server made it: kept past the steps, so an open whose outcome is
+        // unknown leaves it pending (failedOpen)
+        let minted = null as Opening | null
+        let pid = null as string | null
         try {
           const info = await chain.loadInfo()
+          pid = info.pid.toBase58()
           const presale = await withSteps(async (onStep) => {
             onStep('Sign the coin details in your wallet')
-            const minted = await chain.requestMint({
+            const made = await chain.requestMint({
               wallet: w.publicKey, signMessage: w.signMessage, name, symbol: ticker, description: form.description.trim(), links, image,
             })
+            const mint = new PublicKey(made.mint)
+            minted = { mint: mint.toBase58(), presale: presalePda(info.pid, mint).toBase58(), symbol: ticker, commit: value }
             onStep('Sign to open the presale with your SOL')
             const key = await chain.openPresale({ info, wallet: w.publicKey, signTransaction: w.signTransaction, mint: minted.mint, commit: BigInt(value) })
             return key.toBase58()
           })
           await readPresale(presale).catch(() => {})
-          return { ok: true, tokenId: presale }
+          return { ok: true, tokenId: presale, symbol: ticker }
         } catch (e) {
-          return fail(chain.explain(e))
+          return failedOpen(e, wallet, minted, pid, false)
         }
       },
 
