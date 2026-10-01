@@ -1,8 +1,8 @@
 // The presale room: the ring filling as SOL comes in, who's in, the coin, and your part at
 // the bottom (connect, join, your seat). Chat slides up; the launch plays full screen.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
@@ -13,26 +13,25 @@ import { ChatSheet } from "../../src/room/ChatSheet";
 import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
 import { YourSeat } from "../../src/room/YourSeat";
-import { BackIcon, ChatIcon } from "../../src/room/icons";
-import { bottomOf, heroOf, isKey, linksOf } from "../../src/room/room";
+import { bottomOf, heroOf, isKey } from "../../src/room/room";
 import { CoinImage } from "../../src/ui/CoinImage";
-import { Face } from "../../src/ui/Face";
+import { Face, Faces } from "../../src/ui/Face";
 import { shortWallet, solText } from "../../src/ui/format";
-import { Button, Card, Empty, Pill, Screen, Sheet, T } from "../../src/ui/kit";
+import { ChatIcon } from "../../src/ui/icons";
+import { Button, Card, Empty, Pill, Screen, Sheet, Steps, T } from "../../src/ui/kit";
+import { LinkPills } from "../../src/ui/LinkPills";
 import { Ring } from "../../src/ui/Ring";
+import { TopBar, goBack } from "../../src/ui/TopBar";
 import { useNow } from "../../src/ui/useNow";
-import { C, F, R, S } from "../../src/ui/theme";
+import { C, F, S } from "../../src/ui/theme";
 
 const FACES = 8;
 /** How long "X SOL is back in your wallet" stays. */
 const BACK_NOTE_MS = 4_000;
+/** Where back goes when the room was opened from a link. */
+const HOME = "/(tabs)";
 
 const tap = () => Haptics.selectionAsync().catch(() => {});
-
-function goBack() {
-  if (router.canGoBack()) router.back();
-  else router.replace("/(tabs)");
-}
 
 export default function Room() {
   const params = useLocalSearchParams();
@@ -44,25 +43,29 @@ export default function Room() {
   const view = useStore(store, (s) => s.views[key] ?? s.presales[key]);
   const detail = useStore(store, (s) => s.views[key]);
   const missing = useStore(store, (s) => !!s.missing[key]);
+  const viewError = useStore(store, (s) => s.viewError[key] ?? null);
   const info = useStore(store, (s) => s.info);
   const infoError = useStore(store, (s) => s.infoError);
   const wallet = useStore(store, (s) => s.wallet);
   const lamports = useStore(store, (s) => s.lamports);
   const launched = useStore(store, (s) => s.launched[key]);
   const chatCount = useStore(store, (s) => s.chats[key]?.length ?? 0);
-  const now = useNow(1000);
+  const busy = useStore(store, (s) => s.busy);
+  const focused = useIsFocused();
+  const now = useNow(1000, focused);
   const signer = useSigner();
   const insets = useSafeAreaInsets();
 
   // A detail view kept from an earlier visit isn't this visit's: the launch moment waits for
   // the first snapshot since the room opened.
-  const kept = useMemo(() => store.getState().views[key], [key]);
+  const [kept] = useState(() => store.getState().views[key]);
   const ready = !!detail && detail !== kept;
 
   const [joinOpen, setJoinOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [face, setFace] = useState(null); // a whoIsIn row
   const [backNote, setBackNote] = useState(null);
+  const openJoin = useCallback(() => setJoinOpen(true), []);
   const closeJoin = useCallback(() => setJoinOpen(false), []);
   const closeChat = useCallback(() => setChatOpen(false), []);
   const onBack = useCallback((deposit) => setBackNote(`${solText(deposit)} SOL is back in your wallet`), []);
@@ -80,22 +83,23 @@ export default function Room() {
   if (!valid || missing) {
     return (
       <Screen padded={false}>
-        <TopBar title="" />
+        <TopBar title="" fallback={HOME} />
         <View style={{ flex: 1, justifyContent: "center", paddingHorizontal: S.gutter }}>
           <Empty title="This presale isn't here" body="It may have closed." />
-          <Button kind="quiet" title="Back" onPress={goBack} />
+          <Button kind="quiet" title="Back" onPress={() => goBack(HOME)} />
         </View>
       </Screen>
     );
   }
 
   if (!view || !info) {
+    const error = infoError || viewError;
     return (
       <Screen padded={false}>
-        <TopBar title="" />
+        <TopBar title="" fallback={HOME} />
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: S.gutter }}>
           <ActivityIndicator color={C.text1} />
-          {infoError ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{infoError}</T> : null}
+          {error ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{error}</T> : null}
         </View>
       </Screen>
     );
@@ -103,10 +107,16 @@ export default function Room() {
 
   const hero = heroOf(view, launched, info.N, now);
   const bottom = bottomOf(view, wallet, info.N, now);
+  // A join going on with its sheet closed (by a tap outside it, or back): its steps show here.
+  const joinBusy = busy?.kind === "join" && busy.key === key && !joinOpen && bottom.kind !== "seat";
 
   return (
     <Screen padded={false}>
-      <TopBar title={ticker ? `$${ticker}` : "Presale"} chats={chatCount} onChat={() => setChatOpen(true)} />
+      <TopBar
+        title={ticker ? `$${ticker}` : "Presale"}
+        fallback={HOME}
+        right={<ChatButton count={chatCount} onPress={() => setChatOpen(true)} />}
+      />
       <ScrollView contentContainerStyle={{ paddingHorizontal: S.gutter, paddingBottom: 24, gap: 24 }}>
         <View style={{ alignItems: "center", gap: 12, paddingTop: 8 }}>
           <Ring size={260} fill={hero.fill} color={hero.color}>
@@ -133,102 +143,63 @@ export default function Room() {
         {bottom.kind === "seat" ? (
           <YourSeat view={view} launched={launched} seat={bottom.seat} wallet={wallet} now={now} signer={signer} onBack={onBack} />
         ) : null}
-        {bottom.kind === "join" ? <Button title="Join" onPress={() => setJoinOpen(true)} /> : null}
-        {bottom.kind === "why" ? <T v="small" color={C.text2} style={{ textAlign: "center" }}>{bottom.why}</T> : null}
+        {joinBusy ? (
+          <>
+            <Steps step={busy.step} />
+            <Button title="Join" onPress={openJoin} busy />
+          </>
+        ) : null}
+        {bottom.kind === "join" && !joinBusy ? <Button title="Join" onPress={openJoin} /> : null}
+        {bottom.kind === "why" && !joinBusy ? <T v="small" color={C.text2} style={{ textAlign: "center" }}>{bottom.why}</T> : null}
       </View>
 
       <JoinSheet
         open={joinOpen}
         onClose={closeJoin}
+        onFailed={openJoin}
         view={view}
         info={info}
         lamports={lamports}
         signer={signer}
-        why={bottom.kind === "why" ? bottom.why : null}
+        why={bottom.kind === "why" ? bottom.why : bottom.kind === "seat" ? "You're already in." : null}
       />
       <ChatSheet open={chatOpen} onClose={closeChat} channel={key} wallet={wallet} signer={signer} />
       <FaceSheet row={face} onClose={() => setFace(null)} />
-      <LaunchOverlay view={view} launched={launched} seat={seat} ready={ready} />
+      <LaunchOverlay view={view} launched={launched} seat={seat} ready={ready} focused={focused} />
     </Screen>
   );
 }
 
-/** Back on the left, the title centred, and the chat with its message count on the right. */
-function TopBar({ title, chats, onChat }) {
+/** The chat, with its message count, for the top bar's right side. */
+function ChatButton({ count, onPress }) {
   return (
-    <View style={{ height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Back"
-        hitSlop={8}
-        onPress={() => {
-          tap();
-          goBack();
-        }}
-        style={({ pressed }) => [{ width: 56, height: 44, justifyContent: "center", paddingLeft: 4 }, pressed && { opacity: 0.6 }]}
-      >
-        <BackIcon color={C.text0} />
-      </Pressable>
-      <T v="h2" numberOfLines={1} style={{ flex: 1, textAlign: "center" }}>{title}</T>
-      {onChat ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={chats ? `Chat, ${chats} messages` : "Chat"}
-          hitSlop={8}
-          onPress={() => {
-            tap();
-            onChat();
-          }}
-          style={({ pressed }) => [
-            { width: 56, height: 44, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, paddingRight: 8 },
-            pressed && { opacity: 0.6 },
-          ]}
-        >
-          <ChatIcon color={C.text0} />
-          {chats > 0 ? <T v="num" style={{ fontSize: 13 }} color={C.text1}>{chats}</T> : null}
-        </Pressable>
-      ) : (
-        <View style={{ width: 56 }} />
-      )}
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={count ? `Chat, ${count} messages` : "Chat"}
+      hitSlop={8}
+      onPress={() => {
+        tap();
+        onPress();
+      }}
+      style={({ pressed }) => [
+        { width: 56, height: 44, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, paddingRight: 8 },
+        pressed && { opacity: 0.6 },
+      ]}
+    >
+      <ChatIcon color={C.text0} />
+      {count > 0 ? <T v="num" style={{ fontSize: 13 }} color={C.text1}>{count}</T> : null}
+    </Pressable>
   );
 }
 
 /** "Who's in" and their faces, biggest commit first; a tap opens that person's card. */
 function WhoIsIn({ rows, onFace }) {
-  const shown = rows.slice(0, FACES);
-  const more = rows.length - shown.length;
-  const size = 36;
+  const wallets = useMemo(() => rows.map((r) => r.user), [rows]);
   return (
     <View style={{ alignItems: "center", gap: 10 }}>
       <T v="label">Who's in</T>
       {rows.length ? (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          {shown.map((r, i) => (
-            <Pressable
-              key={r.user}
-              accessibilityRole="button"
-              accessibilityLabel={shortWallet(r.user)}
-              onPress={() => {
-                tap();
-                onFace(r);
-              }}
-              style={{ marginLeft: i === 0 ? 0 : -size * 0.3 }}
-            >
-              <Face wallet={r.user} size={size} ring={C.bg0} />
-            </Pressable>
-          ))}
-          {more > 0 ? (
-            <View
-              style={{
-                marginLeft: -size * 0.3, width: size, height: size, borderRadius: R.pill, backgroundColor: C.bg3,
-                borderWidth: 1, borderColor: C.lineStrong, alignItems: "center", justifyContent: "center",
-              }}
-            >
-              <T v="num" style={{ fontSize: 12 }} color={C.text1}>{`+${more}`}</T>
-            </View>
-          ) : null}
-        </View>
+        <Faces wallets={wallets} size={36} max={FACES} ring={C.bg0} onPress={(w) => onFace(rows.find((r) => r.user === w))} />
       ) : (
         <T v="small" color={C.text2}>Nobody yet</T>
       )}
@@ -236,16 +207,20 @@ function WhoIsIn({ rows, onFace }) {
   );
 }
 
-/** One person in the pool: their face, wallet, what they put in, and whether they made it. */
+/** One person in the pool: their face, wallet, what they put in, and whether they made it.
+ *  It keeps the last person while it slides out, so it doesn't go blank on the way down. */
 function FaceSheet({ row, onClose }) {
+  const last = useRef(row);
+  if (row) last.current = row;
+  const shown = last.current;
   return (
     <Sheet open={!!row} onClose={onClose}>
-      {row ? (
+      {shown ? (
         <View style={{ alignItems: "center", gap: 10, paddingBottom: 8 }}>
-          <Face wallet={row.user} size={64} />
-          <T v="num">{shortWallet(row.user)}</T>
-          <T v="h2">{`${solText(row.commit)} SOL`}</T>
-          {row.creator ? <Pill text="Creator" color={C.gold} /> : null}
+          <Face wallet={shown.user} size={64} />
+          <T v="num">{shortWallet(shown.user)}</T>
+          <T v="h2">{`${solText(shown.commit)} SOL`}</T>
+          {shown.creator ? <Pill text="Creator" color={C.gold} /> : null}
         </View>
       ) : null}
     </Sheet>
@@ -254,7 +229,6 @@ function FaceSheet({ row, onClose }) {
 
 /** The coin: picture, name, ticker, what it's about (3 lines, "More" shows the rest), links. */
 function Coin({ token }) {
-  const links = linksOf(token);
   return (
     <Card style={{ gap: 12 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -265,25 +239,7 @@ function Coin({ token }) {
         </View>
       </View>
       {token.description ? <About text={token.description} /> : null}
-      {links.length ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {links.map((l) => (
-            <Pressable
-              key={l.label}
-              accessibilityRole="link"
-              accessibilityLabel={l.label}
-              hitSlop={6}
-              onPress={() => {
-                tap();
-                Linking.openURL(l.url).catch(() => {});
-              }}
-              style={({ pressed }) => pressed && { opacity: 0.6 }}
-            >
-              <Pill text={l.label} color={C.text0} />
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+      <LinkPills token={token} />
     </Card>
   );
 }

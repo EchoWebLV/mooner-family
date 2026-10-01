@@ -14,8 +14,9 @@ export function heroOf(view, launched, N, nowMs) {
   const stage = stageOf(view, launched);
   const fill = fillOf(view, N);
   const color = stage === "expired" ? C.text2 : PAST.has(stage) || fill >= 1 ? C.up : C.er;
+  const left = secondsLeft(view, nowMs);
   const under =
-    stage === "presale" ? `${clock(secondsLeft(view, nowMs))} left`
+    stage === "presale" ? (left > 0 ? `${clock(left)} left` : "Time's up")
     : stage === "launching" ? "Launching on Solana"
     : stage === "expired" ? "Closed"
     : "Live";
@@ -78,27 +79,19 @@ export function seatPlan(view, launched, seat, wallet, nowMs) {
 }
 
 /** The launch moment's phase after the stage moves from `prev` to `stage`: null (none),
- *  "launching", "live" or "done" (closed, or the launch failed). It starts only on a change
- *  seen while the room is open: `prev` null is the first sight and starts nothing. */
+ *  "launching", "live", "failed" (the launch didn't go through: it says so until closed) or
+ *  "done" (closed). It starts only on a change seen while the room is open: `prev` null is
+ *  the first sight and starts nothing. */
 export function momentStep(phase, prev, stage) {
   if (phase === "done" || prev == null || prev === stage) return phase;
   const live = stage === "live" || stage === "migrated";
   if (phase) {
-    if (stage === "expired") return "done";
+    if (stage === "expired") return phase === "launching" ? "failed" : phase;
     return phase === "launching" && live ? "live" : phase;
   }
   if (prev === "presale" && stage === "launching") return "launching";
   if ((prev === "presale" || prev === "launching") && live) return "live";
   return null;
-}
-
-const LINKS = [["twitter", "X"], ["telegram", "Telegram"], ["website", "Website"]];
-
-/** The coin's links that are there, as [{ label, url }]: https only. */
-export function linksOf(token) {
-  const links = token?.links ?? {};
-  return LINKS.filter(([k]) => typeof links[k] === "string" && /^https:\/\/\S+$/i.test(links[k].trim()))
-    .map(([k, label]) => ({ label, url: links[k].trim() }));
 }
 
 /** "09:05": a chat row's time (ms) on this phone's clock. */

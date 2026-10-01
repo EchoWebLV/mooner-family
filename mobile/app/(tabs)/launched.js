@@ -14,7 +14,7 @@ export default function Launched() {
   const solUsd = useStore(store, (s) => s.solUsd);
   const loaded = useStore(store, (s) => s.loaded.launched);
   const feedError = useStore(store, (s) => s.feedError.launched);
-  const list = useMemo(() => launchedList({ launched }), [launched]);
+  const list = useMemo(() => launchedList({ launched }).filter((r) => r.token), [launched]);
 
   const renderItem = useCallback(
     ({ item }) => <CoinRow row={item} solUsd={solUsd} onPress={() => router.push(`/coin/${item.presale}`)} />,

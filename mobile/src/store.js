@@ -35,6 +35,7 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
     feedError: { presales: null, launched: null }, // the server's words when it couldn't read a feed; the next snapshot clears it
     views: {}, // key -> detail view (seats), while a screen watches it
     missing: {}, // key -> true: the server has no such presale
+    viewError: {}, // key -> the server's words when it couldn't read that presale; its next snapshot clears it
     launched: {}, // presale key -> launched row
     profiles: {}, // wallet -> Mooner picture traits
     solUsd: 0,
@@ -81,8 +82,9 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
   }
 
   const onPresale = (key) => (m) => {
-    if (m.type === "snapshot") set((s) => ({ views: { ...s.views, [key]: m.data }, missing: without(s.missing, key) }));
-    else if (m.type === "missing") patch("missing", (x) => ({ ...x, [key]: true }));
+    if (m.type === "snapshot") set((s) => ({ views: { ...s.views, [key]: m.data }, missing: without(s.missing, key), viewError: without(s.viewError, key) }));
+    else if (m.type === "missing") set((s) => ({ missing: { ...s.missing, [key]: true }, viewError: without(s.viewError, key) }));
+    else if (m.type === "error") patch("viewError", (x) => ({ ...x, [key]: m.error || "couldn't read this right now" }));
   };
 
   const onChat = (channel) => (m) => {
@@ -141,6 +143,7 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
 
   /** One presale's view and chat while a screen shows it. Returns off(). */
   function watch(key) {
+    patch("viewError", (x) => without(x, key));
     const offs = [live.subscribe(`presale:${key}`, onPresale(key)), live.subscribe(`chat:${key}`, onChat(key))];
     return () => offs.forEach((off) => off());
   }
@@ -235,7 +238,8 @@ export function createMoonerStore({ live, api, flows, saved, now = () => Date.no
       const info = get().info ?? (await flows.loadInfo());
       const view = await api.presale(key);
       await flows.joinPresale({ info, wallet: signer.publicKey, signTransaction: signer.signTransaction, view, amount, onStep });
-      await remember(signer.publicKey.toBase58(), key, { deposit: String(amount), at: now() });
+      // a join after a get-back is a new seat: the old `back` mustn't outlive it
+      await remember(signer.publicKey.toBase58(), key, { deposit: String(amount), at: now(), back: null });
     });
   }
 

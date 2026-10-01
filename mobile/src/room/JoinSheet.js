@@ -6,32 +6,32 @@ import { useStore } from "zustand";
 import { seatChoices } from "../../../engine/src/views.js";
 import { store } from "../app";
 import { solText } from "../ui/format";
+import { CheckIcon } from "../ui/icons";
 import { Button, Sheet, Steps, T } from "../ui/kit";
 import { C, F, R } from "../ui/theme";
-import { CheckIcon } from "./icons";
 import { pickOf, shortOf } from "./room";
 
 /** `view`: the room's presale view; `info`: store.info; `lamports`: the wallet's SOL (a
  *  number, or null while it's read); `signer`: useSigner(). `why` (text or null) says why a
- *  join can't go ahead now (the pool filled while the sheet was open, say). */
-export function JoinSheet({ open, onClose, view, info, lamports, signer, why }) {
+ *  join can't go ahead now (the pool filled while the sheet was open, say). `onFailed` runs
+ *  when a join fails, so the room can open the sheet again if it was closed meanwhile. */
+export function JoinSheet({ open, onClose, onFailed, view, info, lamports, signer, why }) {
   const busy = useStore(store, (s) => s.busy);
   const choices = useMemo(() => seatChoices(info.N), [info]);
   const [chip, setChip] = useState(() => choices[0] ?? null);
   const [extra, setExtra] = useState(null);
   const [error, setError] = useState(null);
 
-  // Each opening starts from the smallest seat, with no old error, and reads the cost afresh.
+  // Each opening reads the cost afresh. The pick and a failed join's error stay until the
+  // sheet is closed, so a join that fails after the sheet was closed still says why.
   useEffect(() => {
     if (!open) return;
-    setChip(choices[0] ?? null);
-    setError(null);
     let on = true;
     store.getState().joinCost().then((x) => on && setExtra(x), () => {});
     return () => {
       on = false;
     };
-  }, [open, choices]);
+  }, [open]);
 
   const joining = busy?.kind === "join" && busy.key === view.presale;
   const pick = chip == null ? null : pickOf(view, info.N, chip);
@@ -39,17 +39,29 @@ export function JoinSheet({ open, onClose, view, info, lamports, signer, why }) 
   const ticker = view.token?.symbol ?? "";
   const blocked = !joining && why ? why : null;
 
+  // Closed: the next opening starts from the smallest seat with no old error. A closing in
+  // the middle of a join keeps the pick, which the error (if any) is about.
+  const close = () => {
+    setError(null);
+    if (!joining) setChip(choices[0] ?? null);
+    onClose();
+  };
+
   async function join() {
+    if (store.getState().busy) return;
     if (!pick || !signer) return;
     setError(null);
     const r = await store.getState().join(view.presale, pick.deposit, signer);
     Haptics.notificationAsync(r.ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error).catch(() => {});
-    if (r.ok) onClose();
-    else setError(r.error);
+    if (r.ok) close();
+    else {
+      setError(r.error);
+      onFailed?.();
+    }
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title={`Join $${ticker}`}>
+    <Sheet open={open} onClose={close} title={`Join $${ticker}`}>
       <View style={{ gap: 14 }}>
         <View style={{ flexDirection: "row", gap: 10 }}>
           {choices.map((c) => (
@@ -98,7 +110,7 @@ function Chip({ text, on, disabled, onPress }) {
       style={({ pressed }) => [
         {
           flex: 1, height: 44, borderRadius: R.pill, borderWidth: 1, alignItems: "center", justifyContent: "center",
-          backgroundColor: on ? `${C.accent}29` : C.bg2, borderColor: on ? C.accent : C.lineStrong,
+          backgroundColor: on ? C.accentSoft : C.bg2, borderColor: on ? C.accent : C.lineStrong,
         },
         pressed && { opacity: 0.85 },
       ]}

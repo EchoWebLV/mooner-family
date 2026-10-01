@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, heroOf, hhmm, isKey, linksOf, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, heroOf, hhmm, isKey, momentStep, pickOf, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -28,6 +28,9 @@ test("heroOf: the clock and C.er while open, C.up once full or past it, Closed w
   const gone = heroOf(open({ state: "EXPIRED" }), null, N, NOW);
   assert.equal(gone.under, "Closed");
   assert.equal(gone.color, C.text2);
+  // still OPEN on the server past its deadline (the keeper hasn't expired it yet)
+  assert.equal(heroOf(open({ deadlineTs: NOW / 1000 - 1 }), null, N, NOW).under, "Time's up");
+  assert.equal(heroOf(open({ deadlineTs: NOW / 1000 + 1 }), null, N, NOW).under, "0:01 left");
 });
 
 test("bottomOf: connect, your seat, join, or why not", () => {
@@ -97,19 +100,11 @@ test("momentStep: plays only for a change seen live", () => {
   assert.equal(momentStep(null, "presale", "presale"), null);
   assert.equal(momentStep(null, "presale", "expired"), null);
   assert.equal(momentStep(null, "live", "migrated"), null);
-  // a failed launch ends it; closed stays closed
-  assert.equal(momentStep("launching", "launching", "expired"), "done");
+  // a failed launch says so until closed; closed stays closed
+  assert.equal(momentStep("launching", "launching", "expired"), "failed");
+  assert.equal(momentStep("failed", "expired", "expired"), "failed");
   assert.equal(momentStep("done", "launching", "live"), "done");
   assert.equal(momentStep("live", "live", "migrated"), "live");
-});
-
-test("linksOf: the https links that are there", () => {
-  assert.deepEqual(linksOf(null), []);
-  assert.deepEqual(linksOf({ links: { twitter: "https://x.com/m", telegram: "", website: "https://m.fun " } }), [
-    { label: "X", url: "https://x.com/m" },
-    { label: "Website", url: "https://m.fun" },
-  ]);
-  assert.deepEqual(linksOf({ links: { twitter: "javascript:alert(1)", telegram: "http://t.me/m", website: "intent://x" } }), []);
 });
 
 test("hhmm: two digits each", () => {

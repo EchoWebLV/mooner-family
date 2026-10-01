@@ -7,6 +7,7 @@ const W = "Wallet1111";
 const signer = { publicKey: { toBase58: () => W }, signTransaction: async (t) => t, sendTransaction: async () => "SIG", signMessage: async () => new Uint8Array(64) };
 
 function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000, wrapSaved = (base) => base } = {}) {
+  const clock = typeof now === "function" ? now : () => now;
   const subs = new Map(); // topic -> Set<fn>
   const status = new Set();
   const live = {
@@ -47,11 +48,11 @@ function rig({ flows: over = {}, api: apiOver = {}, now = 1_000_000, wrapSaved =
   };
   const api = {
     presale: async (key) => ({ presale: key, state: "OPEN", seats: [] }),
-    login: async (body) => ({ wallet: body.wallet, token: "tok", exp: now + 1000 }),
+    login: async (body) => ({ wallet: body.wallet, token: "tok", exp: clock() + 1000 }),
     sendChat: async (token, channel, text) => (calls.push(["chat", token, channel, text]), { id: 1 }),
     ...apiOver,
   };
-  const store = createMoonerStore({ live, api, flows, saved, now: () => now });
+  const store = createMoonerStore({ live, api, flows, saved, now: clock });
   const goUp = (up) => [...status].forEach((fn) => fn(up));
   return { store, push, pushRaw, listening, disk, calls, info, goUp, status };
 }
@@ -122,6 +123,30 @@ test("watch: a presale's view and its chat, until let go", () => {
   off();
   assert.equal(listening("presale:A"), false);
   assert.equal(listening("chat:A"), false);
+});
+
+test("presale: an error push says why until the next snapshot; a new watch starts clean", () => {
+  const { store, push, pushRaw } = rig();
+  const off = store.getState().watch("K");
+  pushRaw({ topic: "presale:K", type: "error", error: "couldn't read this right now" });
+  assert.equal(store.getState().viewError.K, "couldn't read this right now");
+  assert.equal(store.getState().views.K, undefined, "an error is not a view");
+  push("presale:K", "snapshot", { presale: "K", state: "OPEN" });
+  assert.equal(store.getState().viewError.K, undefined);
+  pushRaw({ topic: "presale:K", type: "error", error: "x" });
+  off();
+  store.getState().watch("K");
+  assert.equal(store.getState().viewError.K, undefined);
+});
+
+test("presale: an error push with no words still says something; missing clears it", () => {
+  const { store, pushRaw, push } = rig();
+  store.getState().watch("K");
+  pushRaw({ topic: "presale:K", type: "error" });
+  assert.equal(store.getState().viewError.K, "couldn't read this right now");
+  push("presale:K", "missing");
+  assert.equal(store.getState().missing.K, true);
+  assert.equal(store.getState().viewError.K, undefined);
 });
 
 test("chat keeps the last 200", () => {
@@ -212,6 +237,23 @@ test("getBack: the flow with both wallet functions, then marked as back", async 
   assert.equal(a.sendTransaction, signer.sendTransaction);
   assert.equal(a.view.presale, "A");
   assert.equal(store.getState().mine.A.back, 1_000_000);
+});
+
+test("join after a get-back: the new seat's deposit and time, and no old back", async () => {
+  let t = 1_000;
+  const { store, disk } = rig({ now: () => t });
+  await store.getState().setWallet(W);
+  await store.getState().join("A", 100_000_000n, signer);
+  t = 2_000;
+  await store.getState().getBack("A", signer);
+  assert.equal(store.getState().mine.A.back, 2_000);
+  t = 3_000;
+  await store.getState().join("A", 250_000_000n, signer);
+  const entry = store.getState().mine.A;
+  assert.equal(entry.back, null);
+  assert.equal(entry.deposit, "250000000");
+  assert.equal(entry.at, 3_000);
+  assert.equal(disk.get(`mooner:mine:${W}`).A.back, null);
 });
 
 test("joinCost: the flow's total", async () => {

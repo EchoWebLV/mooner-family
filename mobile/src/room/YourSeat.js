@@ -6,9 +6,9 @@ import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
 import { store } from "../app";
 import { solText } from "../ui/format";
+import { CheckIcon, LockIcon } from "../ui/icons";
 import { Button, Steps, T } from "../ui/kit";
 import { C } from "../ui/theme";
-import { CheckIcon, LockIcon } from "./icons";
 import { seatPlan } from "./room";
 
 /** `seat`: seatOf(view, wallet); `launched`: the launched row or undefined; `onBack(deposit)`
@@ -18,9 +18,11 @@ export function YourSeat({ view, launched, seat, wallet, now, signer, onBack }) 
   const [error, setError] = useState(null);
   const plan = seatPlan(view, launched, seat, wallet, now);
   const backing = busy?.kind === "back" && busy.key === view.presale;
+  const joining = busy?.kind === "join" && busy.key === view.presale;
   const ticker = view.token?.symbol ?? "";
 
   async function getBack() {
+    if (store.getState().busy) return;
     if (!signer) return;
     setError(null);
     const r = await store.getState().getBack(view.presale, signer);
@@ -28,6 +30,9 @@ export function YourSeat({ view, launched, seat, wallet, now, signer, onBack }) 
     if (r.ok) onBack?.(seat.deposit);
     else setError(r.error);
   }
+
+  // the seat can show up while its join is still going: the join's steps until it's done
+  if (joining) return <Steps step={busy.step} />;
 
   return (
     <View style={{ gap: 10 }}>

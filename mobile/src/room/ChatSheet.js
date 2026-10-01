@@ -1,14 +1,14 @@
 // The room's chat: slides up from the bottom, newest at the bottom, live from the socket.
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, TextInput, View, useWindowDimensions } from "react-native";
 import { router } from "expo-router";
 import { useStore } from "zustand";
 import { store } from "../app";
 import { Face } from "../ui/Face";
 import { shortWallet } from "../ui/format";
+import { SendIcon } from "../ui/icons";
 import { Button, Sheet, T } from "../ui/kit";
 import { C, F, R } from "../ui/theme";
-import { SendIcon } from "./icons";
 import { hhmm } from "./room";
 
 const EMPTY = [];
@@ -24,20 +24,28 @@ export const ChatSheet = memo(function ChatSheet({ open, onClose, channel, walle
   const [sending, setSending] = useState(false);
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState(null);
+  // `sending` is state, so it lags a render: two fast sends would both see false and both
+  // ask the wallet to sign in. This one holds from the first tap.
+  const inFlight = useRef(false);
   const renderItem = useCallback(({ item }) => <Row row={item} me={item.wallet === wallet} />, [wallet]);
 
   async function send() {
     const body = text.trim();
-    if (!body || sending || !signer) return;
-    const s = store.getState().session;
-    setSigning(!s || s.exp <= Date.now()); // the first send signs in: one message in the wallet
-    setSending(true);
-    setError(null);
-    const r = await store.getState().sendChat(channel, body, signer);
-    setSending(false);
-    setSigning(false);
-    if (r.ok) setText((t) => (t.trim() === body ? "" : t)); // keep anything typed meanwhile
-    else setError(r.error);
+    if (!body || inFlight.current || !signer) return;
+    inFlight.current = true;
+    try {
+      const s = store.getState().session;
+      setSigning(!s || s.exp <= Date.now()); // the first send signs in: one message in the wallet
+      setSending(true);
+      setError(null);
+      const r = await store.getState().sendChat(channel, body, signer);
+      if (r.ok) setText((t) => (t.trim() === body ? "" : t)); // keep anything typed meanwhile
+      else setError(r.error);
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+      setSigning(false);
+    }
   }
 
   return (
