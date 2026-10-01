@@ -1,24 +1,28 @@
 // A launched coin: its chart, market cap, price, liquidity, volume, curve, holders and launch
-// time, your position, its mint to copy, its links, and the seat this phone joined with.
-// `key` is the coin's presale.
-import { useEffect, useRef, useState } from "react";
+// time, your position, its mint to copy, its links, the seat this phone joined with, and
+// sticky Buy and Sell buttons. `key` is the coin's presale.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
+import { tradeOpensAt } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { PriceChart } from "../../src/launched/PriceChart";
 import {
   atMigration, capText, coinScreenState, curveOf, dayTime, holderRows, holdersText, inWith, liquidityText, positionOf, priceText, volumeText,
 } from "../../src/launched/coin";
+import { TradeSheet } from "../../src/launched/TradeSheet";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { FillBar } from "../../src/ui/FillBar";
 import { shortWallet, solText } from "../../src/ui/format";
-import { Card, Empty, PillButton, Screen, T } from "../../src/ui/kit";
+import { Button, Card, Empty, PillButton, Screen, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
 import { TopBar } from "../../src/ui/TopBar";
 import { C, S } from "../../src/ui/theme";
+import { useSigner } from "../../src/wallet";
 
 /** How long "Copied" shows after a copy. */
 const COPIED_MS = 2_000;
@@ -41,13 +45,20 @@ export default function Coin() {
   const statsMissing = useStore(store, (s) => (mint ? !!s.coinMissing[mint] : false));
   const statsError = useStore(store, (s) => (mint ? s.coinError[mint] : undefined));
   const holding = useStore(store, (s) => (mint ? s.holdings[mint] : undefined));
+  const lamports = useStore(store, (s) => s.lamports);
+  const signer = useSigner();
+  const [sheet, setSheet] = useState(null); // "buy" | "sell" | null
+  const [done, setDone] = useState(null); // what the last trade here did
   const shows = coinScreenState({ row, loaded, view });
   const token = row?.token;
   const youWereIn = inWith(detail, wallet, mine);
   const position = positionOf(holding, row?.pool?.sqrtPrice, solUsd);
 
-  // the coin's stats and this wallet's balance of it, while this screen is open
-  useEffect(() => (mint ? store.getState().watchCoin(mint) : undefined), [mint]);
+  // the coin's stats and this wallet's balance of it, while this screen is the one in front:
+  // the server lets a socket watch 4 coins, and a coin screen left behind in the stack lets
+  // go of its own. The last stats stay in the store, so coming back shows them until the
+  // new snapshot.
+  useFocusEffect(useCallback(() => (mint ? store.getState().watchCoin(mint) : undefined), [mint]));
 
   return (
     <Screen padded={false}>
@@ -62,6 +73,11 @@ export default function Coin() {
             </View>
           </View>
           <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={atMigration(row.pool) ? null : row.pool?.sqrtPrice} />
+          {done ? (
+            <Card>
+              <T color={C.up}>{done}</T>
+            </Card>
+          ) : null}
           {position ? (
             <Card style={{ gap: 6 }}>
               <T v="label">{`Your $${token.symbol}`}</T>
@@ -89,7 +105,52 @@ export default function Coin() {
           {feedError ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{feedError}</T> : null}
         </View>
       )}
+      {shows === "coin" ? (
+        <TradeBar
+          row={row}
+          signer={signer}
+          sheet={sheet}
+          setSheet={setSheet}
+          onDone={setDone}
+          holding={holding}
+          lamports={lamports}
+        />
+      ) : null}
     </Screen>
+  );
+}
+
+/** The sticky Buy and Sell buttons and their sheets; "Connect to trade" without a wallet. A
+ *  sheet's close closes only that sheet: a trade that lands after its sheet was closed
+ *  mustn't close the other one. */
+function TradeBar({ row, signer, sheet, setSheet, onDone, holding, lamports }) {
+  const insets = useSafeAreaInsets();
+  const opensAt = tradeOpensAt(row);
+  const closeBuy = useCallback(() => setSheet((s) => (s === "buy" ? null : s)), [setSheet]);
+  const closeSell = useCallback(() => setSheet((s) => (s === "sell" ? null : s)), [setSheet]);
+  const sheets = { row, holding, lamports, signer, opensAt, onDone };
+  return (
+    <View
+      style={{
+        flexDirection: "row", gap: 12, borderTopWidth: 1, borderColor: C.line, backgroundColor: C.bg0,
+        paddingHorizontal: S.gutter, paddingTop: 12, paddingBottom: insets.bottom + 12,
+      }}
+    >
+      {signer ? (
+        <>
+          <View style={{ flex: 1 }}>
+            <Button title="Buy" onPress={() => setSheet("buy")} disabled={!row.pool} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button title="Sell" kind="quiet" onPress={() => setSheet("sell")} disabled={!row.pool} />
+          </View>
+          <TradeSheet side="buy" open={sheet === "buy"} onClose={closeBuy} {...sheets} />
+          <TradeSheet side="sell" open={sheet === "sell"} onClose={closeSell} {...sheets} />
+        </>
+      ) : (
+        <Button title="Connect to trade" onPress={() => router.push("/connect")} />
+      )}
+    </View>
   );
 }
 
