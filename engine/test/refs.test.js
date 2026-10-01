@@ -121,3 +121,24 @@ test("shareLink: a trailing / on the base, and a key that can't move the real ?r
 test("refFor: a padded wallet is still the joiner's own", () => {
   assert.equal(refFor({ [P]: { ref: A, at: 1 } }, P, ` ${A}`), null);
 });
+
+test("withRef: a string `at` never outranks a number one", () => {
+  const saved = {};
+  [..."abcdefghijkm"].slice(0, MAX_REFS).forEach((c) => (saved[c.repeat(44)] = { ref: A, at: "9e15" }));
+  assert.deepEqual(withRef(saved, P, B, 1)[P], { ref: B, at: 1 });
+});
+
+test("withRef: padded keys and refs don't survive a write", () => {
+  assert.deepEqual(withRef({}, ` ${P}`, A, 1), { [P]: { ref: A, at: 1 } }, "a padded presale");
+  assert.deepEqual(withRef({ [` ${Q}`]: { ref: A, at: 5 } }, P, B, 1), { [P]: { ref: B, at: 1 } }, "a saved padded key");
+  assert.deepEqual(
+    withRef({ [Q]: { ref: ` ${A}\n`, at: 5 } }, P, B, 1),
+    { [P]: { ref: B, at: 1 }, [Q]: { ref: A, at: 5 } },
+    "a saved padded ref",
+  );
+});
+
+test("shareLink: never throws, even on a lone surrogate in the key", () => {
+  assert.equal(shareLink("", "\uD800", null), "/presale/%EF%BF%BD");
+  assert.equal(shareLink("", "\uDC00x😀y\uD83D", A), `/presale/%EF%BF%BDx%F0%9F%98%80y%EF%BF%BD?ref=${A}`);
+});
