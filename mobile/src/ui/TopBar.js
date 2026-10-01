@@ -17,8 +17,9 @@ export function goBack(fallback) {
 }
 
 /** `fallback`: the href back opens when there's nothing to go back to. `right`: an element
- *  for the right side, up to SIDE wide. */
-export function TopBar({ title, right, fallback }) {
+ *  for the right side, up to `side` wide. `side`: each side's width, wider when `right` holds
+ *  two buttons. */
+export function TopBar({ title, right, fallback, side = SIDE }) {
   return (
     <View style={{ height: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: 8 }}>
       <Pressable
@@ -29,12 +30,12 @@ export function TopBar({ title, right, fallback }) {
           Haptics.selectionAsync().catch(() => {});
           goBack(fallback);
         }}
-        style={({ pressed }) => [{ width: SIDE, height: 44, justifyContent: "center", paddingLeft: 4 }, pressed && { opacity: 0.6 }]}
+        style={({ pressed }) => [{ width: side, height: 44, justifyContent: "center", paddingLeft: 4 }, pressed && { opacity: 0.6 }]}
       >
         <BackIcon color={C.text0} />
       </Pressable>
       <T v="h2" numberOfLines={1} style={{ flex: 1, textAlign: "center" }}>{title}</T>
-      <View style={{ width: SIDE, alignItems: "flex-end" }}>{right ?? null}</View>
+      <View style={{ width: side, alignItems: "flex-end" }}>{right ?? null}</View>
     </View>
   );
 }

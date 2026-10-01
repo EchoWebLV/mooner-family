@@ -1,5 +1,5 @@
 // The app's icons, on a 24-unit grid with one stroke: the tabs (22 px, in the tab's tint), and
-// the small ones the screens use (back, chat, tick, padlock, send).
+// the small ones the screens use (back, chat, share, tick, padlock, send).
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 
 const STROKE = { strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" };
@@ -47,6 +47,18 @@ export function ChatIcon({ color, size = 22 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path d="M4 6.5 C4 5.1 5.1 4 6.5 4 H17.5 C18.9 4 20 5.1 20 6.5 V14 C20 15.4 18.9 16.5 17.5 16.5 H10 L6 20 V16.5 C4.9 16.5 4 15.6 4 14.5 Z" stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
+/** Three dots joined by two lines: share. */
+export function ShareIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx={18} cy={5.5} r={2.5} stroke={color} {...STROKE} />
+      <Circle cx={6} cy={12} r={2.5} stroke={color} {...STROKE} />
+      <Circle cx={18} cy={18.5} r={2.5} stroke={color} {...STROKE} />
+      <Path d="M8.2 10.8 L15.8 6.7 M8.2 13.2 L15.8 17.3" stroke={color} {...STROKE} />
     </Svg>
   );
 }

@@ -1,7 +1,7 @@
 // The presale room: the ring filling as SOL comes in, who's in, the coin, and your part at
 // the bottom (connect, join, your seat). Chat slides up; the launch plays full screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Share, View } from "react-native";
 import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,10 +15,12 @@ import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
 import { Line, YourSeat } from "../../src/room/YourSeat";
 import { bottomOf, claimedOf, heroOf, isKey, lockedCommit } from "../../src/room/room";
+import { shareOf } from "../../src/room/share";
+import { BASE } from "../../src/config";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face, Faces } from "../../src/ui/Face";
 import { shortWallet, solText } from "../../src/ui/format";
-import { ChatIcon, CheckIcon } from "../../src/ui/icons";
+import { ChatIcon, CheckIcon, ShareIcon } from "../../src/ui/icons";
 import { Button, Card, Empty, Pill, Screen, Sheet, Steps, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
 import { Ring } from "../../src/ui/Ring";
@@ -40,6 +42,12 @@ export default function Room() {
   const valid = isKey(key);
 
   useEffect(() => (valid ? store.getState().watch(key) : undefined), [key, valid]);
+
+  const ref = Array.isArray(params.ref) ? params.ref[0] : params.ref;
+  // A link someone shared (`?ref=<their wallet>`): kept until a join from this phone lands here.
+  useEffect(() => {
+    if (valid && ref) store.getState().noteRef(key, ref);
+  }, [key, ref, valid]);
 
   const view = useStore(store, (s) => s.views[key] ?? s.presales[key]);
   const detail = useStore(store, (s) => s.views[key]);
@@ -120,13 +128,24 @@ export default function Room() {
   const bottom = bottomOf(view, wallet, info.N, now, claimed);
   // A join going on with its sheet closed (by a tap outside it, or back): its steps show here.
   const joinBusy = busy?.kind === "join" && busy.key === key && !joinOpen && bottom.kind !== "seat";
+  // null while the presale is OPEN past its deadline: no Share button then (src/room/share.js)
+  const shareText = shareOf({ view, launched, wallet, N: info.N, base: BASE, now });
+  const onShare = () => {
+    if (shareText) Share.share(shareText, { dialogTitle: "Share this presale" }).catch(() => {});
+  };
 
   return (
     <Screen padded={false}>
       <TopBar
         title={ticker ? `$${ticker}` : "Presale"}
         fallback={HOME}
-        right={<ChatButton count={chatCount} onPress={() => setChatOpen(true)} />}
+        side={100}
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {shareText ? <ShareButton onPress={onShare} /> : null}
+            <ChatButton count={chatCount} onPress={() => setChatOpen(true)} />
+          </View>
+        }
       />
       <ScrollView contentContainerStyle={{ paddingHorizontal: S.gutter, paddingBottom: 24, gap: 24 }}>
         <View style={{ alignItems: "center", gap: 12, paddingTop: 8 }}>
@@ -184,6 +203,24 @@ export default function Room() {
       <FaceSheet row={face} onClose={() => setFace(null)} />
       <LaunchOverlay view={view} launched={launched} seat={seat} claimed={claimed} ready={ready} focused={focused} />
     </Screen>
+  );
+}
+
+/** Opens Android's share sheet with the presale's link (src/room/share.js). */
+function ShareButton({ onPress }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Share"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 0 }}
+      onPress={() => {
+        tap();
+        onPress();
+      }}
+      style={({ pressed }) => [{ width: 44, height: 44, alignItems: "center", justifyContent: "center" }, pressed && { opacity: 0.6 }]}
+    >
+      <ShareIcon color={C.text0} />
+    </Pressable>
   );
 }
 
