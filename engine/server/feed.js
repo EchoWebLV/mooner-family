@@ -2,18 +2,20 @@
 //   - our program on Solana and on each ER, and the delegation program's copies of our
 //     presales and seats on Solana: any change to a presale or a seat re-reads that
 //     presale once (paced) and pushes it to `presale:<key>` and `presales`
-//   - each launched token's DBC pool: pushed to `launched` as it trades
+//   - each launched token's DBC pool: pushed to `launched` as it trades; the flip of its
+//     migrated flag is the "migrated" event (feed.on("migrated", row))
 //   - each watched wallet's SOL: `wallet:<wallet>`
 //   - SOL/USD from Pyth's price account: `sol`
 //   - chat messages and pictures as the server saves them: `chat:<channel>`, `profiles`
 // A socket that joins a topic gets its snapshot first, then the changes.
 
+import { EventEmitter } from "node:events";
 import { PublicKey } from "@solana/web3.js";
 import { DELEGATION_PROGRAM } from "../src/consts.js";
 import { PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, SEAT_VERSION, decodePresale, decodeSeat } from "../src/layout.js";
 import { poolAddresses, presalePda, seatPda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
-import { listItem } from "./api.js";
+import { accountsOf, listItem } from "./api.js";
 import { allProfiles, chatRows } from "./social.js";
 
 /** Pyth's SOL/USD price account (push oracle, shard 0), the same address on every cluster. */
@@ -39,18 +41,19 @@ const tryDecode = (decode, data) => {
   }
 };
 
-export class Feed {
+export class Feed extends EventEmitter {
   /**
    * `reads`: api.js makeReads (the feed shares its cache with the HTTP routes). `l1` and
    * `ers` ({ validatorBase58: Connection }) are the chain connections to subscribe on.
    * `db`: the server's SQLite (chat and pictures).
    */
   constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, log = console.log }) {
+    super();
     Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
     this.wallets = new Map(); // topic -> listener id
-    this.pools = new Map(); // mint -> { row, data }
+    this.pools = new Map(); // mint -> { row, pool, data, migrated }
     this.known = null; // presales in the keeper's last scan
     this.sol = null;
     this.paced = new Map();
@@ -69,6 +72,7 @@ export class Feed {
     this.sub(this.l1, "program", this.l1.onProgramAccountChange(DELEGATION_PROGRAM, onOurs("delegated"), opts([{ dataSize: SEAT_LEN }, version(SEAT_VERSION)])));
     for (const [v, er] of Object.entries(this.ers)) this.sub(er, "program", er.onProgramAccountChange(this.pid, onOurs(`er ${v.slice(0, 4)}`), opts()));
     this.syncPools();
+    await this.readPools();
 
     const a = await this.l1.getAccountInfo(this.solFeed).catch(() => null);
     if (decodeSolUsd(a?.data)) {
@@ -167,10 +171,24 @@ export class Feed {
     for (const row of this.store.launches()) {
       if (this.pools.has(row.mint)) continue;
       const pool = poolAddresses(this.dbcConfig, new PublicKey(row.mint)).pool;
-      this.pools.set(row.mint, { row, pool, data: null });
+      this.pools.set(row.mint, { row, pool, data: null, migrated: null });
       this.sub(this.l1, "account", this.l1.onAccountChange(pool, (acc) => this.onPool(row.mint, acc.data), { commitment: "confirmed" }));
       if (push) this.l1.getAccountInfo(pool).then((a) => a && this.onPool(row.mint, a.data), () => {});
     }
+  }
+
+  /** Reads every pool not read yet in one go (at start), so its migrated flag is known before
+   *  it can flip: a coin that migrated while the server was down fires no event. */
+  async readPools() {
+    const list = [...this.pools.values()].filter((p) => p.migrated === null);
+    const accs = await accountsOf(this.l1, list.map((p) => p.pool)).catch((e) => (this.log(`live pools: ${e.message}`), []));
+    accs.forEach((a, i) => {
+      const s = a && decodePoolState(a.data);
+      if (!s) return;
+      const p = list[i];
+      p.data ??= a.data;
+      p.migrated ??= s.migrated;
+    });
   }
 
   onPool(mint, data) {
@@ -181,6 +199,12 @@ export class Feed {
     this.pace(`pool:${mint}`, this.poolPaceMs, async () => {
       const s = decodePoolState(p.data);
       if (!s) return;
+      const was = p.migrated;
+      p.migrated = s.migrated;
+      if (s.migrated && was === false) {
+        this.log(`$${p.row.token?.symbol} (${mint}) migrated to DAMM v2`);
+        this.emit("migrated", p.row);
+      }
       const pool = { address: p.pool, quoteReserve: s.quoteReserve, sqrtPrice: s.sqrtPrice, migrated: s.migrated };
       this.publish("launched", { type: "upsert", data: { ...p.row, pool } });
     });

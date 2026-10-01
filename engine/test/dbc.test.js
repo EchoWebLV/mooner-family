@@ -75,3 +75,16 @@ test("a pool account decodes (the trial launch's pool, read from mainnet on 2026
   assert.equal(decodePoolState(d.subarray(0, 200)), null);
   assert.equal(decodePoolState(Buffer.alloc(424)), null);
 });
+
+test("a migrated pool decodes: the migrated flag is set (byte 305; mainnet pool 5Dekcwc2…, read 2026-10-01)", () => {
+  const acc = JSON.parse(readFileSync(new URL("./fixtures/dbc-pool-migrated.json", import.meta.url), "utf8"));
+  assert.equal(acc.pubkey, "5Dekcwc2czGPBSaZbe7VrBgLF2EpBg2mecYRAeXArEb");
+  const d = Buffer.from(acc.data, "base64");
+  assert.equal(d.length, 424);
+  // its base mint, the coin that trades on DAMM v2 pool GwvAt96o… now
+  assert.equal(new PublicKey(d.subarray(136, 168)).toBase58(), "AcgB3riCTGBzQ626TRmEm1f6ikeFvxi4mL36piDXV6ug");
+  const s = decodePoolState(d);
+  assert.equal(s.migrated, true);
+  assert.equal(s.quoteReserve, 85_000_000_014n);
+  assert.equal(s.sqrtPrice, 373894382314756693n);
+});

@@ -111,7 +111,9 @@ function pythData(price, expo = -8, at = 1_790_000_000) {
   return d;
 }
 
-async function startLive({ paceMs = 60, hub: hubOpts = {} } = {}) {
+/** `before({ l1, store })` runs before the feed starts: what was there while the server was
+ *  down. */
+async function startLive({ paceMs = 60, hub: hubOpts = {}, before = () => {} } = {}) {
   const l1 = fakeChain("l1");
   const er = fakeChain("er");
   l1.put(PYTH_SOL_USD, Keypair.generate().publicKey, pythData(12_000_000_000n));
@@ -120,6 +122,7 @@ async function startLive({ paceMs = 60, hub: hubOpts = {} } = {}) {
   const reads = makeReads({ pid, l1, bot, store, dbcConfig: MOONER_DBC_CONFIG });
   const logs = [];
   const feed = new Feed({ reads, l1, ers: bot.ers, pid, dbcConfig: MOONER_DBC_CONFIG, store, db: store.db, paceMs, poolPaceMs: paceMs, retryMs: 100, log: (m) => logs.push(m) });
+  before({ l1, store });
   const routes = makeSocialRoutes({ store, isPresale: () => true, onChat: (r) => feed.chat(r), onProfile: (w, p) => feed.profile(w, p) });
   const server = createServer(routes, { log: () => {} });
   const hub = new Hub(server, { log: () => {}, onFirst: (t) => feed.first(t), onLast: (t) => feed.last(t), onSub: (t, send) => feed.snapshot(t, send), ...hubOpts });
@@ -401,6 +404,55 @@ test("limits: sockets per address, and a socket that sends too much", async () =
     again.close();
   } finally {
     b.close();
+    await s.close();
+  }
+});
+
+// ---- migration ----
+
+const fixtureBytes = (name) => Buffer.from(JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8")).data, "base64");
+/** The trial DBC pool's bytes, with the migrated flag (byte 305) set or not. */
+const dbcPool = (migrated) => {
+  const b = fixtureBytes("dbc-pool.json");
+  b[305] = migrated ? 1 : 0;
+  return b;
+};
+/** A launched coin on the fake chain: its DBC pool written, the launch recorded. */
+function launchedCoin(l1, store, { migrated = false } = {}) {
+  const { presale, mint } = newPresale(l1, store, { state: STATE.SETTLED });
+  const pool = poolAddresses(MOONER_DBC_CONFIG, mint).pool;
+  l1.put(pool, DBC, dbcPool(migrated));
+  store.addLaunch(presale, mint, { sig: "LAUNCH", released: 9n, cost: 1n, tokens: 5n, units: 7 });
+  return { presale, mint, pool };
+}
+
+test("migrated: one event when a pool's flag flips; none for a coin that migrated while the server was down", async () => {
+  let old;
+  const s = await startLive({ before: ({ l1, store }) => (old = launchedCoin(l1, store, { migrated: true })) });
+  const coin = launchedCoin(s.l1, s.store);
+  const events = [];
+  const c = await s.client();
+  try {
+    s.feed.on("migrated", (row) => events.push(row.mint));
+    c.sub("launched");
+    await c.next(on("launched", "snapshot"));
+    s.feed.launched(coin.presale);
+    assert.equal((await c.next(on("launched", "upsert"))).data.pool.migrated, false);
+
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    assert.equal((await c.next(on("launched", "upsert"))).data.pool.migrated, true);
+    assert.deepEqual(events, [coin.mint.toBase58()]);
+    assert.ok(s.logs.some((l) => l.includes(`(${coin.mint.toBase58()}) migrated to DAMM v2`)), "logged");
+
+    // the pool changes again, still migrated: no second event
+    s.l1.write(coin.pool, DBC, dbcPool(true));
+    await c.next(on("launched", "upsert"));
+    // the coin that migrated before the start: its pool changes, and no event
+    s.l1.write(old.pool, DBC, dbcPool(true));
+    await c.next((m) => on("launched", "upsert")(m) && m.data.mint === old.mint.toBase58());
+    assert.deepEqual(events, [coin.mint.toBase58()]);
+  } finally {
+    c.close();
     await s.close();
   }
 });
