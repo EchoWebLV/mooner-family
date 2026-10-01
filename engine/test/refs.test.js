@@ -58,3 +58,66 @@ test("shareLink: the presale's link, with ?ref= only for a real wallet", () => {
   assert.equal(shareLink("https://app.mooner.family", P, null), `https://app.mooner.family/presale/${P}`);
   assert.equal(shareLink("", P, "guest"), `/presale/${P}`, "the web's signed-out user");
 });
+
+test("withRef: the viewer's own link never replaces a friend's ref", () => {
+  const friend = withRef({}, P, A, 1, B);
+  assert.deepEqual(friend, { [P]: { ref: A, at: 1 } });
+  assert.equal(withRef(friend, P, B, 2, B), friend, "my own link: the friend's ref stays");
+  assert.equal(withRef(friend, P, ` ${B}\n`, 2, ` ${B}`), friend, "padded, still mine");
+  const none = {};
+  assert.equal(withRef(none, P, B, 1, B), none, "my own link and nothing kept");
+  assert.deepEqual(withRef(friend, P, B, 2, null), { [P]: { ref: B, at: 2 } }, "viewer unknown: the newest link wins");
+  assert.deepEqual(withRef(friend, P, B, 2), { [P]: { ref: B, at: 2 } }, "viewer unknown (undefined)");
+});
+
+test("withRef: junk in a saved map never blocks a new ref, and the write drops it", () => {
+  const keys = [..."abcdefghijkmnopqrstuvwxyz"].map((c) => c.repeat(44)); // base58 letters only
+  const junk = {
+    [keys[0]]: "junk", // string values
+    [keys[1]]: A,
+    [keys[2]]: [A], // array values
+    [keys[3]]: [{ ref: A, at: 9e15 }],
+    "not a presale": { ref: A, at: 9e15 }, // a bad key
+    ["0".repeat(44)]: { ref: A, at: 9e15 },
+    [keys[4]]: { ref: "bad", at: 9e15 }, // a bad ref
+  };
+  // A fine presale and ref but no usable `at` (missing, or not a number): it counts as oldest.
+  const odd = [{ ref: A }, { ref: A, at: "9e15" }, { ref: A, at: null }, { ref: A, at: "x" }];
+  const saved = { ...junk };
+  keys.slice(5, 5 + MAX_REFS).forEach((k, i) => (saved[k] = odd[i % odd.length]));
+  assert.equal(Object.keys(saved).length, MAX_REFS + Object.keys(junk).length);
+  const next = withRef(saved, P, B, 1);
+  assert.deepEqual(next[P], { ref: B, at: 1 }, "the new presale is kept");
+  assert.equal(Object.keys(next).length, MAX_REFS);
+  for (const k of Object.keys(junk)) assert.ok(!(k in next), `junk ${k} is gone`);
+  for (const [k, v] of Object.entries(next)) assert.ok(cleanRef(k) && cleanRef(v.ref), k);
+});
+
+test("withRef: a note older than every kept one (the clock went back) changes nothing", () => {
+  let refs = {};
+  const keys = [..."abcdefghijkm"].map((c) => c.repeat(44)).slice(0, MAX_REFS);
+  keys.forEach((k, i) => (refs = withRef(refs, k, A, 100 + i)));
+  assert.equal(Object.keys(refs).length, MAX_REFS);
+  assert.equal(withRef(refs, P, B, 5), refs, "cut at once: nothing to save");
+});
+
+test("cleanRef: 31 characters is too short", () => {
+  assert.equal(cleanRef("1".repeat(31)), null);
+  assert.equal(cleanRef("1".repeat(32)), "1".repeat(32));
+});
+
+test("shareLink: a trailing / on the base, and a key that can't move the real ?ref=", () => {
+  assert.equal(shareLink("https://app.mooner.family/", P, A), `https://app.mooner.family/presale/${P}?ref=${A}`);
+  assert.equal(shareLink("https://app.mooner.family//", P, null), `https://app.mooner.family/presale/${P}`);
+  const key = `x?ref=${B}#`;
+  const link = shareLink("https://app.mooner.family", key, A);
+  assert.equal(link, `https://app.mooner.family/presale/${encodeURIComponent(key)}?ref=${A}`);
+  const url = new URL(link);
+  assert.equal(url.searchParams.get("ref"), A);
+  assert.equal(decodeURIComponent(url.pathname), `/presale/${key}`);
+  assert.equal(url.hash, "");
+});
+
+test("refFor: a padded wallet is still the joiner's own", () => {
+  assert.equal(refFor({ [P]: { ref: A, at: 1 } }, P, ` ${A}`), null);
+});
