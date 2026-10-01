@@ -454,9 +454,6 @@ test("live.js on the real hub: a second listener on a presale, after the first g
   const live = makeLive({ url: s.url, WebSocket, warn: () => {} });
   const [a, b] = [[], []];
   const offs = [];
-  const until = async (ok) => {
-    for (let i = 0; i < 100 && !ok(); i++) await wait(20);
-  };
   try {
     offs.push(live.subscribe(topic, (m) => a.push(m)));
     await until(() => a.length);
@@ -534,20 +531,27 @@ test("repeat subscriptions past the socket's budget are refused like any limit, 
   }
 });
 
-/** Holds the next call of `reads[name]`: it reads now, and its answer waits until the
- *  returned function is called. Later calls aren't held. */
+/** Holds the next call of `reads[name]`: it reads now, and its answer waits until `go()`.
+ *  `called` resolves once that call is made. Later calls aren't held. */
 function holdNext(reads, name) {
   const read = reads[name];
-  let go;
+  let go, made;
   const gate = new Promise((r) => (go = r));
+  const called = new Promise((r) => (made = r));
   let armed = true;
   reads[name] = (...args) => {
     const p = read(...args);
     if (!armed) return p;
     armed = false;
+    made();
     return p.then(async (v) => (await gate, v));
   };
-  return go;
+  return { go, called };
+}
+
+/** Waits until `ok()`, checking every 20 ms, 2 s at most. */
+async function until(ok) {
+  for (let i = 0; i < 100 && !ok(); i++) await wait(20);
 }
 
 /** Two live.js listeners on `topic` over the real hub; the second one's snapshot read
@@ -558,15 +562,12 @@ async function lateSnapshot(s, topic, read, change, pick) {
   const [a, b] = [[], []];
   const offs = [];
   const heard = (list) => list.map(pick);
-  const until = async (ok) => {
-    for (let i = 0; i < 100 && !ok(); i++) await wait(20);
-  };
   try {
     offs.push(live.subscribe(topic, (m) => a.push(m)));
     await until(() => a.length);
-    const go = holdNext(s.feed.reads, read);
+    const { go, called } = holdNext(s.feed.reads, read);
     offs.push(live.subscribe(topic, (m) => b.push(m))); // its read sees the old state, and is held
-    await wait(50);
+    await called;
     const before = a.length;
     change();
     await until(() => a.length > before); // the change's push reached both
@@ -629,6 +630,91 @@ test("launched: a second listener's list read that ends after a newer upsert is 
     assert.deepEqual(a, ["list 197354828", "upsert 300000000", "list 300000000"], "the first listener: the old reserve, then only the new one");
     assert.deepEqual(b, ["upsert 300000000", "list 300000000"]);
   } finally {
+    await s.close();
+  }
+});
+
+test("launched, a migrated coin: a list read that ends after its DAMM v2 pool's newer upsert is read again", async () => {
+  let coin;
+  const s = await startLive({
+    before: ({ l1, store }) => {
+      coin = launchedCoin(l1, store, { migrated: true });
+      l1.put(coin.damm, DAMM_V2, dammPool(coin.mint));
+    },
+  });
+  const said = (m) => (m.type === "snapshot" ? `list ${m.data[0].pool.sqrtPrice}` : `${m.type} ${m.data.pool.sqrtPrice}`);
+  try {
+    await until(() => s.feed.dammOf(coin.mint.toBase58())); // found at start, its pool watched
+    const [a, b] = await lateSnapshot(s, "launched", "listLaunched", () => s.l1.write(coin.damm, DAMM_V2, dammPool(coin.mint, 200000000000000000n)), said);
+    assert.deepEqual(a, ["list 185460299076988380", "upsert 200000000000000000", "list 200000000000000000"], "the first listener: the old price, then only the new one");
+    assert.deepEqual(b, ["upsert 200000000000000000", "list 200000000000000000"]);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a socket that leaves while its snapshot read is out, and comes back after a change: the old read is read again, not sent after the new state", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  const topic = `presale:${presale.toBase58()}`;
+  const c = await s.client();
+  const raised = () => c.got.filter(on(topic, "snapshot")).map((m) => m.data.raised);
+  try {
+    const { go, called } = holdNext(s.feed.reads, "presale");
+    c.sub(topic);
+    await called; // its read sees raised 0, and is held
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic)); // nobody on it
+    s.l1.write(presale, pid, presaleData(mint, { raised: 5n }));
+    c.sub(topic);
+    await until(() => raised().length); // the new sub's read: raised 5
+    go();
+    await until(() => raised().length > 1);
+    await wait(100);
+    assert.deepEqual(raised(), ["5", "5"], "never 0 after 5");
+
+    // nothing is kept for a topic nobody is on: at its last unsub, or once its last read is in
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic));
+    assert.deepEqual([s.feed.changes.has(topic), s.feed.reading.has(topic)], [false, false], "at the unsub");
+    const held = holdNext(s.feed.reads, "presale");
+    c.sub(topic);
+    await held.called;
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic));
+    s.l1.write(presale, pid, presaleData(mint, { raised: 6n }));
+    assert.ok(s.feed.changes.has(topic), "a change while its read is out is noted");
+    held.go();
+    await until(() => !s.feed.reading.has(topic));
+    assert.equal(s.feed.changes.has(topic), false, "once that read is in");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("a change while a socket's snapshot read is out, then it leaves and comes back: the change's number outlives the unsub until that read is in", async () => {
+  const s = await startLive();
+  const { presale, mint } = newPresale(s.l1, s.store);
+  const topic = `presale:${presale.toBase58()}`;
+  const c = await s.client();
+  const raised = () => c.got.filter(on(topic, "snapshot")).map((m) => m.data.raised);
+  try {
+    const { go, called } = holdNext(s.feed.reads, "presale");
+    c.sub(topic);
+    await called; // its read sees raised 0, and is held
+    s.l1.write(presale, pid, presaleData(mint, { raised: 5n }));
+    await until(() => raised().length); // the change's push: 5
+    c.unsub(topic);
+    await until(() => !s.hub.has(topic));
+    c.sub(topic);
+    await until(() => raised().length > 1); // the new sub's read: 5
+    go();
+    await until(() => raised().length > 2);
+    await wait(100);
+    assert.deepEqual(raised(), ["5", "5", "5"], "never 0 after 5");
+  } finally {
+    c.close();
     await s.close();
   }
 });

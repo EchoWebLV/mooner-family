@@ -71,7 +71,8 @@ export class Feed extends EventEmitter {
     this.sol = null;
     this.paced = new Map();
     this.seq = 0;
-    this.changes = new Map(); // topic -> the number of its last change, while it has sockets (see fresh)
+    this.changes = new Map(); // topic -> the number of its last change, while it has sockets or a read out (see fresh)
+    this.reading = new Map(); // topic -> snapshot reads out for it
     this.heard = {}; // chain notifications of our accounts, by source (for /api/health)
   }
 
@@ -124,20 +125,33 @@ export class Feed extends EventEmitter {
   }
 
   /** `topic`'s state changed (its cache is forgotten and a push is on its way): a snapshot
-   *  read already out for it reads again (see fresh). Nobody on it: nothing to note. */
+   *  read already out for it reads again (see fresh). Nobody on it and no read out: nothing
+   *  to note. A read out with nobody on the topic still counts: its socket may have left
+   *  and come back, and its answer would land after the new sub's newer one. */
   changed(topic) {
-    if (this.has(topic)) this.changes.set(topic, ++this.seq);
+    if (this.has(topic) || this.reading.has(topic)) this.changes.set(topic, ++this.seq);
   }
 
   /** `read()`, and again while `topic` changed during it, up to `reads` reads in all; the
    *  last read is what it returns. A change during a read may have pushed its newer state
    *  already, and this older answer, sent after it, would set every listener on the topic
-   *  back (live.js hands a snapshot to all of them). */
+   *  back (live.js hands a snapshot to all of them). The topic's number goes once its last
+   *  read is in and nobody is on it. */
   async fresh(topic, read, reads = 3) {
-    for (let n = 1; ; n++) {
-      const was = this.changes.get(topic);
-      const got = await read();
-      if (n >= reads || this.changes.get(topic) === was) return got;
+    this.reading.set(topic, (this.reading.get(topic) ?? 0) + 1);
+    try {
+      for (let n = 1; ; n++) {
+        const was = this.changes.get(topic);
+        const got = await read();
+        if (n >= reads || this.changes.get(topic) === was) return got;
+      }
+    } finally {
+      const left = this.reading.get(topic) - 1;
+      if (left) this.reading.set(topic, left);
+      else {
+        this.reading.delete(topic);
+        if (!this.has(topic)) this.changes.delete(topic);
+      }
     }
   }
 
@@ -479,7 +493,7 @@ export class Feed extends EventEmitter {
   }
 
   last(topic) {
-    this.changes.delete(topic);
+    if (!this.reading.has(topic)) this.changes.delete(topic); // else the last read out drops it (fresh)
     if (topic.startsWith("coin:")) {
       const mint = topic.slice("coin:".length);
       this.coins.delete(mint);
