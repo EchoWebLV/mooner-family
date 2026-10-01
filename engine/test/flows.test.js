@@ -534,7 +534,7 @@ test("openPresale: the wallet pays, the app's CU price, the saved session key is
   assert.equal(checkEntryTx(cosigned, { pid: info.pid, gate: info.gate, validators: [info.ers[0].validator], N: info.N }).kind, "open");
 });
 
-test("a cosign that may have been sent (no answer in time, a 5xx, a network error, a reply that isn't JSON) is outcome unknown, named by the signed tx; only the server's 4xx stays plain", async () => {
+test("a cosign that may have been sent (no answer in time, a 5xx, a network error, a reply that isn't JSON) is outcome unknown, named by the signed tx; only the server's 4xx, or an answer that says sent: false, stays plain", async () => {
   const info = fakeInfo();
   const w = fakeWallet();
   let fail = null;
@@ -544,6 +544,8 @@ test("a cosign that may have been sent (no answer in time, a 5xx, a network erro
     Object.assign(new ApiError(0, "the server didn't answer in 90 s", null), { timedOut: true }),
     new ApiError(502, "the server said 502", null), // a proxy, or the server failing mid-send
     new ApiError(500, "boom", { error: "boom" }),
+    // a 503 without the server's marker: Railway's proxy, say, while the server may be sending
+    new ApiError(503, "the network is slow, try again", { error: "the network is slow, try again" }),
     new ApiError(200, "the server's reply wasn't JSON", null),
     new TypeError("Network request failed"), // React Native
     new TypeError("Failed to fetch"), // a browser
@@ -562,6 +564,11 @@ test("a cosign that may have been sent (no answer in time, a 5xx, a network erro
   for (const status of [400, 429, 404]) {
     fail = new ApiError(status, "the gate refused", { error: "the gate refused" });
     await assert.rejects(open(), (x) => x === fail, String(status));
+  }
+  // the server's own answer from before it sent anything (api.js): plain whatever the status
+  for (const status of [503, 500]) {
+    fail = new ApiError(status, "the network is slow, try again", { error: "the network is slow, try again", sent: false });
+    await assert.rejects(open(), (x) => x === fail, `${status} with sent: false`);
   }
   // a blockhash read that times out: nothing was signed or sent
   const slow = Object.assign(new ApiError(0, "the server didn't answer in 10 s", null), { timedOut: true });

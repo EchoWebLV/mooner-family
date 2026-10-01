@@ -277,17 +277,19 @@ export function makeFlows({ api, subscribe, keys, priority = PRIORITY, rpc = nul
   const keyFor = async (presale, wallet) => (await sessionKey(presale, wallet)) ?? (await saveSessionKey(presale, wallet, Keypair.generate()));
 
   /** Signs an entry tx with the wallet and hands it to the server, which co-signs and sends
-   *  it. Returns the server's reply once it's confirmed (or sent, if slow). Only the server's
-   *  own 4xx says nothing went out or the failure is definite (api.js: 400, 429). Any other
-   *  failure (no answer in time, a 5xx from it or a proxy, a network error, a reply that isn't
-   *  JSON) may come after the server sent it: outcome unknown, so a retry can't open a second
-   *  presale or pay twice. */
+   *  it. Returns the server's reply once it's confirmed (or sent, if slow). Plain failures:
+   *  the server's 4xx (nothing went out, or the failure is definite) and any answer of its
+   *  own that says `sent: false` (api.js: from before the send, such as its 503 for a slow
+   *  simulation). Any other failure (no answer in time, a 5xx without that, from it or a
+   *  proxy, a network error, a reply that isn't JSON) may come after the server sent it:
+   *  outcome unknown, so a retry can't open a second presale or pay twice. */
   async function signAndCosign(signTransaction, payer, ixs) {
     const { blockhash } = await api.blockhash();
     const tx = unsignedTx({ ixs: [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priority }), ...ixs], payer, blockhash });
     const signed = await signTransaction(tx);
     const r = await api.cosign(b64(signed.serialize())).catch((e) => {
-      throw e instanceof ApiError && e.status >= 400 && e.status < 500 ? e : outcomeUnknown(sigOf(signed), "cosign");
+      const plain = e instanceof ApiError && ((e.status >= 400 && e.status < 500) || e.body?.sent === false);
+      throw plain ? e : outcomeUnknown(sigOf(signed), "cosign");
     });
     return r.json;
   }

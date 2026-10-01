@@ -22,7 +22,7 @@ import { F_CLAIMED, PRESALE_LEN, PRESALE_VERSION, SEAT_LEN, STATE_NAME, decodePr
 import { configPda, poolAddresses, presalePda } from "../src/pdas.js";
 import { decodePoolState } from "../src/dbc.js";
 import { TxError, sendSigned, within } from "../src/tx.js";
-import { cosign } from "../src/cosigner.js";
+import { cosign, Refused } from "../src/cosigner.js";
 import { launchTxSize } from "../src/bot.js";
 import { mintMessage, verifySignature } from "./auth.js";
 import { HttpError, Limiter, limit } from "./http.js";
@@ -49,6 +49,14 @@ export function sniffImage(b) {
   if (b.length > 6 && ["GIF87a", "GIF89a"].includes(b.subarray(0, 6).toString("latin1"))) return "image/gif";
   if (b.length > 12 && b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
   return null;
+}
+
+/** `e` as an answer that says the tx never went out (`sent: false`). An error that isn't
+ *  an answer already is a 500, its cause kept for the log (http.js). */
+function unsent(e) {
+  if (e instanceof HttpError) return Object.assign(e, { extra: { ...e.extra, sent: false } });
+  if (e instanceof Refused) return new HttpError(403, e.message, { sent: false });
+  return Object.assign(new HttpError(500, "internal error", { sent: false }), { cause: e });
 }
 
 const bad = (msg) => {
@@ -310,7 +318,8 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     return { status: 201, json: { mint: key.publicKey, presale: presalePda(pid, key.publicKey), name, symbol, image: pinned.image, uri: pinned.uri } };
   }
 
-  async function cosignRoute({ body, ip }) {
+  /** The checks before a co-signed entry tx goes out: { out, tx, programs }. */
+  async function cosignChecked({ body, ip }) {
     limit(L.cosignPerIp, ip, "requests");
     if (typeof body.tx !== "string" || body.tx.length > 2_000) bad("tx must be a base64 transaction");
     try {
@@ -335,6 +344,16 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
     if (sim.value.err) {
       throw new HttpError(400, `the tx fails: ${describeTxError(sim.value.err, programs, pid, sim.value.logs)}`, { logs: sim.value.logs ?? [] });
     }
+    return { out, tx, programs };
+  }
+
+  async function cosignRoute(req) {
+    // every answer from before the tx goes out says `sent: false`: the client (flows.js) takes
+    // those as plain failures, and any other (a proxy's 502, no answer, an error once the send
+    // began) as outcome unknown
+    const { out, tx, programs } = await cosignChecked(req).catch((e) => {
+      throw unsent(e);
+    });
     let sig;
     let confirmed = true;
     try {

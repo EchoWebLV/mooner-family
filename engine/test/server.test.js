@@ -417,6 +417,7 @@ test("cosign: a simulation the RPC doesn't answer in 15 s is a 503 \"the network
     await flush();
     assert.equal(out?.status, 503, "15 s by default");
     assert.equal(out.message, "the network is slow, try again");
+    assert.equal(out.extra?.sent, false, "it says nothing went out");
     assert.equal(d.l1.sent.length, 0, "nothing is sent");
   } finally {
     t.mock.timers.reset();
@@ -429,9 +430,55 @@ test("cosign: a simulation the RPC doesn't answer in 15 s is a 503 \"the network
     const r = await s.call("POST", "/api/cosign", { tx: tx() });
     assert.equal(r.status, 503);
     assert.equal(r.json.error, "the network is slow, try again");
+    assert.equal(r.json.sent, false, "it says nothing went out");
     assert.equal(s.l1.sent.length, 0, "nothing is sent");
   } finally {
     await s.close();
+  }
+});
+
+test("cosign: every answer from before the tx goes out says sent: false; none from after it does", async () => {
+  const user = Keypair.generate();
+  const presale = presalePda(pid, Keypair.generate().publicKey);
+  const join = (u = user) => entryTx(u, joinIxs(u.publicKey, presale));
+  const s = await startServer({ sendTimeoutMs: 300 });
+  try {
+    const cosign = (tx) => s.call("POST", "/api/cosign", { tx });
+    const before = [];
+    before.push(["garbage", await cosign("bm90IGEgdHg=")]);
+    before.push(["refused by the gate", await cosign(entryTx(user, openIxs(user.publicKey, Keypair.generate().publicKey)))]);
+    s.l1.simErr = { InstructionError: [0, { Custom: 1 }] };
+    before.push(["the simulation fails", await cosign(join(Keypair.generate()))]);
+    s.l1.simErr = null;
+    const simulate = s.l1.simulateTransaction;
+    s.l1.simulateTransaction = async () => { throw new Error("fetch failed"); };
+    before.push(["the simulation's RPC fails", await cosign(join(Keypair.generate()))]);
+    s.l1.simulateTransaction = simulate;
+    assert.deepEqual(before.map(([what, r]) => [what, r.status]), [["garbage", 400], ["refused by the gate", 403], ["the simulation fails", 400], ["the simulation's RPC fails", 500]]);
+    for (const [what, r] of before) assert.equal(r.json.sent, false, what);
+    assert.equal(s.l1.sent.length, 0, "nothing went out");
+    // after the send began: no marker, so the client can't take it for nothing sent
+    s.l1.confirm = false;
+    const slow = await cosign(join(Keypair.generate()));
+    assert.equal(slow.status, 202);
+    assert.equal(slow.json.sent, undefined);
+    const send = s.l1.sendRawTransaction;
+    s.l1.sendRawTransaction = async () => { throw Object.assign(new Error("failed to send transaction"), { transactionMessage: "Blockhash not found" }); };
+    const refused = await cosign(join(Keypair.generate()));
+    s.l1.sendRawTransaction = send;
+    assert.equal(refused.status, 500);
+    assert.equal(refused.json.sent, undefined, "the send's own errors are the client's to weigh");
+  } finally {
+    await s.close();
+  }
+  const s2 = await startServer({ limits: { mintPerIp: [1, 60_000], mintPerWallet: [1, 60_000], cosignPerIp: [5, 60_000], cosignPerWallet: [1, 60_000] } });
+  try {
+    assert.equal((await s2.call("POST", "/api/cosign", { tx: join() })).status, 200);
+    const limited = await s2.call("POST", "/api/cosign", { tx: join() });
+    assert.equal(limited.status, 429);
+    assert.equal(limited.json.sent, false, "rate limited");
+  } finally {
+    await s2.close();
   }
 });
 

@@ -167,7 +167,10 @@ export function createServer(routes, { cors = "*", trustProxy = false, log = con
       const out = await hit.r.handler({ params: hit.params, body, ip: clientIp(req, trustProxy), url });
       reply(out.status ?? 200, out.json);
     } catch (e) {
-      if (e instanceof HttpError) return reply(e.status, { error: e.message, ...e.extra });
+      if (e instanceof HttpError) {
+        if (e.cause) log(`${req.method} ${req.url}: ${e.cause.stack ?? e.cause}`); // a 500 that carries a marker (api.js)
+        return reply(e.status, { error: e.message, ...e.extra });
+      }
       if (e instanceof Refused) return reply(403, { error: e.message });
       log(`${req.method} ${req.url}: ${e.stack ?? e}`);
       reply(500, { error: "internal error" });
