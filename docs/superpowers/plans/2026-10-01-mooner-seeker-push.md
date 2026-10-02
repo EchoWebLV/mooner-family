@@ -476,6 +476,7 @@ It also holds `ALERT_NUMBERS`, the one block with every number push alerts use: 
 // When an alert is due and what it says (server/alertrules.js), over wire-form views.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { KIND_LABEL } from "../src/alertkinds.js";
 import { ALERT_NUMBERS, FRESH_MS, MILESTONES, alertText, insOf, launchFresh, mcapUsd, milestonesPassed, presaleEvents, shortWallet, usdShort } from "../server/alertrules.js";
 
 const NOW = 1_800_000_000_000;
@@ -576,6 +577,9 @@ test("the words", () => {
   assert.deepEqual(alertText("mcap", { ...e, usd: 1_000_000, now: 1_234_567 }), { title: "$MOON passed $1M market cap", body: "It's at $1.23M now.", url: "/coin/P1" });
   assert.deepEqual(alertText("room", { ...e, amount: "250000000" }), { title: "$MOON has room", body: "There's room for your 0.25 SOL. Tap to join.", url: "/presale/P1?join=250000000" });
   assert.deepEqual(insOf(view({ seats: [seat(A, 0n), seat(C, 1n, true)] })), [C]);
+  // the market-cap switch's label (src/alertkinds.js) lists exactly these lines
+  const lines = MILESTONES.map(usdShort);
+  assert.equal(KIND_LABEL.mcap, `A coin passes ${lines.slice(0, -1).join(", ")} or ${lines.at(-1)}`);
 });
 ```
 
