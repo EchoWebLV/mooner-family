@@ -61,8 +61,9 @@ export function presaleEvents(prev, view, nowMs) {
   const openedFresh = !prev && view.state === "OPEN" && fresh(Number(view.openedTs ?? 0) * 1000, nowMs);
   if (openedFresh && creator) events.push({ kind: "opened", presale, user: creator, ticker });
 
-  // joins: while seats can still come in, the wallets in now that weren't before
-  if (["OPEN", "FULL", "LAUNCHING"].includes(view.state) && (prev || openedFresh)) {
+  // joins: the wallets in now that weren't before, while seats come in (SETTLED too: after a
+  // launch a seat appears only in a read that skipped from OPEN, a failed read or a restart)
+  if (["OPEN", "FULL", "LAUNCHING", "SETTLED"].includes(view.state) && (prev || openedFresh)) {
     const before = new Set(prev?.ins ?? []);
     for (const r of whoIsIn(view)) {
       if (before.has(r.user) || r.user === creator) continue;
