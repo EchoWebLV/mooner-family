@@ -1,0 +1,341 @@
+// Create: a new coin and its presale in four steps (the picture, the details, your commit, a
+// last look). The wallet signs the coin's details (the server pins them to IPFS and issues
+// the coin), then the open with the creator's SOL; then the room opens with the share sheet
+// up. A coin issued but never opened waits at the top, to open without signing its details
+// again. An open whose outcome isn't known keeps its coin and watches its presale: it can
+// only be retried, never become a second coin. The store saves that coin for the wallet
+// before the wallet is asked (and again once it signs, and when an unknown is reported), so
+// it comes back after a restart too. Start over shows only once the server's own 404 came
+// more than 5 minutes after the coin was last saved.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Pressable, ScrollView, Share, View } from "react-native";
+import { router, useFocusEffect } from "expo-router";
+import * as Haptics from "expo-haptics";
+import { useStore } from "zustand";
+import { api, store } from "../../src/app";
+import { CommitStep } from "../../src/create/CommitStep";
+import { DetailsStep } from "../../src/create/DetailsStep";
+import { PictureStep } from "../../src/create/PictureStep";
+import { ReviewStep } from "../../src/create/ReviewStep";
+import { Unopened } from "../../src/create/Unopened";
+import {
+  ALREADY_OPEN, backAction, blankDraft, canStartOver, commitChoices, draftOf, hasErrors, isUnknown, mintFields, openLanded,
+  presaleKeyOf, restoredOpen, shortOfOpen, takenTickers, unopenedOf, validate,
+} from "../../src/create/rules";
+import { newPresaleShare } from "../../src/create/share";
+import { useConnect } from "../../src/useConnect";
+import { useAccount, useSigner } from "../../src/wallet";
+import { BackIcon } from "../../src/ui/icons";
+import { Logo } from "../../src/ui/Logo";
+import { Button, Screen, T } from "../../src/ui/kit";
+import { C, S } from "../../src/ui/theme";
+
+const STEPS = ["picture", "details", "commit", "review"];
+const TITLES = { picture: "Picture", details: "Name and links", commit: "Your commit", review: "Open the presale" };
+
+export default function Create() {
+  const wallet = useStore(store, (s) => s.wallet);
+  const opening = useStore(store, (s) => s.opening); // undefined until the wallet's saved open is read
+  const account = useAccount();
+  if (wallet && opening !== undefined) return <Creator key={wallet} wallet={wallet} saved={opening} />;
+  return (
+    <Screen padded={false}>
+      <Header />
+      {account === undefined || wallet ? <Loading /> : <SignedOut />}
+    </Screen>
+  );
+}
+
+/** "Create", with Back (not while `locked`) and the step on a step past the first. */
+function Header({ at = 0, locked = false, onBack }) {
+  return (
+    <View style={{ paddingHorizontal: S.gutter, paddingTop: 12, minHeight: 56, flexDirection: "row", alignItems: "center", gap: 8 }}>
+      {at > 0 && !locked ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={8}
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            onBack();
+          }}
+          style={({ pressed }) => [{ width: 32, height: 44, justifyContent: "center" }, pressed && { opacity: 0.6 }]}
+        >
+          <BackIcon color={C.text0} />
+        </Pressable>
+      ) : null}
+      <T v="title" style={{ flex: 1 }}>Create</T>
+      {onBack ? <T v="small" color={C.text2}>{`Step ${at + 1} of ${STEPS.length}`}</T> : null}
+    </View>
+  );
+}
+
+const Loading = () => (
+  <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+    <ActivityIndicator color={C.text1} />
+  </View>
+);
+
+/** No wallet: the logo, what connecting gives, and Connect Seed Vault. */
+function SignedOut() {
+  const { connect, busy, error } = useConnect();
+  return (
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: S.gutter, paddingBottom: 32 }}>
+      <Logo size={96} />
+      <T v="body" color={C.text1} style={{ textAlign: "center" }}>Connect your wallet to create a coin and open its presale</T>
+      {error ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{error}</T> : null}
+      <Button title="Connect Seed Vault" onPress={connect} busy={busy} />
+    </View>
+  );
+}
+
+/** The four steps for `wallet` (keyed by it, so another wallet starts afresh). `saved`: the
+ *  store's `opening` when it mounts; later changes don't reach the state (the live `opening`
+ *  is read for Start over only). */
+function Creator({ wallet, saved }) {
+  const signer = useSigner();
+  const info = useStore(store, (s) => s.info);
+  const infoError = useStore(store, (s) => s.infoError);
+  const lamports = useStore(store, (s) => s.lamports);
+  const presales = useStore(store, (s) => s.presales);
+  const launched = useStore(store, (s) => s.launched);
+  const busy = useStore(store, (s) => s.busy);
+  const opening = useStore(store, (s) => s.opening); // the saved open as it is now, with its `at`
+
+  // an open whose outcome wasn't known, saved for this wallet: back on the last look, locked
+  // to its coin, watching its presale
+  const [start] = useState(() => restoredOpen(saved));
+  const [step, setStep] = useState(start?.step ?? "picture");
+  const [picture, setPicture] = useState(start?.picture ?? null); // { uri, bytes }; bytes null for a coin already issued
+  const [draft, setDraft] = useState(() => start?.draft ?? blankDraft());
+  const [tried, setTried] = useState(false); // Next was pressed on the details: problems show
+  const [commit, setCommit] = useState(start?.commit ?? null); // BigInt lamports; null: the smallest
+  const [coin, setCoin] = useState(start?.coin ?? null); // the server's coin once issued ({ mint, symbol, ... })
+  const [extra, setExtra] = useState(null); // openCost(), BigInt
+  const [costFailed, setCostFailed] = useState(false);
+  const [error, setError] = useState(start?.error ?? null);
+  const [tokens, setTokens] = useState(null); // GET /api/wallet/<wallet>/tokens
+  const [unknown, setUnknown] = useState(start?.unknown ?? null); // the presale key of an open whose outcome isn't known
+  const [read, setRead] = useState(null); // the last retry's read: { verdict, at } (store openCoin)
+  const [trying, setTrying] = useState(false); // open() runs: from the tap until it has handled the answer
+
+  const creating = busy?.kind === "create";
+  const locked = creating || trying || !!unknown; // the coin stays, and Back stays put
+  // only after the server's own 404, more than START_OVER_MS after the coin's last save
+  const mayStartOver =
+    !!unknown && !creating && !trying && opening?.presale === unknown && canStartOver(opening, read?.verdict, read?.at);
+  const at = STEPS.indexOf(step);
+  const taken = useMemo(() => takenTickers({ presales, launched }), [presales, launched]);
+  const errors = useMemo(() => validate(draft, { taken }), [draft, taken]);
+  const fields = useMemo(() => mintFields(draft), [draft]);
+  const choices = useMemo(() => (info ? commitChoices(info.N) : []), [info]);
+  const unopened = useMemo(() => unopenedOf(tokens, presales), [tokens, presales]);
+  const pick = commit ?? choices[0] ?? null;
+  const short = pick == null ? null : shortOfOpen(pick, extra, lamports);
+  // at the start, and on the last look (where "open one of them first" shows): never over a coin being opened
+  const showUnopened = !coin && unopened.length > 0 && (step === "picture" || step === "review");
+
+  // The wallet's coins: read each time the tab is shown and after each try (no push for them).
+  const readTokens = useCallback(() => {
+    api.walletTokens(wallet).then(setTokens, () => {});
+  }, [wallet]);
+  useFocusEffect(readTokens);
+
+  // What opening takes besides the commit: read on reaching the commit step.
+  const needCost = step === "commit" || step === "review";
+  useEffect(() => {
+    if (!needCost) return;
+    let on = true;
+    setCostFailed(false);
+    store.getState().openCost().then(
+      (x) => on && setExtra(x),
+      () => on && setCostFailed(true),
+    );
+    return () => {
+      on = false;
+    };
+  }, [needCost]);
+
+  // A fresh form. `key`: the presale that just settled (opened passes it), whose saved open is
+  // cleared; none (Back's fresh start) clears nothing.
+  const reset = useCallback(
+    (key) => {
+      setStep("picture");
+      setPicture(null);
+      setDraft(blankDraft());
+      setTried(false);
+      setCommit(null);
+      setCoin(null);
+      setError(null);
+      setUnknown(null);
+      setRead(null);
+      if (key) store.getState().forgetOpening(wallet, key);
+    },
+    [wallet],
+  );
+
+  // Back a step; from the commit of a coin already issued, back to a fresh start; nothing
+  // while locked. false on the first step, so Android's back leaves the tab as usual.
+  const back = useCallback(() => {
+    const action = backAction({ at, locked, issued: !!coin, step });
+    if (action === "leave") return false;
+    if (action === "stay") return true;
+    setError(null);
+    if (action === "restart") reset();
+    else setStep(STEPS[at - 1]);
+    return true;
+  }, [at, locked, coin, step, reset]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener("hardwareBackPress", back);
+      return () => sub.remove();
+    }, [back]),
+  );
+
+  // The open landed: a success buzz, a fresh form (which stops the watch below before the room
+  // starts its own, and clears the saved open), the room, and over it the share sheet, only
+  // for an open that succeeded here (`share`): its words are made from that open. A presale
+  // found later (the watch, ALREADY_OPEN) may have aged or closed since; the room's own Share
+  // has its real numbers. Once per presale: the store's answer and the watched presale can
+  // both bring it.
+  const done = useRef(null);
+  const opened = useCallback(
+    (key, symbol, share) => {
+      if (done.current === key) return;
+      done.current = key;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      reset(key);
+      readTokens();
+      router.push(`/presale/${key}`);
+      const words = share ? newPresaleShare({ key, symbol, wallet, commit: pick, N: info.N, now: Date.now() }) : null;
+      if (words) Share.share(words, { dialogTitle: "Share this presale" }).catch(() => {});
+    },
+    [reset, readTokens, wallet, pick, info],
+  );
+
+  // An open whose outcome isn't known: watch its presale over the socket. Once it shows up,
+  // the open landed, and it goes the way a success does. Not while a try runs: open() handles
+  // its own answer first (a success here brings the share sheet), and every answer that keeps
+  // the coin sets `trying` false, which runs this again.
+  useEffect(() => {
+    if (!unknown) return;
+    return store.getState().watch(unknown);
+  }, [unknown]);
+  const landed = useStore(store, (s) => openLanded(unknown, s));
+  useEffect(() => {
+    if (landed && !creating && !trying) opened(unknown, coin.symbol, false);
+  }, [landed, creating, trying, unknown, coin, opened]);
+
+  // Leaves the saved coin for a new one: only when canStartOver said yes (mayStartOver).
+  async function startOver() {
+    if (!mayStartOver) return;
+    await store.getState().forgetOpening(wallet, unknown);
+    reset();
+    readTokens(); // the coin left shows under "Not opened yet"
+  }
+
+  function resume(t) {
+    if (locked) return;
+    setPicture({ uri: t.image, bytes: null });
+    setDraft(draftOf(t));
+    setCoin(t);
+    setCommit(null);
+    setError(null);
+    setStep("commit");
+  }
+
+  function details() {
+    setTried(true);
+    if (!hasErrors(errors)) setStep("commit");
+  }
+
+  function failed(why) {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    setError(why);
+    readTokens();
+  }
+
+  async function open() {
+    if (trying || store.getState().busy || !signer || pick == null) return;
+    setError(null);
+    setRead(null);
+    setTrying(true);
+    try {
+      let issued = coin;
+      if (!issued) {
+        const r = await store.getState().mintCoin({ ...fields, image: picture.bytes }, signer);
+        if (!r.ok) return failed(r.error);
+        issued = r.value;
+        setCoin(issued);
+      }
+      const key = presaleKeyOf(info, issued.mint);
+      const r = await store.getState().openCoin({ ...fields, mint: issued.mint, presale: key, image: issued.image }, pick, signer);
+      setRead(r.read ?? null); // a retry's read, for Start over
+      if (r.ok) return opened(r.value, issued.symbol, true);
+      if (r.error === ALREADY_OPEN) return opened(key, issued.symbol, false);
+      if (isUnknown(r.error)) setUnknown(key); // the coin stays (the store saved it); the watch above sees it land
+      failed(r.error);
+    } finally {
+      setTrying(false); // after opened() above, so the watch can't take a success first
+    }
+  }
+
+  let body;
+  if (step === "picture") {
+    body = <PictureStep picture={picture} onPicture={setPicture} onNext={() => setStep("details")} />;
+  } else if (step === "details") {
+    body = <DetailsStep draft={draft} onDraft={setDraft} errors={errors} tried={tried} onNext={details} />;
+  } else if (!info) {
+    body = infoError ? <T v="small" color={C.down}>{infoError}</T> : <ActivityIndicator color={C.text1} />;
+  } else if (step === "commit") {
+    body = (
+      <CommitStep
+        choices={choices}
+        commit={pick}
+        onCommit={setCommit}
+        extra={extra}
+        costFailed={costFailed}
+        lamports={lamports}
+        short={short}
+        target={info.N.TARGET}
+        onNext={() => setStep("review")}
+      />
+    );
+  } else {
+    body = (
+      <ReviewStep
+        picture={picture}
+        fields={fields}
+        commit={pick}
+        extra={extra}
+        costFailed={costFailed}
+        target={info.N.TARGET}
+        minutes={Math.round(Number(info.N.DURATION) / 60)}
+        issued={!!coin}
+        short={short}
+        error={error}
+        waiting={!!unknown}
+        creating={creating}
+        step={creating ? busy.step : null}
+        blocked={!!busy && !creating}
+        canSign={!!signer}
+        onOpen={open}
+        onStartOver={mayStartOver ? startOver : null}
+      />
+    );
+  }
+
+  return (
+    <Screen padded={false}>
+      <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
+        <Header at={at} locked={locked} onBack={back} />
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.gutter, paddingBottom: 32, gap: 16 }}>
+          {showUnopened ? <Unopened tokens={unopened} onOpen={resume} /> : null}
+          <T v="h2">{TITLES[step]}</T>
+          {body}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
+  );
+}
