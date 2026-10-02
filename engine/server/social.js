@@ -66,6 +66,49 @@ export function allProfiles(db) {
   return Object.fromEntries(all.map((r) => [r.wallet, JSON.parse(r.pfp)]));
 }
 
+/** Mooner sign-ins, over the server's db: { issue(wallet) -> { token, exp }, walletOf(token)
+ *  -> wallet (401 if it's forged or old), deviceSign(text) -> mac, deviceCheck(text, mac) ->
+ *  boolean }. The secret lives in the db, so a sign-in survives restarts and lasts its week,
+ *  and every part of the server that calls this shares it (follows.js, alerts.js). A phone's
+ *  `key` (alerts.js) is a MAC under its own key, derived from the secret with a fixed label,
+ *  so a sign-in's MAC is never a phone's key, nor the other way round. */
+export function makeSessions(db, now = Date.now) {
+  db.exec("CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value BLOB NOT NULL)");
+  let secret = db.prepare("SELECT value FROM secrets WHERE name = 'session'").get()?.value;
+  if (!secret) {
+    secret = crypto.randomBytes(32);
+    db.prepare("INSERT INTO secrets (name, value) VALUES ('session', ?)").run(secret);
+  }
+  const deviceKey = crypto.createHmac("sha256", secret).update("mooner:device-key").digest();
+  const macWith = (key, s) => crypto.createHmac("sha256", key).update(s).digest("base64url");
+  // Byte lengths, not string lengths: a MAC with a multibyte character can have the right
+  // length in characters, and timingSafeEqual throws (a 500) on buffers of different lengths.
+  const same = (mac, want) => {
+    if (typeof mac !== "string") return false;
+    const a = Buffer.from(mac);
+    const b = Buffer.from(want);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
+
+  function issue(wallet) {
+    const exp = now() + SESSION_MS;
+    const body = `${wallet}.${exp}`;
+    return { token: `${body}.${macWith(secret, body)}`, exp };
+  }
+
+  function walletOf(token) {
+    if (typeof token !== "string") throw new HttpError(401, "sign in first");
+    const [wallet, exp, mac] = token.split(".");
+    if (!same(mac, macWith(secret, `${wallet}.${exp}`)) || !(Number(exp) > now())) throw new HttpError(401, "your sign-in ran out, sign in again");
+    return wallet;
+  }
+
+  const deviceSign = (s) => macWith(deviceKey, s);
+  const deviceCheck = (s, mac) => same(mac, deviceSign(s));
+
+  return { issue, walletOf, deviceSign, deviceCheck };
+}
+
 /** `store` is the server's Store (its db is shared); `isPresale(key)` says whether a chat
  *  channel names a presale this server knows. `onChat(row)` and `onProfile(wallet, pfp)`
  *  hear each message and picture as it's saved (the live feed pushes them). */
@@ -74,30 +117,7 @@ export function makeSocialRoutes({ store, isPresale, onChat = () => {}, onProfil
   db.exec(SCHEMA);
   const L = Object.fromEntries(Object.entries(limits).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
   const usedSigs = new Map();
-
-  // the session secret survives restarts, so a sign-in lasts its week
-  let secret = db.prepare("SELECT value FROM secrets WHERE name = 'session'").get()?.value;
-  if (!secret) {
-    secret = crypto.randomBytes(32);
-    db.prepare("INSERT INTO secrets (name, value) VALUES ('session', ?)").run(secret);
-  }
-  const mac = (s) => crypto.createHmac("sha256", secret).update(s).digest("base64url");
-
-  function issue(wallet) {
-    const exp = now() + SESSION_MS;
-    const body = `${wallet}.${exp}`;
-    return { token: `${body}.${mac(body)}`, exp };
-  }
-
-  /** The wallet a session token was issued to; 401 if it's forged or old. */
-  function walletOf(token) {
-    if (typeof token !== "string") throw new HttpError(401, "sign in first");
-    const [wallet, exp, sig] = token.split(".");
-    const want = mac(`${wallet}.${exp}`);
-    const ok = sig && sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want));
-    if (!ok || !(Number(exp) > now())) throw new HttpError(401, "your sign-in ran out, sign in again");
-    return wallet;
-  }
+  const { issue, walletOf } = makeSessions(db, now);
 
   async function login({ body, ip }) {
     limit(L.loginPerIp, ip, "sign-ins");
