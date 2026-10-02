@@ -15,6 +15,7 @@ const open = (presale, raised, leftS = 600, extra = {}) => ({
 test("autoChoices: the seats that can ever fit beside the creator's", () => {
   assert.deepEqual(autoChoices(N), [100_000_000n, 250_000_000n]);
   assert.deepEqual(autoChoices({ ...N, TARGET: "10000000000", MAX_SEAT: "1000000000" }), [100_000_000n, 250_000_000n, 500_000_000n]);
+  assert.deepEqual(autoChoices({ ...N, TARGET: "600000000" }), [100_000_000n, 250_000_000n, 500_000_000n]); // 0.5 fits beside a 0.1 creator
 });
 
 test("hasRoomFor: open, time left, not in it yet, and room for the whole amount", () => {
@@ -22,6 +23,7 @@ test("hasRoomFor: open, time left, not in it yet, and room for the whole amount"
   assert.equal(hasRoomFor(open("A", SOL / 10n), N, a, "me", NOW), true); // 0.4 left
   assert.equal(hasRoomFor(open("A", 300_000_000n), N, a, "me", NOW), false); // 0.2 left
   assert.equal(hasRoomFor(open("A", 250_000_000n), N, "250000000", "me", NOW), true); // exactly
+  assert.equal(hasRoomFor(open("A", SOL / 10n, AUTOJOIN_MIN_LEFT_S), N, a, "me", NOW), true); // exactly the least time
   assert.equal(hasRoomFor(open("A", SOL / 10n, AUTOJOIN_MIN_LEFT_S - 1), N, a, "me", NOW), false);
   assert.equal(hasRoomFor(open("A", SOL / 10n, 600, { stale: true }), N, a, "me", NOW), false);
   assert.equal(hasRoomFor(open("A", SOL / 10n, 600, { state: "FULL" }), N, a, "me", NOW), false);
