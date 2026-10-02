@@ -19,6 +19,7 @@ export function Field({ label, error, hint, multiline, ...input }) {
         placeholderTextColor={C.text2}
         selectionColor={C.accentSoft}
         cursorColor={C.accent}
+        selectionHandleColor={C.accent}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{

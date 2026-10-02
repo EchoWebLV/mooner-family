@@ -8,7 +8,7 @@ import { Card, PillButton, T } from "../ui/kit";
 export function Unopened({ tokens, onOpen }) {
   return (
     <Card style={{ gap: 12 }}>
-      <T v="label">Not opened yet</T>
+      <T v="label" accessibilityRole="header">Not opened yet</T>
       {tokens.map((t) => (
         <View key={t.mint} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <CoinImage uri={t.image} size={40} ticker={t.symbol} />

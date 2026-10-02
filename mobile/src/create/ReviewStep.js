@@ -48,13 +48,13 @@ export function ReviewStep({ picture, fields, commit, extra, costFailed, target,
           ? "Your wallet asks once: to open the presale with your SOL."
           : "Your wallet asks twice: to sign the coin's details, then to open the presale with your SOL."}
       </T>
-      {short ? <T v="small" color={C.down}>{short}</T> : null}
-      {error ? <T v="small" color={C.down}>{error}</T> : null}
+      {short ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{short}</T> : null}
+      {error ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
       {waiting ? (
         <T v="small">
           {onStartOver
-            ? `No $${fields.symbol} presale showed up, and its last open is too old to land now. Try it again, or start over with a new coin.`
-            : "If it went through, the room opens by itself. Trying again uses the same coin, so it can't open twice."}
+            ? `No $${fields.symbol} presale showed up, and its last open is too old to go through now. Try it again, or start over with a new coin.`
+            : "If it went through, the presale opens by itself. Trying again uses the same coin, so it can't open twice."}
         </T>
       ) : null}
       {creating ? <Steps step={step} /> : null}

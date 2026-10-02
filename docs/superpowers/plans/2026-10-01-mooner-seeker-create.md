@@ -2488,7 +2488,7 @@ Each part only shows what it's given; the screen (Task 7) holds the state.
 - `PictureStep`: Camera / Gallery and the picture.
 - `DetailsStep`: name, ticker, description, X, Telegram, Website. Problems show once Next was tried.
 - `CommitStep`: the chips, the target, the wallet's SOL, and what it lacks.
-- `ReviewStep`: the coin as it will look, the numbers, how many times the wallet asks, the steps, and Open presale. While an open's outcome isn't known (`waiting`), a line says the room opens by itself if it went through, and that trying again can't open the coin twice. Open presale stays pressable then even if the wallet looks short: the store's retry reads the presale before its own funds check, and that read is what Start over needs. With `onStartOver` (the screen passes it only when `canStartOver` says yes), the line says the last open is too old to land, and a quiet "Start over with a new coin" button shows.
+- `ReviewStep`: the coin as it will look, the numbers, how many times the wallet asks, the steps, and Open presale. While an open's outcome isn't known (`waiting`), a line says the presale opens by itself if it went through, and that trying again can't open the coin twice. Open presale stays pressable then even if the wallet looks short: the store's retry reads the presale before its own funds check, and that read is what Start over needs. With `onStartOver` (the screen passes it only when `canStartOver` says yes), the line says the last open is too old to go through now, and a quiet "Start over with a new coin" button shows.
 - `Unopened`: coins issued but never opened, each with Open.
 
 - [ ] **Step 1: The text field**
@@ -2517,6 +2517,7 @@ export function Field({ label, error, hint, multiline, ...input }) {
         placeholderTextColor={C.text2}
         selectionColor={C.accentSoft}
         cursorColor={C.accent}
+        selectionHandleColor={C.accent}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{
@@ -2537,7 +2538,7 @@ Create `mobile/src/create/PictureStep.js`:
 
 ```js
 // Step 1: the coin's picture, from the camera or the gallery, cropped square.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { CoinImage } from "../ui/CoinImage";
 import { Button, T } from "../ui/kit";
@@ -2550,26 +2551,38 @@ const SIZE = 200;
 export function PictureStep({ picture, onPicture, onNext }) {
   const [opening, setOpening] = useState(null); // "camera" | "gallery" while it's open
   const [error, setError] = useState(null);
+  const busy = useRef(false); // set before the picker opens, so a double tap can't open it twice
 
   // Android may close the app while the camera is open: the photo comes back on the next start.
   useEffect(() => {
     let on = true;
-    pendingPicture().then((p) => on && p && onPicture(p), () => {});
+    pendingPicture().then(
+      (p) => {
+        if (on && p) {
+          setError(null);
+          onPicture(p);
+        }
+      },
+      () => {},
+    );
     return () => {
       on = false;
     };
   }, [onPicture]);
 
   async function pick(kind) {
-    if (opening) return;
+    if (busy.current) return;
+    busy.current = true;
     setOpening(kind);
     setError(null);
     try {
       const p = kind === "camera" ? await fromCamera() : await fromGallery();
       if (p) onPicture(p);
     } catch (e) {
+      if (!(e instanceof PictureError)) console.warn(e); // the system's own error, for the log
       setError(e instanceof PictureError ? e.message : "Couldn't get that picture. Try again.");
     } finally {
+      busy.current = false;
       setOpening(null);
     }
   }
@@ -2613,44 +2626,48 @@ Create `mobile/src/create/DetailsStep.js`:
 ```js
 // Step 2: the coin's name, ticker, description and links. Problems show once Next was tried.
 import { View } from "react-native";
-import { Button } from "../ui/kit";
+import { Button, T } from "../ui/kit";
+import { C } from "../ui/theme";
 import { Field } from "./Field";
-import { DESCRIPTION_MAX, NAME_MAX, TICKER_MAX, normalizeTicker } from "./rules";
+import { DESCRIPTION_MAX, NAME_MAX, TICKER_MAX, TICKER_MIN, normalizeTicker } from "./rules";
 
 /** `draft`: rules.js blankDraft() as typed; `errors`: validate(draft); `tried`: Next was
- *  pressed once (the problems show from then on). */
+ *  pressed once (the problems show from then on, and a line above Next says so: a field with
+ *  a problem may be scrolled out of view). */
 export function DetailsStep({ draft, onDraft, errors, tried, onNext }) {
   const set = (field, clean = (v) => v) => (v) => onDraft({ ...draft, [field]: clean(v) });
   const setLink = (kind) => (v) => onDraft({ ...draft, links: { ...draft.links, [kind]: v } });
   const shown = tried ? errors : {};
   const left = DESCRIPTION_MAX - draft.description.length;
-  const link = { autoCapitalize: "none", autoCorrect: false, returnKeyType: "next" };
+  const link = { autoCapitalize: "none", autoCorrect: false };
   return (
     <View style={{ gap: 16 }}>
-      <Field label="Name" value={draft.name} onChangeText={set("name")} error={shown.name} maxLength={NAME_MAX} autoCapitalize="words" returnKeyType="next" />
+      <Field label="Name" value={draft.name} onChangeText={set("name")} error={shown.name} maxLength={NAME_MAX} autoCapitalize="words" />
       <Field
         label="Ticker"
         value={draft.ticker}
         onChangeText={set("ticker", normalizeTicker)}
         error={shown.ticker}
-        hint="2 to 10 letters or digits"
+        hint={`${TICKER_MIN} to ${TICKER_MAX} letters or digits`}
         maxLength={TICKER_MAX}
         autoCapitalize="characters"
         autoCorrect={false}
-        returnKeyType="next"
       />
       <Field
         label="Description (optional)"
         value={draft.description}
         onChangeText={set("description")}
         error={shown.description}
-        hint={`${left} characters left`}
+        hint={left === 1 ? "1 character left" : `${left} characters left`}
         maxLength={DESCRIPTION_MAX}
         multiline
       />
       <Field label="X (optional)" value={draft.links.x} onChangeText={setLink("x")} error={shown.x} placeholder="@handle or link" keyboardType="email-address" {...link} />
       <Field label="Telegram (optional)" value={draft.links.telegram} onChangeText={setLink("telegram")} error={shown.telegram} placeholder="@group or link" keyboardType="email-address" {...link} />
       <Field label="Website (optional)" value={draft.links.website} onChangeText={setLink("website")} error={shown.website} placeholder="yoursite.com" keyboardType="url" {...link} />
+      {Object.keys(shown).length > 0 ? (
+        <T v="small" color={C.down} accessibilityLiveRegion="polite">Fix the problems above to go on.</T>
+      ) : null}
       <Button title="Next" onPress={onNext} />
     </View>
   );
@@ -2689,12 +2706,12 @@ export function CommitStep({ choices, commit, onCommit, extra, costFailed, lampo
       <T v="small">{`It launches when ${solText(target)} SOL is in the pool.`}</T>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <T v="small">Wallet</T>
-        {lamports == null ? <ActivityIndicator size="small" color={C.text1} /> : <T v="num">{`${solText(lamports)} SOL`}</T>}
+        {lamports == null ? <ActivityIndicator size="small" color={C.text1} /> : <T v="num">{`${solText(lamports, 3)} SOL`}</T>}
       </View>
       {costFailed ? (
         <T v="small">Couldn't read the fees and rent right now. You can still go on; Solana refuses the open if your SOL doesn't cover it.</T>
       ) : null}
-      {short ? <T v="small" color={C.down}>{short}</T> : null}
+      {short ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{short}</T> : null}
       <Button title="Next" onPress={onNext} busy={reading} disabled={!!short} />
     </View>
   );
@@ -2756,13 +2773,13 @@ export function ReviewStep({ picture, fields, commit, extra, costFailed, target,
           ? "Your wallet asks once: to open the presale with your SOL."
           : "Your wallet asks twice: to sign the coin's details, then to open the presale with your SOL."}
       </T>
-      {short ? <T v="small" color={C.down}>{short}</T> : null}
-      {error ? <T v="small" color={C.down}>{error}</T> : null}
+      {short ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{short}</T> : null}
+      {error ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
       {waiting ? (
         <T v="small">
           {onStartOver
-            ? `No $${fields.symbol} presale showed up, and its last open is too old to land now. Try it again, or start over with a new coin.`
-            : "If it went through, the room opens by itself. Trying again uses the same coin, so it can't open twice."}
+            ? `No $${fields.symbol} presale showed up, and its last open is too old to go through now. Try it again, or start over with a new coin.`
+            : "If it went through, the presale opens by itself. Trying again uses the same coin, so it can't open twice."}
         </T>
       ) : null}
       {creating ? <Steps step={step} /> : null}
@@ -2788,7 +2805,7 @@ import { Card, PillButton, T } from "../ui/kit";
 export function Unopened({ tokens, onOpen }) {
   return (
     <Card style={{ gap: 12 }}>
-      <T v="label">Not opened yet</T>
+      <T v="label" accessibilityRole="header">Not opened yet</T>
       {tokens.map((t) => (
         <View key={t.mint} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <CoinImage uri={t.image} size={40} ticker={t.symbol} />

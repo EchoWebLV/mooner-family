@@ -25,12 +25,12 @@ export function CommitStep({ choices, commit, onCommit, extra, costFailed, lampo
       <T v="small">{`It launches when ${solText(target)} SOL is in the pool.`}</T>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <T v="small">Wallet</T>
-        {lamports == null ? <ActivityIndicator size="small" color={C.text1} /> : <T v="num">{`${solText(lamports)} SOL`}</T>}
+        {lamports == null ? <ActivityIndicator size="small" color={C.text1} /> : <T v="num">{`${solText(lamports, 3)} SOL`}</T>}
       </View>
       {costFailed ? (
         <T v="small">Couldn't read the fees and rent right now. You can still go on; Solana refuses the open if your SOL doesn't cover it.</T>
       ) : null}
-      {short ? <T v="small" color={C.down}>{short}</T> : null}
+      {short ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{short}</T> : null}
       <Button title="Next" onPress={onNext} busy={reading} disabled={!!short} />
     </View>
   );

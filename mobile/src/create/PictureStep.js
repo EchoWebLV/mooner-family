@@ -1,5 +1,5 @@
 // Step 1: the coin's picture, from the camera or the gallery, cropped square.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { CoinImage } from "../ui/CoinImage";
 import { Button, T } from "../ui/kit";
@@ -12,26 +12,38 @@ const SIZE = 200;
 export function PictureStep({ picture, onPicture, onNext }) {
   const [opening, setOpening] = useState(null); // "camera" | "gallery" while it's open
   const [error, setError] = useState(null);
+  const busy = useRef(false); // set before the picker opens, so a double tap can't open it twice
 
   // Android may close the app while the camera is open: the photo comes back on the next start.
   useEffect(() => {
     let on = true;
-    pendingPicture().then((p) => on && p && onPicture(p), () => {});
+    pendingPicture().then(
+      (p) => {
+        if (on && p) {
+          setError(null);
+          onPicture(p);
+        }
+      },
+      () => {},
+    );
     return () => {
       on = false;
     };
   }, [onPicture]);
 
   async function pick(kind) {
-    if (opening) return;
+    if (busy.current) return;
+    busy.current = true;
     setOpening(kind);
     setError(null);
     try {
       const p = kind === "camera" ? await fromCamera() : await fromGallery();
       if (p) onPicture(p);
     } catch (e) {
+      if (!(e instanceof PictureError)) console.warn(e); // the system's own error, for the log
       setError(e instanceof PictureError ? e.message : "Couldn't get that picture. Try again.");
     } finally {
+      busy.current = false;
       setOpening(null);
     }
   }
