@@ -33,6 +33,10 @@ import { C, S } from "../../src/ui/theme";
 const STEPS = ["picture", "details", "commit", "review"];
 const TITLES = { picture: "Picture", details: "Name and links", commit: "Your commit", review: "Open the presale" };
 
+// The presales whose landing has buzzed and pushed the room, for the app's run: an open that
+// outlives its Creator (sign-out, then a reconnect) and the new Creator's watch both see it.
+const landedOnce = new Set();
+
 export default function Create() {
   const wallet = useStore(store, (s) => s.wallet);
   const opening = useStore(store, (s) => s.opening); // undefined until the wallet's saved open is read
@@ -118,6 +122,15 @@ function Creator({ wallet, saved }) {
   const [unknown, setUnknown] = useState(start?.unknown ?? null); // the presale key of an open whose outcome isn't known
   const [read, setRead] = useState(null); // the last retry's read: { verdict, at } (store openCoin)
   const [trying, setTrying] = useState(false); // open() runs: from the tap until it has handled the answer
+  const acting = useRef(false); // open() or startOver() runs; set at once, so neither starts while the other does
+  // false once this Creator is gone (sign-out replaces the tabs; another wallet remounts it)
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const creating = busy?.kind === "create";
   const locked = creating || trying || !!unknown; // the coin stays, and Back stays put
@@ -197,16 +210,16 @@ function Creator({ wallet, saved }) {
   // starts its own, and clears the saved open), the room, and over it the share sheet, only
   // for an open that succeeded here (`share`): its words are made from that open. A presale
   // found later (the watch, ALREADY_OPEN) may have aged or closed since; the room's own Share
-  // has its real numbers. Once per presale: the store's answer and the watched presale can
-  // both bring it.
-  const done = useRef(null);
+  // has its real numbers. The buzz, the room and the share once per presale for the app's run
+  // (landedOnce): the store's answer and the watched presale can both bring it, in this Creator
+  // or in one that came after it. Each Creator still resets its own form.
   const opened = useCallback(
     (key, symbol, share) => {
-      if (done.current === key) return;
-      done.current = key;
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       reset(key);
       readTokens();
+      if (landedOnce.has(key)) return;
+      landedOnce.add(key);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.push(`/presale/${key}`);
       const words = share ? newPresaleShare({ key, symbol, wallet, commit: pick, N: info.N, now: Date.now() }) : null;
       if (words) Share.share(words, { dialogTitle: "Share this presale" }).catch(() => {});
@@ -224,14 +237,21 @@ function Creator({ wallet, saved }) {
   }, [unknown]);
   const landed = useStore(store, (s) => openLanded(unknown, s));
   useEffect(() => {
-    if (landed && !creating && !trying) opened(unknown, coin.symbol, false);
+    if (landed && !creating && !trying) opened(unknown, coin?.symbol, false);
   }, [landed, creating, trying, unknown, coin, opened]);
 
-  // Leaves the saved coin for a new one: only when canStartOver said yes (mayStartOver).
+  // Leaves the saved coin for a new one: only when canStartOver said yes (mayStartOver). The
+  // form leaves the coin first, and Open presale waits until the saved coin is cleared.
   async function startOver() {
-    if (!mayStartOver) return;
-    await store.getState().forgetOpening(wallet, unknown);
+    if (!mayStartOver || acting.current) return;
+    acting.current = true;
+    const key = unknown;
     reset();
+    try {
+      await store.getState().forgetOpening(wallet, key);
+    } finally {
+      acting.current = false;
+    }
     readTokens(); // the coin left shows under "Not opened yet"
   }
 
@@ -257,7 +277,9 @@ function Creator({ wallet, saved }) {
   }
 
   async function open() {
-    if (trying || store.getState().busy || !signer || pick == null) return;
+    if (acting.current || trying || store.getState().busy || !signer || pick == null) return;
+    if (signer.publicKey.toBase58() !== wallet) return; // the wallet changed before the store did
+    acting.current = true;
     setError(null);
     setRead(null);
     setTrying(true);
@@ -268,6 +290,9 @@ function Creator({ wallet, saved }) {
         if (!r.ok) return failed(r.error);
         issued = r.value;
         setCoin(issued);
+        // signed out or another wallet while the details were signed: no open from a Creator
+        // that's gone; the coin shows under "Not opened yet"
+        if (!alive.current || store.getState().wallet !== wallet) return;
       }
       const key = presaleKeyOf(info, issued.mint);
       const r = await store.getState().openCoin({ ...fields, mint: issued.mint, presale: key, image: issued.image }, pick, signer);
@@ -277,6 +302,7 @@ function Creator({ wallet, saved }) {
       if (isUnknown(r.error)) setUnknown(key); // the coin stays (the store saved it); the watch above sees it land
       failed(r.error);
     } finally {
+      acting.current = false;
       setTrying(false); // after opened() above, so the watch can't take a success first
     }
   }

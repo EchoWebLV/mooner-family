@@ -72,11 +72,11 @@
   - its Task 0: `check-bundle.sh` checks that the bundle holds this checkout's own screens, Metro keeps a cache per checkout, and every install runs the check first;
   - `app.json` already written by a JSON script (`JSON.stringify(j, null, 2) + "\n"`), with its release-signing plugin and App Links filter, so Task 1's script changes only the picker's entry;
   - its USER STEP B choice about release signing, recorded in Task 10's checklist line there: **(a)**, the agent's builds sign with the user's key. This plan's installs follow it (see Device below).
-- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 61 tests: 24 in `test/create.test.mjs` and 37 in `test/create-store.test.mjs`.
+- **Test counts:** the phone's count before Task 2 is whatever `cd mobile && npm test` prints then (BEFORE). Nothing here hardcodes it. This plan adds 62 tests: 24 in `test/create.test.mjs` and 38 in `test/create-store.test.mjs`.
 - **Checked while writing (a record, not a gate).** The second round's changes were not run in a copy at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210` or `ef2e0f2`: the saved open and the read before a retry, `alreadyOpen`, `openPresale`'s unknown outcome after a 202, the share only after an open that succeeded here, and the Device wording. The third round's weren't either: the save before the wallet is asked, the copy in memory, the read before the commit check and its server-only 404, Start over, and the `trying` watch. Its check was read-only: each store, `JoinSheet.js` and `icons.js` anchor was counted at `ef2e0f2` (14 anchors, each found once), and piece 3's committed blocks were read, not applied: none of them holds or shares a line with any of these anchors, so each still matches once after piece 3. The checks below are from before them, on 2026-10-01 at HEAD `c38e1c4`, in a clean `git archive` of it in the scratchpad (and first at `8edc177` and `238150c`, with the same results but for the engine's count). Piece 3's blocks were applied by script first (68 edits), then this plan's (26: Task 1's `app.json` script, the new files, the store, `JoinSheet.js` and `icons.js` edits, and the tabs layout). Each anchor matched exactly once. The fourth round's changes (the coin saved again once the wallet signs and when an unknown is reported, and their tests) were not run either. Its check was read-only as well: the 14 anchors were counted again at `ccb0f94`, by a script that reads `git show HEAD:<file>`, and each was found once.
   - Task 1: the plugins print begins exactly as in Step 2, and the `app.json` diff after piece 3 is only the picker's lines. `mobile/node_modules/expo/bundledNativeModules.json` lists `expo-image-manipulator` `~55.0.21` and `expo-image-picker` `~55.0.24`.
-  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 61 now (24 and 37).
-  - Failing first, as written: `create.test.mjs` with `ERR_MODULE_NOT_FOUND` for `rules.js`; `create-store.test.mjs` with `# fail 15` (`mintCoin`, `openCoin`, `openCost` not functions) before the store edits. With the fourth round's tests and the review's, Task 3 Step 2 expects `# fail 37` (checked against the store at `ea6c593`, before Task 3).
+  - `cd mobile && npm test`: `# pass 221`, `# fail 0`. That is 187 after piece 3 (BEFORE) plus the 34 new tests the plan had then: `create.test.mjs` 19, `create-store.test.mjs` 15. It has 62 now (24 and 38).
+  - Failing first, as written: `create.test.mjs` with `ERR_MODULE_NOT_FOUND` for `rules.js`; `create-store.test.mjs` with `# fail 15` (`mintCoin`, `openCoin`, `openCost` not functions) before the store edits. With the fourth round's tests and the review's, Task 3 Step 2 expects `# fail 38` (checked against the store at `ea6c593`, before Task 3).
   - `cd engine && npm test`: `# pass 384`, `# fail 0`: 369 at `c38e1c4`, plus piece 3's 15. `6b9bbfe`, `df9abda`, `0c1cad3`, `e81bb45`, `874b210`, `5ba106a` and `ef2e0f2` change engine tests; that count wasn't taken. This plan changes nothing in `engine/`.
   - The parse check passes on `create.js`, `_layout.js`, the six files of Task 6, `picture.js`, `Chip.js`, `JoinSheet.js`, `icons.js` and `store.js`, with piece 3's screen files. `JoinSheet.js` has no `Pressable`, `F.` or `R.` left, and keeps `Haptics`.
   - Not run: `expo install`, prebuild, any Metro bundle and the device steps. `node_modules` were symlinks from the repo, used only by `node --test`, and removed afterwards.
@@ -196,7 +196,7 @@ BigInts and PublicKeys arrive as strings.
 - Create `src/ui/Chip.js` (moved out of `src/room/JoinSheet.js`, which then imports it), with an optional `label` for screen readers. Modify `src/ui/icons.js` (`PlusIcon`).
 - Create `src/create/Field.js`, `src/create/PictureStep.js`, `src/create/DetailsStep.js`, `src/create/CommitStep.js`, `src/create/ReviewStep.js`, `src/create/Unopened.js`.
 - Create `app/(tabs)/create.js`. Modify `app/(tabs)/_layout.js` (the Create tab, between Launched and Me).
-- Create `test/create.test.mjs` (24 tests) and `test/create-store.test.mjs` (37 tests).
+- Create `test/create.test.mjs` (24 tests) and `test/create-store.test.mjs` (38 tests).
 
 **Docs:** at the end, a piece 4 status line in the spec.
 
@@ -1197,7 +1197,7 @@ The saved open (`opening`):
 - **The saved commit.** A retry opens with the saved commit, whatever the screen hands in: it is fixed for its mint. If it no longer fits a seat under /api/info's numbers, `keptCommitProblem` says so in one line (e.g. "0.45 SOL is more than a seat can hold now.") and nothing is signed. Then the funds check (`shortOfOpen` with `openCost()` and the wallet's SOL), after the read, so a wallet short of SOL still gets the read that Start over needs.
 - **The read goes back to the screen** in `openCoin`'s answer, as `read: { verdict, at }` (`at`: when it was asked, taken before the read, the cautious side). It isn't a separate action: there is one read per tap, and it belongs to the try it gated. The screen hands it to `canStartOver` with `opening` (Task 7).
 - **The feed has it.** Just before the wallet is asked, the wrapper checks `openLanded(coin.presale, state)`. If the feed already shows the presale, it throws ALREADY_OPEN and the wallet isn't asked.
-- **One coin at a time.** While a coin is saved for the wallet, `openCoin` refuses any other mint with OPEN_PENDING: only that coin can be tried, or left by Start over.
+- **One coin at a time.** While a coin is saved for the wallet, `openCoin` refuses any other mint with OPEN_PENDING, and `mintCoin` refuses a new coin the same way, before the wallet is asked (it checks this run's copy, else the connected wallet's `opening`): only that coin can be tried, or left by Start over.
 
 - [ ] **Step 0: Check the files are clean**
 
@@ -1375,6 +1375,21 @@ test("mintCoin: Decline in the wallet is a cancel, and nothing reaches the serve
   });
   assert.deepEqual(await store.getState().mintCoin(COIN, signer), { ok: false, error: "You cancelled it in your wallet." });
   assert.ok(!calls.some(([k]) => k === "api.mint"));
+});
+
+test("mintCoin: no new coin while one is saved for the wallet, and the wallet isn't asked; once it's cleared, it mints", async () => {
+  const { store, calls, disk, signer, steps } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().mintCoin(COIN, signer), { ok: false, error: OPEN_PENDING });
+  assert.ok(!calls.some(([k]) => k === "mint" || k === "signMessage"), "the wallet wasn't asked");
+  assert.deepEqual(steps, []);
+  assert.deepEqual(disk.get(SAVED_NAME), OLD);
+  assert.equal(store.getState().busy, null);
+  await store.getState().forgetOpening(W, PRE);
+  const r = await store.getState().mintCoin(COIN, signer);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.mint, MINT);
+  assert.ok(calls.some(([k]) => k === "signMessage"));
 });
 
 test("openCoin: the open with the creator's commit, then remembered as this wallet's seat", async () => {
@@ -1897,7 +1912,7 @@ test("openCoin: a retry's funds check reads the signing wallet's SOL only, not a
 - [ ] **Step 2: Run it to see it fail**
 
 Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/create-store.test.mjs`
-Expected: `# fail 37`, with errors such as `store.getState(...).mintCoin is not a function`
+Expected: `# fail 38`, with errors such as `store.getState(...).mintCoin is not a function`
 
 - [ ] **Step 3: Add the actions to the store**
 
@@ -2041,12 +2056,17 @@ with:
   /** Asks the server for a new coin: the wallet signs its details, then the server pins the
    *  picture and details to IPFS and issues the coin to this wallet. `coin`: create/rules.js
    *  mintFields(draft) plus `image` (the picture's bytes). Returns { ok: true, value: { mint,
-   *  presale, name, symbol, image, uri } } or { ok: false, error }. */
+   *  presale, name, symbol, image, uri } } or { ok: false, error }. While a coin is saved for
+   *  the wallet (this run's copy, else the connected wallet's `opening`), it refuses with
+   *  OPEN_PENDING before the wallet is asked: only that coin can be tried, or left by Start
+   *  over. */
   function mintCoin(coin, signer) {
     return run(
       "create",
       "create",
       async (onStep) => {
+        const wallet = signer.publicKey.toBase58();
+        if (openings.has(wallet) ? openings.get(wallet) : get().wallet === wallet && get().opening) throw new Error(OPEN_PENDING);
         onStep("Sign the coin details in your wallet");
         const signMessage = async (bytes) => {
           const signature = await signer.signMessage(bytes);
@@ -2202,10 +2222,10 @@ After piece 3 the line ends `…joinCost, sendChat, noteRef, preview, trade });`
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `cd mobile && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/create-store.test.mjs`
-Expected: `# pass 37`, `# fail 0`
+Expected: `# pass 38`, `# fail 0`
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 61, `# fail 0`. `test/store.test.mjs` passes unchanged.
+Expected: pass is BEFORE + 62, `# fail 0`. `test/store.test.mjs` passes unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -2460,7 +2480,7 @@ export function PlusIcon({ color, size = 22 }) {
 - [ ] **Step 4: Tests and parse check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 61, `# fail 0`
+Expected: pass is BEFORE + 62, `# fail 0`
 
 Run from `mobile/` the parse check with `src/ui/Chip.js src/room/JoinSheet.js src/ui/icons.js`.
 Expected: `parsed 3 files`
@@ -2854,6 +2874,12 @@ How the screen works:
   3. a success buzz, then the form resets and the room opens with the share sheet up. The share words are piece 3's, through `newPresaleShare`, with the creator's wallet as the link's ref. Only an open that succeeded here brings the share sheet: its words are made from that open. A presale found later (the watch, or ALREADY_OPEN) may have aged or closed since, so the room opens without it, and the room's own Share (piece 3) has its real numbers.
 
   If the open fails after the coin was issued, the coin stays in the screen's state. Pressing Open presale again then asks the wallet once. The coin also shows under "Not opened yet" the next time the tab is shown.
+
+  **A `Creator` that goes away mid-try.** Sign-out replaces the tabs (`router.replace("/connect")` in `me.js`), and another wallet remounts the `Creator`, but its `open()` runs on:
+  - `open()` starts only if the signer's key is the store's wallet;
+  - after `mintCoin` it stops before `openCoin` if the `Creator` is gone (`alive`, false on unmount) or the store's wallet changed. No open prompt comes after sign-out, and the coin shows under "Not opened yet" (`unopenedOf`: its `presale` is null on the server);
+  - an open already past its mint runs to its answer. The buzz, the room and the share sheet come once per presale for the app's run (`landedOnce`, a `Set` outside the component), so that answer and a later `Creator`'s watch don't both push the room. Each `Creator` still resets its own form, so a restored one doesn't stay locked;
+  - a later `Creator` that mounted before the coin was saved can't mint a second coin over it: the store's `mintCoin` refuses with OPEN_PENDING (Task 3).
 - **An open whose outcome isn't known** (OUTCOME_UNKNOWN from `openCoin`):
   - the coin stays, and Back stays put, so Open presale can only retry the same coin;
   - the store saved the coin for the wallet before the wallet was asked, again once it signed, and again when the unknown was reported, so after an app restart, Android ending the app or a reconnect, the screen comes back to it the same way, until it settles;
@@ -2861,9 +2887,9 @@ How the screen works:
   - a retry uses the saved commit. If that no longer fits a seat, the store's one line says so (for example "0.3 SOL is more than a seat can hold now."), and nothing is signed. Start over, once it shows, is the way out;
   - Open presale stays pressable while waiting, even if the wallet looks short: the store's funds check comes after its read, and Start over needs that read;
   - the screen watches the presale's key (`presaleKeyOf`) through the store's `watch`, and runs the success path once the presale shows up (`openLanded`). It skips that while a try runs (`trying`: from the tap until `open()` has handled the answer), and picks it up again after every answer that keeps the coin;
-  - so an open that succeeded here always brings the share sheet. `open()` calls `opened(key, symbol, true)` before `trying` goes false, and `opened` resets the form, which clears `unknown` and stops the watch. The store's `busy` alone wouldn't do: `run` clears it in its `finally`, before `openCoin`'s answer reaches `open()`, and the watch could take the presale first, with no share sheet;
+  - so an open that succeeded here brings the share sheet, unless a later `Creator`'s watch took it first (above). `open()` calls `opened(key, symbol, true)` before `trying` goes false, and `opened` resets the form, which clears `unknown` and stops the watch. The store's `busy` alone wouldn't do: `run` clears it in its `finally`, before `openCoin`'s answer reaches `open()`, and the watch could take the presale first, with no share sheet;
   - a retry of an open that had landed comes back ALREADY_OPEN, and goes to the room the same way;
-  - **Start over:** "Start over with a new coin" shows only when `canStartOver(opening, read.verdict, read.at)` says yes: the last retry's read got the server's own 404, more than 5 minutes after the coin's last save (`opening.at`: before the prompt, once the wallet signed, or when an unknown was reported). It never shows while a try runs. It clears that coin's saved open (`forgetOpening(wallet, presale)`), then resets the form and reads the wallet's coins again. The coin shows under "Not opened yet" then: its `presale` is still null on the server;
+  - **Start over:** "Start over with a new coin" shows only when `canStartOver(opening, read.verdict, read.at)` says yes: the last retry's read got the server's own 404, more than 5 minutes after the coin's last save (`opening.at`: before the prompt, once the wallet signed, or when an unknown was reported). It never shows while a try runs. It resets the form first, then clears that coin's saved open (`forgetOpening(wallet, presale)`) and reads the wallet's coins again. `open()` and Start over share a guard that is set at once (`acting`, a ref), so neither starts while the other runs. The coin shows under "Not opened yet" then: its `presale` is still null on the server;
   - the fresh form after a landed open clears the saved coin: `reset(key)` with the presale's key, which `opened(key)` passes. A reset without a key (Back's fresh start) clears nothing.
 - **Back from the commit step of an issued coin** starts afresh. An issued coin's details are fixed: its name, ticker and picture were signed and pinned.
 
@@ -2911,6 +2937,10 @@ import { C, S } from "../../src/ui/theme";
 
 const STEPS = ["picture", "details", "commit", "review"];
 const TITLES = { picture: "Picture", details: "Name and links", commit: "Your commit", review: "Open the presale" };
+
+// The presales whose landing has buzzed and pushed the room, for the app's run: an open that
+// outlives its Creator (sign-out, then a reconnect) and the new Creator's watch both see it.
+const landedOnce = new Set();
 
 export default function Create() {
   const wallet = useStore(store, (s) => s.wallet);
@@ -2997,6 +3027,15 @@ function Creator({ wallet, saved }) {
   const [unknown, setUnknown] = useState(start?.unknown ?? null); // the presale key of an open whose outcome isn't known
   const [read, setRead] = useState(null); // the last retry's read: { verdict, at } (store openCoin)
   const [trying, setTrying] = useState(false); // open() runs: from the tap until it has handled the answer
+  const acting = useRef(false); // open() or startOver() runs; set at once, so neither starts while the other does
+  // false once this Creator is gone (sign-out replaces the tabs; another wallet remounts it)
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const creating = busy?.kind === "create";
   const locked = creating || trying || !!unknown; // the coin stays, and Back stays put
@@ -3076,16 +3115,16 @@ function Creator({ wallet, saved }) {
   // starts its own, and clears the saved open), the room, and over it the share sheet, only
   // for an open that succeeded here (`share`): its words are made from that open. A presale
   // found later (the watch, ALREADY_OPEN) may have aged or closed since; the room's own Share
-  // has its real numbers. Once per presale: the store's answer and the watched presale can
-  // both bring it.
-  const done = useRef(null);
+  // has its real numbers. The buzz, the room and the share once per presale for the app's run
+  // (landedOnce): the store's answer and the watched presale can both bring it, in this Creator
+  // or in one that came after it. Each Creator still resets its own form.
   const opened = useCallback(
     (key, symbol, share) => {
-      if (done.current === key) return;
-      done.current = key;
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       reset(key);
       readTokens();
+      if (landedOnce.has(key)) return;
+      landedOnce.add(key);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.push(`/presale/${key}`);
       const words = share ? newPresaleShare({ key, symbol, wallet, commit: pick, N: info.N, now: Date.now() }) : null;
       if (words) Share.share(words, { dialogTitle: "Share this presale" }).catch(() => {});
@@ -3103,14 +3142,21 @@ function Creator({ wallet, saved }) {
   }, [unknown]);
   const landed = useStore(store, (s) => openLanded(unknown, s));
   useEffect(() => {
-    if (landed && !creating && !trying) opened(unknown, coin.symbol, false);
+    if (landed && !creating && !trying) opened(unknown, coin?.symbol, false);
   }, [landed, creating, trying, unknown, coin, opened]);
 
-  // Leaves the saved coin for a new one: only when canStartOver said yes (mayStartOver).
+  // Leaves the saved coin for a new one: only when canStartOver said yes (mayStartOver). The
+  // form leaves the coin first, and Open presale waits until the saved coin is cleared.
   async function startOver() {
-    if (!mayStartOver) return;
-    await store.getState().forgetOpening(wallet, unknown);
+    if (!mayStartOver || acting.current) return;
+    acting.current = true;
+    const key = unknown;
     reset();
+    try {
+      await store.getState().forgetOpening(wallet, key);
+    } finally {
+      acting.current = false;
+    }
     readTokens(); // the coin left shows under "Not opened yet"
   }
 
@@ -3136,7 +3182,9 @@ function Creator({ wallet, saved }) {
   }
 
   async function open() {
-    if (trying || store.getState().busy || !signer || pick == null) return;
+    if (acting.current || trying || store.getState().busy || !signer || pick == null) return;
+    if (signer.publicKey.toBase58() !== wallet) return; // the wallet changed before the store did
+    acting.current = true;
     setError(null);
     setRead(null);
     setTrying(true);
@@ -3147,6 +3195,9 @@ function Creator({ wallet, saved }) {
         if (!r.ok) return failed(r.error);
         issued = r.value;
         setCoin(issued);
+        // signed out or another wallet while the details were signed: no open from a Creator
+        // that's gone; the coin shows under "Not opened yet"
+        if (!alive.current || store.getState().wallet !== wallet) return;
       }
       const key = presaleKeyOf(info, issued.mint);
       const r = await store.getState().openCoin({ ...fields, mint: issued.mint, presale: key, image: issued.image }, pick, signer);
@@ -3156,6 +3207,7 @@ function Creator({ wallet, saved }) {
       if (isUnknown(r.error)) setUnknown(key); // the coin stays (the store saved it); the watch above sees it land
       failed(r.error);
     } finally {
+      acting.current = false;
       setTrying(false); // after opened() above, so the watch can't take a success first
     }
   }
@@ -3263,7 +3315,7 @@ The other screens' options are exactly as at `c38e1c4` (the file is unchanged si
 - [ ] **Step 3: Tests, parse check, bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 61, `# fail 0`
+Expected: pass is BEFORE + 62, `# fail 0`
 
 Run from `mobile/` the parse check with `"app/(tabs)/create.js" "app/(tabs)/_layout.js"`.
 Expected: `parsed 2 files`
@@ -3505,7 +3557,7 @@ Run superpowers:code-reviewer over the commits of Tasks 1-7, against this plan a
 - [ ] **Step 2: Every suite and the bundle check**
 
 Run: `cd mobile && npm test 2>&1 | grep -E '^# (pass|fail)'`
-Expected: pass is BEFORE + 61, plus any tests the review added; `# fail 0`
+Expected: pass is BEFORE + 62, plus any tests the review added; `# fail 0`
 
 Run: `cd engine && npm test`
 Expected: 0 fail. This plan changes nothing in `engine/`.
@@ -3580,5 +3632,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" -- docs/superpowers/spe
 - **The store's `watch` and the room's (verified).** Create stops its watch (the form resets) before it pushes the room, which starts its own. The order can't matter: `engine/src/live.js` `subscribe` (lines 91–108 at `ef2e0f2`: its doc comment 91–95, the function 96–108) keeps a Set of listeners per topic and sends `unsub` only when the last one leaves. Since `0c1cad3` it sends `sub` again for a topic it has, so a listener that comes second gets the snapshot too. Since `874b210` the server answers at most 30 such repeat subs of a held topic a minute per socket, and the doc says a listener must not subscribe again from its own snapshot handler. Create and the room make at most one repeat sub per open, and neither makes it from a handler.
 - **What marks a presale as there (verified).** `openLanded` takes a `views[key]` or `presales[key]` with a `state`. `mobile/src/store.js` `onPresale` (lines 125-129 at `ccb0f94`) puts a missing presale only in `missing[key]`, never in `views`. A `"closed"` view needs the server's `markOpened`, which runs only after an open landed (`api.js` lines 327 and 414, `keeper.js` line 67, at `ccb0f94`).
 - **The share's "in so far".** The new presale's share says the creator's commit is what's in, from the open itself, not from the feed. Someone joining in the same seconds isn't counted.
-- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 61 (24 + 37).
+- The number of phone tests: it depends on the other pieces' progress, so the plan counts from BEFORE and adds 62 (24 + 38).
 - **Not run at `6b9bbfe`, `df9abda`, `e81bb45`, `874b210`, `ef2e0f2` or `ccb0f94`.** The second round's changes (the saved open and the read before a retry, `alreadyOpen`, the 202's unknown outcome, the share only after an open that succeeded here, the Device wording) and the third round's (the save before the wallet is asked, the copy in memory, the read before the commit check with the server's own 404 only, the saved commit, the feed's check before the prompt, one coin at a time, Start over, and the `trying` watch) were not applied to a clean copy or run, and neither were the fourth round's (the coin saved again once the wallet signs and when an unknown is reported, with their tests). Both checks were read-only: the third round counted each anchor at `ef2e0f2`, and the fourth counted all 14 again at `ccb0f94` (a script that reads `git show HEAD:<file>`; each found once). Nothing was run. The counts in "Before this plan" are from `c38e1c4`, before them: a record, not a gate.

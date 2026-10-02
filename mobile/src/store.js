@@ -449,12 +449,17 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   /** Asks the server for a new coin: the wallet signs its details, then the server pins the
    *  picture and details to IPFS and issues the coin to this wallet. `coin`: create/rules.js
    *  mintFields(draft) plus `image` (the picture's bytes). Returns { ok: true, value: { mint,
-   *  presale, name, symbol, image, uri } } or { ok: false, error }. */
+   *  presale, name, symbol, image, uri } } or { ok: false, error }. While a coin is saved for
+   *  the wallet (this run's copy, else the connected wallet's `opening`), it refuses with
+   *  OPEN_PENDING before the wallet is asked: only that coin can be tried, or left by Start
+   *  over. */
   function mintCoin(coin, signer) {
     return run(
       "create",
       "create",
       async (onStep) => {
+        const wallet = signer.publicKey.toBase58();
+        if (openings.has(wallet) ? openings.get(wallet) : get().wallet === wallet && get().opening) throw new Error(OPEN_PENDING);
         onStep("Sign the coin details in your wallet");
         const signMessage = async (bytes) => {
           const signature = await signer.signMessage(bytes);

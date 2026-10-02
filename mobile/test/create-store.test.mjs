@@ -166,6 +166,21 @@ test("mintCoin: Decline in the wallet is a cancel, and nothing reaches the serve
   assert.ok(!calls.some(([k]) => k === "api.mint"));
 });
 
+test("mintCoin: no new coin while one is saved for the wallet, and the wallet isn't asked; once it's cleared, it mints", async () => {
+  const { store, calls, disk, signer, steps } = rig({ disk: new Map([[SAVED_NAME, OLD]]) });
+  await store.getState().setWallet(W);
+  assert.deepEqual(await store.getState().mintCoin(COIN, signer), { ok: false, error: OPEN_PENDING });
+  assert.ok(!calls.some(([k]) => k === "mint" || k === "signMessage"), "the wallet wasn't asked");
+  assert.deepEqual(steps, []);
+  assert.deepEqual(disk.get(SAVED_NAME), OLD);
+  assert.equal(store.getState().busy, null);
+  await store.getState().forgetOpening(W, PRE);
+  const r = await store.getState().mintCoin(COIN, signer);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.mint, MINT);
+  assert.ok(calls.some(([k]) => k === "signMessage"));
+});
+
 test("openCoin: the open with the creator's commit, then remembered as this wallet's seat", async () => {
   const { store, calls, disk, signer, steps } = rig();
   await store.getState().setWallet(W);
