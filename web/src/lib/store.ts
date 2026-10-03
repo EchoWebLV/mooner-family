@@ -20,7 +20,6 @@ import { linkHref, normalizeTicker, notEnoughSol, type LaunchForm, NAME_MAX, TIC
 import { TITLES } from './levels'
 import { DEFAULT_PFP, handlePfp, sanitizePfp } from './pfp/traits'
 import { canJoin, pickMatch } from './presale'
-import { joinCost, openCost } from '../../../engine/src/flows.js'
 import { presalePda } from '../../../engine/src/pdas.js'
 import { signIn as engineSignIn } from '../../../engine/src/signin.js'
 import { stageOf as viewStage } from '../../../engine/src/views.js'
@@ -211,7 +210,7 @@ interface ChatRow {
 
 const GUEST = 'guest'
 const MAX_TOASTS = 4
-const PUBLIC = new Connection(chain.PUBLIC_RPC, 'confirmed')
+const SOLANA = new Connection(chain.SOLANA_RPC, 'confirmed')
 const LOGIN_KEY = (w: string) => `mooner:login:${w}`
 
 const NO_TITLES = Object.fromEntries(TITLES.map((t) => [t, { xp: 0, level: 1 }])) as Record<Title, TitleProgress>
@@ -630,7 +629,7 @@ export function createAppStore(): AppStore {
       const w = get().wallet
       const t = get().world.tokens[id]
       if (!w || !t?.address || (t.stage !== 'live' && t.stage !== 'migrated')) return
-      const b = await tokenBalance(PUBLIC, w.publicKey, new PublicKey(t.address))
+      const b = await tokenBalance(SOLANA, w.publicKey, new PublicKey(t.address))
       set((s) => ({ held: { ...s.held, [id]: b.ui } }))
       rebuild()
     }
@@ -703,7 +702,7 @@ export function createAppStore(): AppStore {
               : await quote(t.address, WSOL, BigInt(Math.floor(amount * 1e6)))
           // the wallet signs only; the trade is sent from here until it lands or its
           // blockhash runs out (a lost answer is outcome unknown, never a plain failure)
-          await swap(q, w.publicKey, PUBLIC, w.signTransaction, onStep)
+          await swap(q, w.publicKey, SOLANA, w.signTransaction, onStep)
           const tokens = side === 'buy' ? Number(q.outAmount) / 1e6 : Number(q.inAmount) / 1e6
           const sol = side === 'buy' ? Number(q.inAmount) / 1e9 : Number(q.outAmount) / 1e9
           readHeld(tokenId).catch(() => {})
@@ -785,7 +784,7 @@ export function createAppStore(): AppStore {
         if (was === 'unknown') return keep(wallet, coin, "Couldn't check the presale. Try again in a moment.")
         // no presale yet: keep() judges whether its last open is too old to land any more
         read = was
-        const extra = await openCost().then((c) => Number(c.total), () => null)
+        const extra = await chain.openCost().then((c) => Number(c.total), () => null)
         if (coin.commit + (extra ?? 0) > get().world.walletLamports) {
           return keep(wallet, coin, notEnoughSol('opening the presale', coin.commit, extra), read)
         }
@@ -924,7 +923,7 @@ export function createAppStore(): AppStore {
         if (!w) return fail('Connect your wallet first')
         const value = snap(amount)
         // the same join tx JoinForm sends: the deposit, and what the join takes besides it
-        const extra = await joinCost().then((c) => Number(c.total), () => null)
+        const extra = await chain.joinCost().then((c) => Number(c.total), () => null)
         if (value + (extra ?? 0) > get().world.walletLamports) return fail(notEnoughSol('the join', value, extra))
         const tokenId = pickMatch(get().world, w.publicKey.toBase58(), value)
         if (!tokenId) return fail('No open presale has room for that right now. Open your own.')
@@ -1012,7 +1011,7 @@ export function createAppStore(): AppStore {
         const value = Math.min(snap(form.commit), MAX_CREATOR_COMMIT)
         // before the wallet signs anything and the server pins the metadata: the commit, and
         // what opening takes besides it
-        const extra = await openCost().then((c) => Number(c.total), () => null)
+        const extra = await chain.openCost().then((c) => Number(c.total), () => null)
         if (value + (extra ?? 0) > get().world.walletLamports) return fail(notEnoughSol('opening the presale', value, extra))
         // the coin, once the server made it, is kept from before the open is signed (openKept):
         // a reload or another tab mid-open tries it again, never a new one

@@ -24,7 +24,7 @@ import {
 import type { Opening } from '@/lib/store'
 import type { TokenLinks, World } from '@/lib/types'
 import styles from './LaunchScreen.module.css'
-import { openCost } from '../../../../engine/src/flows.js'
+import { openCost } from '@/real/chain.js'
 import { OUTCOME_UNKNOWN } from '../../../../engine/src/tx.js'
 
 type Field = keyof LaunchErrors

@@ -23,7 +23,7 @@ import { TokenScreen } from '@/components/token/TokenScreen'
 import { NotFound } from '@/components/ui/NotFound'
 import { useApp, WorldProvider } from '@/components/world/WorldProvider'
 import { BOARDS, type Board } from '@/lib/leaderboard'
-import { PUBLIC_RPC } from '@/real/chain.js'
+import { PUBLIC_RPC, SOLANA_RPC } from '@/real/chain.js'
 import { noteRef } from '@/real/refs.js'
 
 // the app's id in the Privy dashboard (public), from web/.env at build time
@@ -50,8 +50,11 @@ const PRIVY: PrivyClientConfig = {
   externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
   solana: {
     rpcs: {
+      // the server's RPC (POST /api/rpc): Solana's public one answers 403 to a browser. The
+      // server has no RPC socket, so subscriptions stay on the public one; the site only has
+      // Privy sign (flows.js and swap.js send), so nothing subscribes there
       'solana:mainnet': {
-        rpc: createSolanaRpc(PUBLIC_RPC),
+        rpc: createSolanaRpc(SOLANA_RPC),
         rpcSubscriptions: createSolanaRpcSubscriptions(PUBLIC_RPC.replace(/^http/, 'ws')),
       },
     },

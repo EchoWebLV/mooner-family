@@ -5,6 +5,8 @@
 //
 //   MOONER_CLUSTER       mainnet | devnet                     (mainnet)
 //   MOONER_RPC           Solana RPC                           (the cluster's public RPC)
+//   MOONER_APP_RPC       the RPC the apps use through POST /api/rpc, e.g. another key so they
+//                        can't spend the keeper's plan            (MOONER_RPC)
 //   MOONER_DIR           keys, record, database, openers list (engine/.mainnet)
 //   MOONER_PROGRAM, MOONER_DBC_CONFIG, MOONER_ALT            (from <dir>/deployment.json)
 //   MOONER_GATE_KEY, MOONER_BOT_KEY                          (<dir>/gate-keypair.json, bot-)
@@ -82,6 +84,7 @@ export function loadConfig(env = process.env) {
     canary,
     dir,
     rpc: env.MOONER_RPC || RPC[cluster],
+    appRpc: env.MOONER_APP_RPC || env.MOONER_RPC || RPC[cluster],
     ers: ER[cluster],
     pid: key("MOONER_PROGRAM", "programId"),
     dbcConfig: key("MOONER_DBC_CONFIG", "dbcConfig"),

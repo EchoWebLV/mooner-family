@@ -13,7 +13,7 @@ import { allocationFor } from '@/lib/curve'
 import { fmtCompact, fmtPct, fmtSol, fmtSolRound, solToLamports } from '@/lib/format'
 import { notEnoughSol } from '@/lib/launch'
 import styles from './FindMatchDialog.module.css'
-import { joinCost } from '../../../../engine/src/flows.js'
+import { joinCost } from '@/real/chain.js'
 
 type Choice = 'join' | 'create'
 

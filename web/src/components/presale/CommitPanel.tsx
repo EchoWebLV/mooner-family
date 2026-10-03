@@ -12,7 +12,7 @@ import { notEnoughSol } from '@/lib/launch'
 import { canJoin, clampCommit, commitLimitReason, commitRange, participantOf } from '@/lib/presale'
 import type { Lamports, Token, World } from '@/lib/types'
 import styles from './CommitPanel.module.css'
-import { joinCost } from '../../../../engine/src/flows.js'
+import { joinCost } from '@/real/chain.js'
 
 interface CommitPanelProps {
   t: Token

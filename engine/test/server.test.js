@@ -914,6 +914,13 @@ test("config: the deployment record, the openers file", () => {
     assert.equal(loadConfig({ MOONER_DIR: dir, MOONER_CLUSTER: "devnet" }).ers.MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57, "https://devnet-as.magicblock.app");
     assert.throws(() => loadConfig({ MOONER_DIR: dir, MOONER_CANARY: "1" }), /devnet only/);
     assert.throws(() => loadConfig({ MOONER_DIR: `${dir}/none` }), /MOONER_PROGRAM/);
+    // the apps' RPC (/api/rpc) is the server's unless MOONER_APP_RPC names another
+    assert.equal(cfg.appRpc, cfg.rpc);
+    assert.equal(loadConfig({ MOONER_DIR: dir, MOONER_RPC: "https://a.example" }).appRpc, "https://a.example");
+    assert.deepEqual(
+      ((c) => [c.rpc, c.appRpc])(loadConfig({ MOONER_DIR: dir, MOONER_RPC: "https://a.example", MOONER_APP_RPC: "https://b.example" })),
+      ["https://a.example", "https://b.example"],
+    );
 
     const openers = openersFrom(`${dir}/openers.txt`);
     assert.equal(openers().size, 0, "no file: nobody");

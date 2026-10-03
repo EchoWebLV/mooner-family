@@ -17,6 +17,7 @@
 //   GET  /api/health                 keeper status, bot balance, what the live feed heard
 //   GET  /api/blockhash              a recent Solana blockhash, for the txs a wallet signs
 //   GET  /api/ws                     WebSocket: all of the above as it changes (hub.js, feed.js)
+//   POST /api/rpc                    one Solana JSON-RPC call over the server's RPC (rpcproxy.js)
 
 import { Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { DELEGATION_PROGRAM, describeTxError, numbers } from "../src/consts.js";

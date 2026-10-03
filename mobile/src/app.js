@@ -12,9 +12,10 @@ import { makeMarket } from "./trading";
 
 export const live = makeLive({ url: WS_URL });
 export const api = makeApi(BASE);
-export const flows = makeFlows({ api, subscribe: live.subscribe, keys: secureKeys(SecureStore), priority: PRIORITY });
-/** The phone's own RPC (the one the wallet adapter uses): token balances and sending trades.
- *  Each request gives up after 10 s (timedFetch): RN's fetch never does by itself. */
+/** The phone's own RPC (the one the wallet adapter uses): token balances, sending trades, and
+ *  the refund and the costs in flows. Each request gives up after 10 s (timedFetch): RN's
+ *  fetch never does by itself. */
 export const conn = new Connection(RPC, { commitment: "confirmed", fetch: timedFetch });
+export const flows = makeFlows({ api, subscribe: live.subscribe, keys: secureKeys(SecureStore), priority: PRIORITY, rpc: conn });
 export const market = makeMarket({ conn, priority: PRIORITY });
 export const store = createMoonerStore({ live, api, flows, market, saved: (name) => secureJson(SecureStore, name) });

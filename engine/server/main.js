@@ -19,6 +19,7 @@ import { Keeper } from "./keeper.js";
 import { makeReads, makeRoutes } from "./api.js";
 import { makeSocialRoutes } from "./social.js";
 import { appLinksLog, makeAppLinkRoutes } from "./applinks.js";
+import { makeRpcRoutes } from "./rpcproxy.js";
 import { createServer } from "./http.js";
 import { Hub } from "./hub.js";
 import { Feed } from "./feed.js";
@@ -136,7 +137,8 @@ const routes = makeRoutes({
 }).concat(makeSocialRoutes({
   store: ctx.store, isPresale: (key) => !!ctx.store.tokenOfPresale(new PublicKey(key)),
   onChat: (row) => feed.chat(row), onProfile: (wallet, pfp) => feed.profile(wallet, pfp),
-})).concat(makeAppLinkRoutes({ certs: cfg.androidCerts }));
+})).concat(makeAppLinkRoutes({ certs: cfg.androidCerts })).concat(makeRpcRoutes({ url: cfg.appRpc, log }));
+if (cfg.appRpc !== cfg.rpc) log(`the apps' RPC (/api/rpc): ${new URL(cfg.appRpc).host}`);
 const web = fs.existsSync(`${cfg.web}/index.html`) ? cfg.web : null;
 log(web ? `web app from ${web}` : `no web app at ${cfg.web} (npm run build in web/): API only`);
 const server = createServer(routes, { cors: cfg.cors, trustProxy: cfg.trustProxy, log, web });
