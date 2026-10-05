@@ -21,3 +21,6 @@ engine/.rehearsal/
 
 # waitlist signups (site/server.mjs): emails and X handles
 site/.data/
+
+# visual brainstorming companion
+.superpowers/
