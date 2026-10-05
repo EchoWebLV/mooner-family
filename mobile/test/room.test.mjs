@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentScreen, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentScreen, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf, walletsIn, whoKnown } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -22,7 +22,7 @@ test("isKey: base58, 32 to 44 characters", () => {
 test("heroOf: the clock and C.er while open, C.up once full or past it, Closed when expired", () => {
   assert.deepEqual(heroOf(open(), null, N, NOW), { stage: "presale", fill: 0.4, color: C.er, under: "10:00 left" });
   assert.equal(heroOf(open({ raised: "500000000" }), null, N, NOW).color, C.up);
-  assert.deepEqual(heroOf(open({ state: "LAUNCHING", raised: "500000000" }), null, N, NOW), { stage: "launching", fill: 1, color: C.up, under: "Launching on Solana" });
+  assert.deepEqual(heroOf(open({ state: "LAUNCHING", raised: "500000000" }), null, N, NOW), { stage: "launching", fill: 1, color: C.up, under: "Launching on Meteora" });
   assert.equal(heroOf(open({ state: "SETTLED" }), null, N, NOW).under, "Live");
   assert.equal(heroOf(open(), { presale: KEY, pool: { migrated: true } }, N, NOW).under, "Live");
   const gone = heroOf(open({ state: "EXPIRED" }), null, N, NOW);
@@ -253,6 +253,19 @@ test("newLinesOn: a new channel (or none yet) is a first read: its live rows nev
   assert.deepEqual(r, { lines: [], last: null }, "no channel yet: nothing kept");
   assert.deepEqual(newLinesOn(a, "A", r.last).lines, [], "the channel's first rows after none are a first read");
   assert.deepEqual(newLinesOn(a, "A", { channel: "B", lastId: 1 }).lines, [], "a lower last id from another channel never counts");
+});
+
+test("walletsIn: the count of wallets in, one or many", () => {
+  assert.equal(walletsIn(0), "0 wallets in");
+  assert.equal(walletsIn(1), "1 wallet in");
+  assert.equal(walletsIn(12), "12 wallets in");
+});
+
+test("whoKnown: who's in is known from a detail view's seats or a list item's users, not from a list item without them", () => {
+  assert.equal(whoKnown({ seats: [] }), true);
+  assert.equal(whoKnown({ users: [] }), true);
+  assert.equal(whoKnown({ raised: "0" }), false);
+  assert.equal(whoKnown(undefined), false);
 });
 
 test("joinedSince: the wallets new since the last read; nobody on the first", () => {

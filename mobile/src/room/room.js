@@ -23,7 +23,7 @@ export function heroOf(view, launched, N, nowMs) {
   const left = secondsLeft(view, nowMs);
   const under =
     stage === "presale" ? (left > 0 ? `${clock(left)} left` : "Time's up")
-    : stage === "launching" ? "Launching on Solana"
+    : stage === "launching" ? "Launching on Meteora"
     : stage === "expired" ? "Closed"
     : "Live";
   return { stage, fill, color, under };
@@ -38,11 +38,17 @@ export function cellsOf(raised, target, n = 10) {
   return Array.from({ length: n }, (_, i) => Math.min(1, Math.max(0, f * n - i)));
 }
 
+/** "1 wallet in", "3 wallets in". */
+export const walletsIn = (n) => `${n} wallet${n === 1 ? "" : "s"} in`;
+
+/** Whether `view` says who's in: a detail view (its `seats`) or a list item that carries
+ *  `users`. A list item without them says nothing, so the room shows no count or "Nobody yet". */
+export const whoKnown = (view) => Array.isArray(view?.seats) || Array.isArray(view?.users);
+
 /** Under the pool's cells: "3 wallets in · 1.25 SOL to go", or "… · full". With no target
  *  known (N.TARGET 0 or missing) just "3 wallets in", as cellsOf then shows no cell filled. */
 export function poolLine(view, N) {
-  const n = whoIsIn(view).length;
-  const wallets = `${n} wallet${n === 1 ? "" : "s"} in`;
+  const wallets = walletsIn(whoIsIn(view).length);
   if (!(BigInt(N?.TARGET ?? 0) > 0n)) return wallets;
   const left = roomOf(view, N);
   return left > 0n ? `${wallets} · ${solText(left)} SOL to go` : `${wallets} · full`;

@@ -1,7 +1,7 @@
 // The presale room: its scene with the coin, time left and the last chat lines; the pool as
 // cells; who's in; your seat; the coin. The host, your button and the chat sit at the bottom.
 // The chat slides up; the launch plays full screen.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Share, View } from "react-native";
 import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -20,7 +20,7 @@ import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
 import { GetBack, Line, SeatCard } from "../../src/room/YourSeat";
 import { useNewLines } from "../../src/room/useNewLines";
-import { bottomOf, claimedOf, heroOf, isKey, joinedSince, lockedCommit, poolLine, refToNote } from "../../src/room/room";
+import { bottomOf, claimedOf, heroOf, isKey, joinedSince, lockedCommit, poolLine, refToNote, walletsIn, whoKnown } from "../../src/room/room";
 import { shareOf } from "../../src/room/share";
 import { BASE } from "../../src/config";
 import { Cells } from "../../src/ui/Cells";
@@ -33,7 +33,7 @@ import { Button, Card, Empty, Pill, Screen, Sheet, Steps, T } from "../../src/ui
 import { LinkPills } from "../../src/ui/LinkPills";
 import { Move } from "../../src/ui/motion";
 import { Scene } from "../../src/ui/Scene";
-import { play } from "../../src/ui/sound";
+import { isArmed, play } from "../../src/ui/sound";
 import { TopBar, goBack } from "../../src/ui/TopBar";
 import { useNow } from "../../src/ui/useNow";
 import { C, F, R, S } from "../../src/ui/theme";
@@ -48,6 +48,10 @@ const SCENE_H = 300;
 const SCENE_BUTTON = `${C.bg0}99`;
 const WITH_SEAT = "Share your link. It launches the moment the pool is full.";
 const WITHOUT_SEAT = "Take a seat. It launches the moment the pool is full.";
+/** The top row's ticker keeps at least this width when the time or status beside it is long. */
+const TITLE_MIN = 72;
+/** One row of the crowd (a face and its SOL): the space it holds until who's in is known. */
+const CROWD_ROW = 62;
 
 const tap = () => Haptics.selectionAsync().catch(() => {});
 
@@ -170,19 +174,24 @@ export default function Room() {
   const onShare = () => {
     if (shareText) Share.share(shareText, { dialogTitle: "Share this presale" }).catch(() => {});
   };
+  // Invite (and the host's line about it) only while the presale takes seats; the round Share
+  // button at the top covers the other stages
+  const invite = hero.stage === "presale" && bottom.kind === "seat" && !!shareText;
   const hostLine =
     hero.stage !== "presale" ? null
-    : bottom.kind === "seat" ? WITH_SEAT
+    : bottom.kind === "seat" ? (shareText ? WITH_SEAT : null)
     : bottom.kind === "join" || bottom.kind === "connect" ? WITHOUT_SEAT
     : null;
   const main =
     bottom.kind === "connect" ? <Button title="Connect to join" onPress={() => router.push("/connect")} />
-    : bottom.kind === "seat" ? (shareText ? <Button title="Invite" onPress={onShare} /> : null)
+    : bottom.kind === "seat" ? (invite ? <Button title="Invite" onPress={onShare} /> : null)
     : bottom.kind === "claimed" ? <Button title={ticker ? `See $${ticker}` : "See the coin"} onPress={() => router.push(`/coin/${key}`)} />
     : joinBusy ? <Button title="Join" onPress={openJoin} busy />
     : bottom.kind === "join" ? <Button title="Join" onPress={openJoin} />
     : null;
   const timeColor = hero.stage === "presale" ? C.text0 : hero.color === C.text2 ? C.text1 : hero.color;
+  // a list item without its users says nothing about who's in: no count and no "Nobody yet"
+  const known = whoKnown(view);
 
   return (
     <Screen padded={false}>
@@ -193,12 +202,12 @@ export default function Room() {
             <BackIcon color={C.text0} />
           </SceneButton>
           {view.token ? <CoinImage uri={view.token.image} size={42} ticker={view.token.symbol} /> : null}
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flex: 1, minWidth: TITLE_MIN }}>
             <T v="h2" numberOfLines={1}>{ticker ? `$${ticker}` : "Presale"}</T>
             {view.token?.name ? <T v="small" color={C.text0} numberOfLines={1}>{`Presale · ${view.token.name}`}</T> : null}
           </View>
-          <T v="num" color={timeColor} style={{ fontSize: 16 }}>{hero.under}</T>
-          {shareText && bottom.kind !== "seat" ? (
+          <T v="num" color={timeColor} numberOfLines={1} style={{ fontSize: 16, flexShrink: 1 }}>{hero.under}</T>
+          {shareText && !invite ? (
             <SceneButton label="Share" onPress={onShare}>
               <ShareIcon color={C.text0} size={20} />
             </SceneButton>
@@ -225,9 +234,11 @@ export default function Room() {
             <Card style={{ gap: 12, paddingHorizontal: 8 }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6 }}>
                 <T v="label">Who's in</T>
-                <T v="num" color={C.text2} style={{ fontSize: 12 }}>{who.length}</T>
+                {known ? (
+                  <T v="num" color={C.text2} accessibilityLabel={walletsIn(who.length)} style={{ fontSize: 12 }}>{who.length}</T>
+                ) : null}
               </View>
-              <Crowd who={who} me={wallet} onFace={setFace} />
+              {known ? <Crowd who={who} me={wallet} onFace={setFace} ready={ready} /> : <View style={{ height: CROWD_ROW }} />}
             </Card>
           </Move>
           {bottom.kind === "seat" ? (
@@ -242,12 +253,14 @@ export default function Room() {
           ) : null}
         </View>
         <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, height: SCENE_H - 40 }}>
-          <FloatingEmojis channel={key} on={focused && !chatOpen} />
+          <FloatingEmojis channel={key} on={focused && !chatOpen && !joinOpen && !face} />
         </View>
       </ScrollView>
       <View style={{ paddingHorizontal: S.gutter, paddingTop: 10, paddingBottom: insets.bottom + 10, gap: 10, backgroundColor: C.bg0 }}>
-        {hostLine ? <Host line={hostLine} /> : null}
-        {backNote ? <T v="small" color={C.up} style={{ textAlign: "center" }}>{backNote}</T> : null}
+        {hostLine ? <Host line={hostLine} sound={focused && isArmed()} /> : null}
+        {backNote ? (
+          <T v="small" color={C.up} accessibilityLiveRegion="polite" style={{ textAlign: "center" }}>{backNote}</T>
+        ) : null}
         {bottom.kind === "claimed" ? (
           <Line icon={<CheckIcon color={C.gold} />} color={C.gold}>Your tokens arrived</Line>
         ) : null}
@@ -345,7 +358,7 @@ function FaceSheet({ row, onClose }) {
 }
 
 /** The coin: picture, name, ticker, what it's about (3 lines, "More" shows the rest), links. */
-function Coin({ token }) {
+const Coin = memo(function Coin({ token }) {
   return (
     <Card style={{ gap: 12 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -359,7 +372,7 @@ function Coin({ token }) {
       <LinkPills token={token} />
     </Card>
   );
-}
+});
 
 /** Three lines, and "More" when there are more. A hidden copy with no line limit counts them. */
 function About({ text }) {
