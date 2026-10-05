@@ -1,6 +1,9 @@
 // The 16 cues (engine/src/cues.js) through expo-audio: one player per cue, loaded once at
-// start, mixed with other apps' audio and quiet when the phone is on silent. A missing sound
-// is skipped, never an error. The Sounds switch (Me) is kept in expo-secure-store.
+// start and mixed with other apps' audio. They follow the media volume: Android has no
+// silent-mode option for them (expo-audio drops playsInSilentMode there), so the Sounds
+// switch in Me is the mute, kept in expo-secure-store. A missing sound is skipped, never an
+// error, and if the audio mode can't be set no player is loaded, so the app stays quiet
+// rather than taking audio focus from the user's music.
 import { useEffect, useState } from "react";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import * as SecureStore from "expo-secure-store";
@@ -30,26 +33,36 @@ const FILES = {
 const pref = secureJson(SecureStore, "mooner:sounds");
 const players = new Map();
 let on = false; // off until the saved switch is read
+let toggled = false; // the user flipped the switch: the saved value no longer applies
 const listeners = new Set();
 let loading = null;
+
+// Status updates are only for progress bars; these short cues need none. updateInterval is
+// in milliseconds (expo-audio AudioPlayerOptions): a day keeps each player's update loop idle.
+const PLAYER = { updateInterval: 24 * 60 * 60 * 1000 };
 
 /** Loads every player and the saved switch, once. Call at start. */
 export function loadSounds() {
   loading ??= (async () => {
+    let mixing = true;
     try {
+      // playsInSilentMode is read on iOS only; Android drops it
       await setAudioModeAsync({ playsInSilentMode: false, interruptionMode: "mixWithOthers" });
     } catch {
-      // the default mode still plays
+      // without mixWithOthers every play would take audio focus and pause the user's music
+      mixing = false;
     }
-    for (const [cue, file] of Object.entries(FILES)) {
-      try {
-        players.set(cue, createAudioPlayer(file));
-      } catch {
-        // that cue stays quiet
+    if (mixing) {
+      for (const [cue, file] of Object.entries(FILES)) {
+        try {
+          players.set(cue, createAudioPlayer(file, PLAYER));
+        } catch {
+          // that cue stays quiet
+        }
       }
     }
     const saved = await pref.get().catch(() => undefined);
-    setOn(saved?.on !== false);
+    if (!toggled) setOn(saved?.on !== false);
   })();
   return loading;
 }
@@ -78,6 +91,7 @@ export const soundsOn = () => on;
 
 /** The Sounds switch: applies now and is kept on the phone. */
 export function setSoundsOn(v) {
+  toggled = true;
   setOn(v);
   pref.set({ on: !!v }).catch(() => {});
 }
@@ -97,7 +111,9 @@ export function useSoundsOn() {
 
 // ---- screen sounds: the root layout reports each pathname change ----
 
-let armed = false; // the first touch arms them: opening the app, or a link, is quiet
+// Screen changes before the first touch are quiet (opening the app, or a link that opens it);
+// once the app is touched every screen change plays, a link's included.
+let armed = false;
 let nextCue = null;
 
 /** The first touch anywhere: screen changes may play from now on. */
@@ -105,7 +121,8 @@ export function arm() {
   armed = true;
 }
 
-/** The next screen change plays `cue` instead of its own (live's Trade whooshes to the coin). */
+/** The next screen change plays `cue` instead of its own (a Trade that whooshes to the coin).
+ *  It's used by that one change only: a change with no cue of its own drops it too. */
 export function nextScreen(cue) {
   nextCue = cue;
 }
@@ -113,8 +130,7 @@ export function nextScreen(cue) {
 /** A move from `prev` to `path`: whoosh into a room, tap anywhere else (screens.js). */
 export function screenChange(prev, path) {
   const own = screenCue(prev, path);
-  if (!own) return;
   const cue = nextCue ?? own;
-  nextCue = null;
-  if (armed) play(cue);
+  if (prev !== path) nextCue = null;
+  if (own && armed) play(cue);
 }
