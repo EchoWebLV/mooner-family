@@ -1,8 +1,8 @@
 // The root: fonts, the dark system background, the wallet, the store's live topics, the
 // hidden page that draws Mooner pictures and the "Reconnecting…" strip above every screen.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppState, View } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useFonts } from "expo-font";
@@ -17,6 +17,7 @@ import { live, store } from "../src/app";
 import { WalletProvider } from "../src/wallet";
 import { PfpRenderer } from "../src/pfp/PfpRenderer";
 import { Banner } from "../src/ui/kit";
+import { arm, loadSounds, screenChange } from "../src/ui/sound";
 import { C } from "../src/ui/theme";
 
 /** Away this long or more, the socket is opened afresh on return: Android may have cut it
@@ -35,6 +36,10 @@ export default function Root() {
   }, []);
 
   useEffect(() => store.getState().start(), []);
+
+  useEffect(() => {
+    loadSounds();
+  }, []);
 
   useEffect(() => {
     let away = null; // when the app went to the background
@@ -57,8 +62,9 @@ export default function Root() {
       <WalletProvider>
         <StatusBar style="light" />
         <Reconnecting />
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1 }} onTouchStart={arm}>
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg0 }, animation: "slide_from_right" }} />
+          <ScreenSounds />
         </View>
       </WalletProvider>
     </SafeAreaProvider>
@@ -85,4 +91,15 @@ function Reconnecting() {
       <Banner text="Reconnecting…" />
     </View>
   );
+}
+
+/** Plays the cue for each new screen (sound.js screenChange). Draws nothing. */
+function ScreenSounds() {
+  const path = usePathname();
+  const prev = useRef(null);
+  useEffect(() => {
+    screenChange(prev.current, path);
+    prev.current = path;
+  }, [path]);
+  return null;
 }

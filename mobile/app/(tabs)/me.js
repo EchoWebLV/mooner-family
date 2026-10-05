@@ -1,7 +1,7 @@
 // Me: the connected wallet (its face, address and SOL) and the presales it's in or was in;
 // with no wallet, the same Connect Seed Vault as the Connect screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, Switch, View } from "react-native";
 import { router } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -13,6 +13,7 @@ import { useAccount, useWalletActions } from "../../src/wallet";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face } from "../../src/ui/Face";
 import { Logo } from "../../src/ui/Logo";
+import { setSoundsOn, useSoundsOn } from "../../src/ui/sound";
 import { shortWallet, solText, usd } from "../../src/ui/format";
 import { Button, Card, Empty, Pill, Screen, T } from "../../src/ui/kit";
 import { C, F, R, S } from "../../src/ui/theme";
@@ -80,6 +81,9 @@ function SignedOut() {
       <T v="body" color={C.text1} style={{ textAlign: "center" }}>Connect your wallet to see your presales</T>
       {error ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{error}</T> : null}
       <Button title="Connect Seed Vault" onPress={connect} busy={busy} />
+      <View style={{ alignSelf: "stretch" }}>
+        <SoundsRow />
+      </View>
     </View>
   );
 }
@@ -113,7 +117,8 @@ function Wallet({ wallet, leaving, onDisconnect }) {
       ListHeaderComponent={<Profile wallet={wallet} lamports={lamports} solUsd={solUsd} />}
       ListEmptyComponent={<Empty title="You're not in any presale yet" body="Join one from Live." />}
       ListFooterComponent={
-        <View style={{ marginTop: 32 }}>
+        <View style={{ marginTop: 32, gap: 16 }}>
+          <SoundsRow />
           <Button title="Disconnect" kind="quiet" busy={leaving} onPress={onDisconnect} />
         </View>
       }
@@ -212,5 +217,22 @@ function PresaleRow({ row, ready }) {
         {ready ? <Pill text={status.text} color={PILL[status.kind]} /> : null}
       </View>
     </Card>
+  );
+}
+
+/** "Sounds" and its switch, on by default and kept on the phone (sound.js). */
+function SoundsRow() {
+  const on = useSoundsOn();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44 }}>
+      <T v="body">Sounds</T>
+      <Switch
+        accessibilityLabel="Sounds"
+        value={on}
+        onValueChange={setSoundsOn}
+        trackColor={{ false: C.bg3, true: C.accent }}
+        thumbColor={C.text0}
+      />
+    </View>
   );
 }

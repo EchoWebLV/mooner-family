@@ -3,6 +3,8 @@
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { useEffect, useRef } from "react";
+import { play } from "./sound";
 import { C, F, R, S } from "./theme";
 
 /** "#rrggbb" at an alpha of 0..1 ("#rrggbb66"); anything else comes back as it was. */
@@ -166,9 +168,16 @@ export function Steps({ step }) {
   );
 }
 
-/** A panel that slides up from the bottom; a tap on the dimmed backdrop closes it. */
+/** A panel that slides up from the bottom; a tap on the dimmed backdrop closes it. It plays
+ *  `sheet` when it opens, lower and faster when it closes. */
 export function Sheet({ open, onClose, children, title }) {
   const insets = useSafeAreaInsets();
+  const was = useRef(!!open);
+  useEffect(() => {
+    if (was.current === !!open) return;
+    was.current = !!open;
+    play("sheet", { close: !open });
+  }, [open]);
   return (
     <Modal visible={!!open} transparent animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, justifyContent: "flex-end" }}>
