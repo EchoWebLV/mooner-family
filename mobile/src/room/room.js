@@ -48,6 +48,15 @@ export function poolLine(view, N) {
   return left > 0n ? `${wallets} · ${solText(left)} SOL to go` : `${wallets} · full`;
 }
 
+/** The chat lines that arrived since `lastId` (rows the store marked `live`: pushed one by
+ *  one, never a snapshot's), and the newest id now: { lines, lastId }. `lastId` null is the
+ *  first read, when nothing is new. */
+export function newLines(rows, lastId) {
+  const newest = rows.reduce((m, r) => Math.max(m, r.id), lastId ?? -Infinity);
+  if (lastId == null) return { lines: [], lastId: newest };
+  return { lines: rows.filter((r) => r.live && r.id > lastId), lastId: newest };
+}
+
 /** The commit to remember for claimedOf after `view`: this wallet's seat's commit once
  *  commits are fixed (any state but OPEN; set_commit runs only while OPEN), else `had`.
  *  `view`: a detail view (with `seats`). A get-back closes a seat while OPEN, so it never counts. */

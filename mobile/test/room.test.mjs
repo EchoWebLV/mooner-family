@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, newLines, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -205,4 +205,14 @@ test("poolLine: with no target known (0 or missing) it never says full, as cells
   assert.equal(poolLine({ raised: "100000000", users }, { TARGET: "0" }), "1 wallet in");
   assert.equal(poolLine({ raised: "100000000", users }, {}), "1 wallet in");
   assert.equal(poolLine({ raised: "0", users: [] }, null), "0 wallets in");
+});
+
+test("newLines: only lines pushed live since the last read; the first read is never new", () => {
+  const rows = [{ id: 1, text: "gm" }, { id: 2, text: ":lfg:", live: true }];
+  assert.deepEqual(newLines(rows, null), { lines: [], lastId: 2 }, "the first read: nothing is new");
+  const more = [...rows, { id: 3, text: ":moon:", live: true }, { id: 4, text: "from a snapshot" }];
+  assert.deepEqual(newLines(more, 2), { lines: [more[2]], lastId: 4 }, "a snapshot's rows never count");
+  assert.deepEqual(newLines(more, 4), { lines: [], lastId: 4 });
+  assert.deepEqual(newLines([], null), { lines: [], lastId: -Infinity });
+  assert.equal(newLines([{ id: 1, text: ":gm:", live: true }], -Infinity).lines.length, 1, "the chat was empty when the screen opened");
 });
