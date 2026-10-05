@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -182,4 +182,20 @@ test("refToNote: a link's ref waits for the saved wallet's read, so a cold start
   assert.equal(refToNote(true, FRIEND, { publicKey: ME }), FRIEND, "read: a wallet");
   assert.equal(refToNote(false, FRIEND, null), null, "not a presale key");
   assert.equal(refToNote(true, undefined, null), null, "no ref in the link");
+});
+
+test("cellsOf: ten cells, each a tenth of the pool, filled by the SOL in", () => {
+  assert.deepEqual(cellsOf(250n, 1000n), [1, 1, 0.5, 0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(cellsOf("1000", "1000"), Array(10).fill(1));
+  assert.deepEqual(cellsOf(2000n, 1000n), Array(10).fill(1));
+  assert.deepEqual(cellsOf(5n, 0n), Array(10).fill(0));
+  assert.deepEqual(cellsOf(undefined, undefined), Array(10).fill(0));
+});
+
+test("poolLine: the wallets in, and the SOL to go or full", () => {
+  const N = { TARGET: "1000000000" };
+  const users = (n) => Array.from({ length: n }, (_, i) => ({ user: `w${i}`, commit: "100000000" }));
+  assert.equal(poolLine({ raised: "250000000", users: users(1) }, N), "1 wallet in · 0.75 SOL to go");
+  assert.equal(poolLine({ raised: "1000000000", users: users(10) }, N), "10 wallets in · full");
+  assert.equal(poolLine({ raised: "0", users: [] }, N), "0 wallets in · 1 SOL to go");
 });

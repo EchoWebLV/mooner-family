@@ -1,6 +1,6 @@
 // What the presale room shows, as plain functions of the server's views (no React Native, so
 // Node tests run them). Amounts are BigInt lamports; `nowMs` is the screen's 1 s clock.
-import { canGetBack, clock, fillOf, joinAmounts, joinCheck, seatOf, secondsLeft, stageOf } from "../../../engine/src/views.js";
+import { canGetBack, clock, fillOf, joinAmounts, joinCheck, roomOf, seatOf, secondsLeft, stageOf, whoIsIn } from "../../../engine/src/views.js";
 import { solText } from "../ui/format.js";
 import { C } from "../ui/theme.js";
 
@@ -27,6 +27,23 @@ export function heroOf(view, launched, N, nowMs) {
     : stage === "expired" ? "Closed"
     : "Live";
   return { stage, fill, color, under };
+}
+
+/** The pool as `n` cells, each a tenth (with n 10) of `target`, filled 0..1 by `raised`
+ *  (lamports: BigInt, string or number). */
+export function cellsOf(raised, target, n = 10) {
+  const t = Number(BigInt(target ?? 0));
+  const r = Number(BigInt(raised ?? 0));
+  const f = t > 0 ? Math.min(1, Math.max(0, r / t)) : 0;
+  return Array.from({ length: n }, (_, i) => Math.min(1, Math.max(0, f * n - i)));
+}
+
+/** Under the pool's cells: "3 wallets in · 1.25 SOL to go", or "… · full". */
+export function poolLine(view, N) {
+  const n = whoIsIn(view).length;
+  const left = roomOf(view, N);
+  const wallets = `${n} wallet${n === 1 ? "" : "s"} in`;
+  return left > 0n ? `${wallets} · ${solText(left)} SOL to go` : `${wallets} · full`;
 }
 
 /** The commit to remember for claimedOf after `view`: this wallet's seat's commit once
