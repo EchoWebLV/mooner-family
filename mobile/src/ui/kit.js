@@ -47,9 +47,10 @@ const BUTTONS = {
   quiet: { bg: C.bg2, ink: C.text0, rim: C.lineStrong },
   danger: { bg: "transparent", ink: C.down, rim: C.down },
   gold: { bg: C.gold, ink: C.goldInk, rim: C.gold },
+  up: { bg: C.up, ink: C.bg0, rim: C.up },
 };
 
-/** An oval, full-width button. kind is primary, quiet, danger or gold; busy swaps the title for a spinner. */
+/** An oval, full-width button. kind is primary, quiet, danger, gold or up; busy swaps the title for a spinner. */
 export function Button({ title, onPress, kind = "primary", disabled, busy, icon }) {
   const b = BUTTONS[kind];
   const off = disabled || busy;
@@ -70,7 +71,7 @@ export function Button({ title, onPress, kind = "primary", disabled, busy, icon 
           flexDirection: "row", gap: 8,
         },
         disabled && { opacity: 0.45 },
-        pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+        pressed && { opacity: 0.85 },
       ]}
     >
       {busy ? (

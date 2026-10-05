@@ -8,6 +8,8 @@ export const C = {
   accent: "#5468ff", accentInk: "#ffffff", accentSoft: "#5468ff24", // --accent-soft: the accent at 0.14
   gold: "#ffb23e", goldInk: "#1c1203",
   er: "#3bd4ff", migrated: "#9d8cff",
+  // soft fills for tags and cards, at the web's --gold-soft alpha (0.13)
+  erSoft: "#3bd4ff21", migratedSoft: "#9d8cff21", goldSoft: "#ffb23e21",
 };
 export const F = {
   regular: "Geist_400Regular", medium: "Geist_500Medium", semi: "Geist_600SemiBold", bold: "Geist_700Bold",
