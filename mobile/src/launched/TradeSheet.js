@@ -4,10 +4,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import * as Haptics from "expo-haptics";
+import { useIsFocused } from "expo-router";
 import { useStore } from "zustand";
 import { sellAmount } from "../../../engine/src/swap.js";
 import { store } from "../app";
 import { Button, PillButton, Sheet, Steps, T } from "../ui/kit";
+import { Move } from "../ui/motion";
+import { isArmed, play } from "../ui/sound";
+import { useAppActive } from "../ui/useAppActive";
 import { C, F, R } from "../ui/theme";
 import { useNow } from "../ui/useNow";
 import { atMigration } from "./coin";
@@ -31,6 +35,18 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
   const mint = row.mint;
   const symbol = row.token?.symbol ?? "";
   const buying = side === "buy";
+
+  // The sheet's own sounds (a quote's `tick`, a buy's `coins`) arrive late, from a promise:
+  // quiet unless the app was touched, is in front and this coin's screen has focus then.
+  const focused = useIsFocused();
+  const active = useAppActive();
+  const heard = useRef(false);
+  useEffect(() => {
+    heard.current = focused && active;
+  }, [focused, active]);
+  const cue = (name) => {
+    if (heard.current && isArmed()) play(name);
+  };
 
   const amount = useMemo(() => {
     if (buying) return typed ? parseSol(typed) : chip;
@@ -56,7 +72,11 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
     const n = ++asked.current;
     setPriced(null);
     if (a == null) return;
-    store.getState().preview(side, mint, a).then((r) => n === asked.current && setPriced({ amount: a, ...r }));
+    store.getState().preview(side, mint, a).then((r) => {
+      if (n !== asked.current) return;
+      setPriced({ amount: a, ...r });
+      if (r.ok) cue("tick");
+    });
   };
   useEffect(() => {
     if (!open || locked) return;
@@ -101,6 +121,7 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
       setPriced({ amount, ok: true, value: r.value.quote });
     }
     if (!r.ok) return setError(r.error);
+    if (buying) cue("coins");
     const got = r.value.quote.outAmount;
     onDone?.(buying ? `Bought about ${tokensText(got)} $${symbol}` : `Sold for about ${solSig(got)} SOL`);
     close();
@@ -173,12 +194,19 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
   );
 }
 
-/** A label on the left, its value on the right. */
+/** A label on the left, its value on the right. A new value rises in; "…" (waiting) doesn't. */
 function Line({ label, value, color }) {
+  const text = <T v="num" color={color} style={{ textAlign: "right" }}>{value}</T>;
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <T v="small">{label}</T>
-      <T v="num" color={color} style={{ flexShrink: 1, textAlign: "right" }}>{value}</T>
+      {value === "…" ? (
+        <View style={{ flexShrink: 1 }}>{text}</View>
+      ) : (
+        <Move kind="rise" key={value} style={{ flexShrink: 1 }}>
+          {text}
+        </Move>
+      )}
     </View>
   );
 }

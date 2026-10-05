@@ -21,6 +21,7 @@ import { shortWallet, solText } from "../../src/ui/format";
 import { Button, Card, Empty, PillButton, Screen, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
 import { TopBar } from "../../src/ui/TopBar";
+import { Move } from "../../src/ui/motion";
 import { C, S } from "../../src/ui/theme";
 import { useAccount, useSigner } from "../../src/wallet";
 
@@ -76,19 +77,23 @@ export default function Coin() {
           </View>
           <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={atMigration(row.pool) ? null : row.pool?.sqrtPrice} />
           {done ? (
-            <View accessibilityLiveRegion="polite">
-              <Card>
-                <T color={C.up}>{done}</T>
-              </Card>
-            </View>
+            <Move kind="rise" key={done}>
+              <View accessibilityLiveRegion="polite">
+                <Card>
+                  <T color={C.up}>{done}</T>
+                </Card>
+              </View>
+            </Move>
           ) : null}
           {position ? (
-            <Card style={{ gap: 6 }}>
-              <T v="label">{`Your $${token.symbol}`}</T>
-              <T v="num">{position.tokens}</T>
-              {position.sol ? <T v="small">{position.usd ? `${position.sol} · ${position.usd}` : position.sol}</T> : null}
-              {position.sol && atMigration(row.pool) ? <T v="small" color={C.text2}>At migration</T> : null}
-            </Card>
+            <Move kind="rise">
+              <Card style={{ gap: 6 }}>
+                <T v="label">{`Your $${token.symbol}`}</T>
+                <T v="num">{position.tokens}</T>
+                {position.sol ? <T v="small">{position.usd ? `${position.sol} · ${position.usd}` : position.sol}</T> : null}
+                {position.sol && atMigration(row.pool) ? <T v="small" color={C.text2}>At migration</T> : null}
+              </Card>
+            </Move>
           ) : null}
           <Stats row={row} stats={stats} statsDone={!!stats || statsMissing || !!statsError} solUsd={solUsd} />
           <Holders stats={stats} wallet={wallet} />
