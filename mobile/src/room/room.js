@@ -150,10 +150,12 @@ export function seatPlan(view, launched, seat, wallet, nowMs) {
 
 /** The launch moment's phase after the stage moves from `prev` to `stage`: null (none),
  *  "launching", "live", "failed" (the launch didn't go through: it says so until closed) or
- *  "done" (closed). It starts only on a change seen while the room is open: `prev` null is
- *  the first sight and starts nothing. */
+ *  "done" (closed). It starts on a change seen while the room is open, or on first sight
+ *  (`prev` null) of a presale already launching: the room opened late, onto the launching
+ *  screen. A first sight of one already live or expired starts nothing. */
 export function momentStep(phase, prev, stage) {
-  if (phase === "done" || prev == null || prev === stage) return phase;
+  if (phase === "done" || prev === stage) return phase;
+  if (prev == null) return phase == null && stage === "launching" ? "launching" : phase;
   const live = stage === "live" || stage === "migrated";
   if (phase) {
     if (stage === "expired") return phase === "launching" ? "failed" : phase;
@@ -162,6 +164,18 @@ export function momentStep(phase, prev, stage) {
   if (prev === "presale" && stage === "launching") return "launching";
   if ((prev === "presale" || prev === "launching") && live) return "live";
   return null;
+}
+
+/** The launch screen to show: null (none), "full" (POOL FULL and the 3-2-1), "launching",
+ *  "live" or "failed". `phase`: momentStep's. `late`: the moment started on first sight
+ *  (no POOL FULL then). `counted`: the 3-2-1 has finished. `stepsDone`: launchSteps' done,
+ *  every committed seat served. `claimed`: this wallet's tokens arrived (claimedOf). The
+ *  3-2-1 always plays to the end; the steps behind it don't wait for it. */
+export function momentScreen({ phase, late, counted, stepsDone, claimed }) {
+  if (phase == null || phase === "done") return null;
+  if (phase === "failed") return "failed";
+  if (!late && !counted) return "full";
+  return claimed || stepsDone ? "live" : "launching";
 }
 
 /** "09:05": a chat row's time (ms) on this phone's clock. */

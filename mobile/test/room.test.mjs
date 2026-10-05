@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentScreen, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -149,10 +149,13 @@ test("seatPlan: in, out of the pool, creator, locked", () => {
   assert.equal(plan(open({ state: "EXPIRED", seats: [seatRow()] }), seat()).back, true);
 });
 
-test("momentStep: plays only for a change seen live", () => {
-  // first sight of an already launching or live presale: nothing
-  assert.equal(momentStep(null, null, "launching"), null);
+test("momentStep: plays for a change seen live, or a room opened while launching", () => {
+  // first sight: a presale already launching opens on the launching screen; one already live
+  // (or expired) starts nothing
+  assert.equal(momentStep(null, null, "launching"), "launching");
   assert.equal(momentStep(null, null, "live"), null);
+  assert.equal(momentStep(null, null, "expired"), null);
+  assert.equal(momentStep(null, null, "presale"), null);
   // presale -> launching -> live
   assert.equal(momentStep(null, "presale", "launching"), "launching");
   assert.equal(momentStep("launching", "launching", "live"), "live");
@@ -168,6 +171,26 @@ test("momentStep: plays only for a change seen live", () => {
   assert.equal(momentStep("failed", "expired", "expired"), "failed");
   assert.equal(momentStep("done", "launching", "live"), "done");
   assert.equal(momentStep("live", "live", "migrated"), "live");
+});
+
+test("momentScreen: pool full until the 3-2-1 is done, then launching until your tokens arrive or every seat is served", () => {
+  const at = (o) => momentScreen({ late: false, counted: false, stepsDone: false, claimed: false, ...o });
+  assert.equal(at({ phase: null }), null);
+  assert.equal(at({ phase: "done" }), null);
+  // seen filling: POOL FULL and the 3-2-1 first, whatever the chain does meanwhile
+  assert.equal(at({ phase: "launching" }), "full");
+  assert.equal(at({ phase: "live", claimed: true }), "full");
+  // after the 3-2-1
+  assert.equal(at({ phase: "launching", counted: true }), "launching");
+  assert.equal(at({ phase: "live", counted: true }), "launching", "the pool is up, tokens still on the way");
+  assert.equal(at({ phase: "live", counted: true, claimed: true }), "live");
+  assert.equal(at({ phase: "live", counted: true, stepsDone: true }), "live", "not in it: live once every seat is served");
+  // opened late: straight onto launching, then live
+  assert.equal(at({ phase: "launching", late: true }), "launching");
+  assert.equal(at({ phase: "live", late: true, claimed: true }), "live");
+  // a failed launch says so at once, mid-countdown too
+  assert.equal(at({ phase: "failed" }), "failed");
+  assert.equal(at({ phase: "failed", counted: true }), "failed");
 });
 
 test("hhmm: two digits each", () => {
