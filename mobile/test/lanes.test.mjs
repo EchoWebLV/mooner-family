@@ -1,7 +1,7 @@
 // Pulse's three lanes from the server's feeds: presales filling, coins on the curve, migrated.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs, pairStage } from "../src/live/lanes.js";
+import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs, pairStage, settledLane } from "../src/live/lanes.js";
 
 const token = { symbol: "T", name: "T", image: "" };
 const P = (presale, state, openedTs, over = {}) => ({ presale, state, openedTs, raised: "0", token, ...over });
@@ -38,6 +38,16 @@ test("newPairs: a launched presale whose launched row hasn't arrived stays, laun
   assert.equal(pairStage(P("O", "OPEN", 1), undefined), "presale");
   assert.equal(pairStage(P("F", "FULL", 1), undefined), "launching");
   assert.equal(pairStage(presales.X, undefined), "expired");
+});
+
+test("newPairs: each item carries its presales row as is and its pairStage", () => {
+  const presales = byKey(P("O", "OPEN", 1), P("F", "FULL", 2), P("S", "SETTLED", 3), P("X", "EXPIRED", 4));
+  const items = newPairs(presales, {}, 0, {});
+  assert.deepEqual(
+    items.map((r) => [r.presale, r.stage]),
+    [["X", "expired"], ["S", "launching"], ["F", "launching"], ["O", "presale"]],
+  );
+  for (const r of items) assert.equal(r.view, presales[r.presale], "the feed's own object, so a memoized card can skip it");
 });
 
 test("newPairs: an expired presale stays 3 s from when Pulse first saw it so", () => {
@@ -86,4 +96,20 @@ test("filling: the open presales with a coin, and the SOL in them", () => {
     P("D", "OPEN", 4, { raised: "50", token: undefined }),
   );
   assert.deepEqual(filling(presales, {}), { count: 2, lamports: 500n });
+});
+
+test("settledLane: a momentum end is a lane only on a page boundary, and on the tapped lane while a tap scrolls", () => {
+  const W = 392.7272;
+  // swipes (no tap target): the page it landed on, within a pixel's rounding
+  assert.equal(settledLane(0, W, null), 0);
+  assert.equal(settledLane(W + 0.4, W, null), 1);
+  assert.equal(settledLane(2 * W - 0.6, W, null), 2);
+  // a cancelled animated scroll stops part-way: ignored
+  assert.equal(settledLane(0.6 * W, W, null), null);
+  assert.equal(settledLane(W + 2, W, 1), null);
+  // tapped 2 then 0: the first scroll, cancelled right on page 1, is ignored; page 0 counts
+  assert.equal(settledLane(W, W, 0), null);
+  assert.equal(settledLane(0, W, 0), 0);
+  // no width yet: nothing
+  assert.equal(settledLane(0, 0, null), null);
 });

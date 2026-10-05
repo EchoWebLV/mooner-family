@@ -1,6 +1,6 @@
 // One presale in Pulse's New Pairs: its coin, the time left (or Launching, Expired), the pool
 // as 10 cells, the SOL in, the wallets in, and "You're in · X SOL" or Join.
-import { useState } from "react";
+import { memo, useState } from "react";
 import { View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { whoIsIn } from "../../../engine/src/views.js";
@@ -15,12 +15,14 @@ import { Countdown, timeUp } from "./Countdown";
 /** `view`: a `presales` list item; `info`: store.info (numbers in info.N); `wallet`: the
  *  connected wallet or null; `stage`: lanes.js pairStage for it (presale, launching or
  *  expired; a launched presale whose launched row hasn't arrived yet is launching). Any
- *  stage but presale and expired shows as launching.
+ *  stage but presale and expired shows as launching. `onPress(presale)` gets the presale's
+ *  key, so one stable function serves every card: the card is memoized and skips a render
+ *  when none of its props changed.
  *  The list item names who's in only while it's OPEN, so a launching card shows no faces.
  *  Expired, or past its deadline, the card dims and stays tappable: the room says why it
- *  can't be joined. Join opens the room, like the rest of the card. A view with no coin
- *  draws nothing. */
-export function PresaleCard({ view, info, wallet, stage, onPress }) {
+ *  can't be joined, and TalkBack hears "time's up". Join opens the room, like the rest of the
+ *  card. A view with no coin draws nothing. */
+export const PresaleCard = memo(function PresaleCard({ view, info, wallet, stage, onPress }) {
   const [up, setUp] = useState(() => timeUp(view.deadlineTs, Date.now()));
   const token = view.token;
   if (!token) return null;
@@ -32,7 +34,7 @@ export function PresaleCard({ view, info, wallet, stage, onPress }) {
   const target = info.N.TARGET;
   const label =
     `$${token.symbol}, ${solText(view.raised)} of ${solText(target)} SOL` +
-    (open ? "" : expired ? ", expired" : ", launching") +
+    (open ? (up ? ", time's up" : "") : expired ? ", expired" : ", launching") +
     (mine ? `, you're in with ${solText(mine.commit)} SOL` : "");
   return (
     <View style={dim ? { opacity: 0.5 } : null}>
@@ -41,7 +43,7 @@ export function PresaleCard({ view, info, wallet, stage, onPress }) {
         style={{ padding: 12 }}
         onPress={() => {
           Haptics.selectionAsync().catch(() => {});
-          onPress?.();
+          onPress?.(view.presale);
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -76,7 +78,7 @@ export function PresaleCard({ view, info, wallet, stage, onPress }) {
       </Card>
     </View>
   );
-}
+});
 
 /** "Join", drawn as a small accent button: the whole card is the tap target. */
 function JoinTag() {

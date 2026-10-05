@@ -1,5 +1,6 @@
 // One launched coin in Pulse's Final Stretch or Migrated lane: its coin, market cap and price,
 // and its curve to migration, or Migrated.
+import { memo } from "react";
 import { View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { CoinImage } from "../ui/CoinImage";
@@ -11,8 +12,11 @@ import { atMigration, capText, curveOf, priceText } from "./coin";
 /** `row`: a `launched` row; `solUsd`: store.solUsd (0 until known). Until its pool is read
  *  (`pool` null) it says "Pool loading" instead of numbers. Once migrated, the numbers are
  *  the ones at migration until the server has found the coin's DAMM v2 pool (coin.js
- *  atMigration), and the card says so. A row with no coin draws nothing. */
-export function MarketCard({ row, solUsd, onPress }) {
+ *  atMigration), and the card says so. A row with no coin draws nothing. `onPress(presale)`
+ *  gets the row's key, so one stable function serves every card: the card is memoized and
+ *  skips a render when none of its props changed (the store replaces only the rows a push
+ *  changes). */
+export const MarketCard = memo(function MarketCard({ row, solUsd, onPress }) {
   const token = row.token;
   if (!token) return null;
   const pool = row.pool;
@@ -29,7 +33,7 @@ export function MarketCard({ row, solUsd, onPress }) {
       style={{ padding: 12 }}
       onPress={() => {
         Haptics.selectionAsync().catch(() => {});
-        onPress?.();
+        onPress?.(row.presale);
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -60,4 +64,4 @@ export function MarketCard({ row, solUsd, onPress }) {
       ) : null}
     </Card>
   );
-}
+});

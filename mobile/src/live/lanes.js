@@ -39,16 +39,22 @@ export function pairStage(view, row) {
 /** New Pairs: presales with a coin that are filling or launching (pairStage: a launched one
  *  stays until its `launched` row arrives, so its card never vanishes in between), and
  *  expired ones for EXPIRED_STAYS_MS after `seen` says they expired (one not in `seen` yet
- *  has just expired). Newest opened first. */
+ *  has just expired). Newest opened first. Each item is { presale, view, stage }: `view` the
+ *  presales row itself (the same object while the feed doesn't change it), `stage` its
+ *  pairStage, so a card needs nothing from the launched feed. */
 export function newPairs(presales, launched, nowMs, seen) {
-  return Object.values(presales)
-    .filter((v) => {
-      if (!v.token) return false;
-      const stage = pairStage(v, launched[v.presale]);
-      if (stage === "presale" || stage === "launching") return true;
-      return stage === "expired" && nowMs - (seen[v.presale] ?? nowMs) < EXPIRED_STAYS_MS;
-    })
-    .sort((a, b) => Number(b.openedTs ?? 0) - Number(a.openedTs ?? 0) || (a.presale < b.presale ? -1 : a.presale > b.presale ? 1 : 0));
+  const items = [];
+  for (const v of Object.values(presales)) {
+    if (!v.token) continue;
+    const stage = pairStage(v, launched[v.presale]);
+    const shows =
+      stage === "presale" || stage === "launching" || (stage === "expired" && nowMs - (seen[v.presale] ?? nowMs) < EXPIRED_STAYS_MS);
+    if (shows) items.push({ presale: v.presale, view: v, stage });
+  }
+  return items.sort(
+    (a, b) =>
+      Number(b.view.openedTs ?? 0) - Number(a.view.openedTs ?? 0) || (a.presale < b.presale ? -1 : a.presale > b.presale ? 1 : 0),
+  );
 }
 
 const curveFill = (r) => (r.pool ? curveOf(r.pool).fill : -1);
@@ -80,4 +86,17 @@ export function filling(presales, launched) {
     lamports += BigInt(v.raised ?? 0);
   }
   return { count, lamports };
+}
+
+/** The lane the pager settled on from a momentum end at offset `x` (pages `pageW` wide), or
+ *  null to ignore it. On Android a cancelled animated scroll (a second tab tap, a drag, a
+ *  scrollTo) still sends a momentum end, wherever it stopped: one off a page boundary, or
+ *  on a page other than `target` (the lane a tab tap is scrolling to, null with none), is
+ *  ignored, so it neither plays a tap nor moves the underline. */
+export function settledLane(x, pageW, target) {
+  if (!(pageW > 0)) return null;
+  const i = Math.round(x / pageW);
+  if (Math.abs(x - i * pageW) > 1) return null;
+  if (target != null && i !== target) return null;
+  return i;
 }
