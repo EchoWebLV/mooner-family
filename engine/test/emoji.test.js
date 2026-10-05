@@ -39,6 +39,13 @@ test("chatParts: $TICKER links only for coins in the map, next to emojis", () =>
   assert.deepEqual(chatParts("buy $MOON"), [{ kind: "text", text: "buy $MOON" }]);
 });
 
+test("chatParts: a ticker is 1 to 10 letters or digits and ends at a word boundary", () => {
+  const tickers = new Map([["X", "mintX"], ["MOON", "mint1"], ["ABCDEFGHIJK", "mintK"]]);
+  assert.deepEqual(chatParts("$x", tickers), [{ kind: "ticker", text: "$x", tokenId: "mintX" }]);
+  assert.deepEqual(chatParts("$MOON_X", tickers), [{ kind: "text", text: "$MOON_X" }]);
+  assert.deepEqual(chatParts("$ABCDEFGHIJK", tickers), [{ kind: "text", text: "$ABCDEFGHIJK" }]);
+});
+
 test("emojiOnly: only emojis and spaces", () => {
   assert.equal(emojiOnly(chatParts(":lfg: :moon:")), true);
   assert.equal(emojiOnly(chatParts(":lfg:")), true);
@@ -52,7 +59,7 @@ test("emojisIn: the emojis in order, at most `max`", () => {
   assert.deepEqual(emojisIn("no emojis :nope:"), []);
 });
 
-test("280 code points: an emoji counts once, as the server counts", () => {
+test("280 code points: a one-code-point emoji counts once, as the server counts", () => {
   const rockets = "🚀".repeat(280);
   assert.equal(rockets.length, 560); // UTF-16 units, what maxLength counted
   assert.equal(codePoints(rockets), CHAT_MAX);
@@ -60,4 +67,5 @@ test("280 code points: an emoji counts once, as the server counts", () => {
   assert.equal(clipChat(rockets + "🚀"), rockets);
   assert.equal(clipChat("a".repeat(281)), "a".repeat(280));
   assert.equal(codePoints(null), 0);
+  assert.equal(clipChat(null), "");
 });

@@ -9,7 +9,7 @@ const KNOWN = new Set(EMOJI);
 /** The longest chat line, in code points (the server's limit). */
 export const CHAT_MAX = 280;
 
-const TOKEN = /:([a-z]+):|\$([A-Za-z0-9]{2,10})\b/g;
+const TOKEN = /:([a-z]+):|\$([A-Za-z0-9]{1,10})\b/g; // tickers: 1 to 10 letters or digits (engine/server/api.js)
 
 /** `text` in parts, in order: { kind: "text", text } | { kind: "emoji", name, text } |
  *  { kind: "ticker", text, tokenId }. A `$TICKER` is a part only when `tickers` (a Map of
@@ -43,10 +43,12 @@ export const emojiOnly = (parts) =>
 export const emojisIn = (text, max = Infinity) =>
   chatParts(text).filter((p) => p.kind === "emoji").slice(0, max).map((p) => p.name);
 
-/** The length the server counts: code points, so an emoji counts once. */
+/** The length the server counts: code points, so a one-code-point emoji counts once (a skin
+ *  tone or a flag counts each of its code points, as the server does). */
 export const codePoints = (text) => Array.from(text ?? "").length;
 
-/** `text` cut to `max` code points (never in the middle of an emoji). */
+/** `text` cut to `max` code points (never in the middle of a surrogate pair; a skin tone or
+ *  flag at the very end can still be cut, which the server accepts). */
 export function clipChat(text, max = CHAT_MAX) {
   const s = text ?? "";
   const cps = Array.from(s);
