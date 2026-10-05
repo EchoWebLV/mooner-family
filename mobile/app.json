@@ -10,7 +10,9 @@
     "backgroundColor": "#07080b",
     "android": {
       "package": "family.mooner.app",
-      "blockedPermissions": ["android.permission.RECORD_AUDIO"],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -68,7 +70,8 @@
             }
           }
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": false
