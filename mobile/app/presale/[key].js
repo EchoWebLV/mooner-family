@@ -8,7 +8,7 @@ import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
 import { chatGate } from "../../../engine/src/cues.js";
-import { seatOf, whoIsIn } from "../../../engine/src/views.js";
+import { seatOf, stageOf, whoIsIn } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { useAccount, useSigner } from "../../src/wallet";
 import { stillIn } from "../../src/launched/coin";
@@ -35,6 +35,7 @@ import { Move } from "../../src/ui/motion";
 import { Scene } from "../../src/ui/Scene";
 import { isArmed, play } from "../../src/ui/sound";
 import { TopBar, goBack } from "../../src/ui/TopBar";
+import { useAppActive } from "../../src/ui/useAppActive";
 import { useNow } from "../../src/ui/useNow";
 import { C, F, R, S } from "../../src/ui/theme";
 
@@ -86,6 +87,9 @@ export default function Room() {
   const busy = useStore(store, (s) => s.busy);
   const mineEntry = useStore(store, (s) => s.mine[key]);
   const focused = useIsFocused();
+  // focus stays with the phone locked or another app up: sounds and the moment wait for both
+  const active = useAppActive();
+  const heard = focused && active;
   const now = useNow(1000, focused);
   const signer = useSigner();
   const insets = useSafeAreaInsets();
@@ -114,22 +118,17 @@ export default function Room() {
   const who = useMemo(() => (view ? whoIsIn(view) : []), [view]);
   const seat = useMemo(() => (view && wallet ? seatOf(view, wallet) : null), [view, wallet]);
   const ticker = view?.token?.symbol;
+  const stage = view ? stageOf(view, launched) : null;
 
-  // `join` when a wallet takes a seat, from this visit's first snapshot on
+  // `join` when a wallet takes a seat, from this visit's first snapshot on, while the presale
+  // takes seats: the seat that fills the pool brings POOL FULL and its own sounds
   const before = useRef(null);
   useEffect(() => {
     if (!ready) return;
     const joined = joinedSince(before.current, who);
     before.current = new Set(who.map((w) => w.user));
-    if (joined.length && focused) play("join");
-  }, [ready, who, focused]);
-
-  // `chat` when a line arrives, at most one every 400 ms
-  const [chatSound] = useState(() => chatGate());
-  const onLine = useCallback(() => {
-    if (focused && chatSound(Date.now())) play("chat");
-  }, [focused, chatSound]);
-  useNewLines(key, onLine);
+    if (joined.length && heard && stage === "presale") play("join");
+  }, [ready, who, heard, stage]);
 
   // Whether this wallet's tokens arrived: its seat's commit last seen after OPEN (kept here,
   // per presale and wallet), else a join from this phone not taken back (the keeper delivers
@@ -139,8 +138,17 @@ export default function Room() {
   const locked = lockedCommit(detail, wallet, same ? lock.commit : null);
   if (!same || lock.commit !== locked) setLock({ key, wallet, commit: locked });
   const claimed = claimedOf(detail, wallet, locked ?? (stillIn(mineEntry) ? 1n : null));
-  const moment = useMoment({ view, launched, ready });
+  const moment = useMoment({ view, detail, launched, ready, claimed });
   const momentOn = moment.phase != null && moment.phase !== "done";
+
+  // `chat` when a line arrives, at most one every 400 ms, where the chat shows: the room, or
+  // the launching screen over it (POOL FULL keeps to its own sounds; failed is quiet)
+  const [chatSound] = useState(() => chatGate());
+  const chatHeard = heard && (moment.screen == null || moment.screen === "launching");
+  const onLine = useCallback(() => {
+    if (chatHeard && chatSound(Date.now())) play("chat");
+  }, [chatHeard, chatSound]);
+  useNewLines(key, onLine);
 
   if (!valid || missing) {
     return (
@@ -255,11 +263,11 @@ export default function Room() {
           ) : null}
         </View>
         <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, height: SCENE_H - 40 }}>
-          <FloatingEmojis channel={key} on={focused && !chatOpen && !joinOpen && !face && !momentOn} />
+          <FloatingEmojis channel={key} on={heard && !chatOpen && !joinOpen && !face && !momentOn} />
         </View>
       </ScrollView>
       <View style={{ paddingHorizontal: S.gutter, paddingTop: 10, paddingBottom: insets.bottom + 10, gap: 10, backgroundColor: C.bg0 }}>
-        {hostLine ? <Host line={hostLine} sound={focused && isArmed()} /> : null}
+        {hostLine ? <Host line={hostLine} sound={heard && isArmed()} /> : null}
         {backNote ? (
           <T v="small" color={C.up} accessibilityLiveRegion="polite" style={{ textAlign: "center" }}>{backNote}</T>
         ) : null}
@@ -292,13 +300,12 @@ export default function Room() {
       <LaunchMoment
         moment={moment}
         view={view}
-        detail={detail}
         launched={launched}
         who={who}
         seat={seat}
         commit={locked}
         claimed={claimed}
-        focused={focused}
+        focused={heard}
         wallet={wallet}
         N={info.N}
         onShare={shareText ? onShare : null}

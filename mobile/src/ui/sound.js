@@ -125,9 +125,9 @@ export function arm() {
  *  too, so a room opened by a link stays quiet until the first touch. */
 export const isArmed = () => armed;
 
-/** The next screen change plays `cue` instead of its own. Nothing calls it today: the coin
- *  page's Trade opens a sheet there, not a new screen. It's used by that one change only: a
- *  change with no cue of its own drops it too. */
+/** The next screen change plays `cue` instead of its own. MomentLive's Trade uses it: whoosh
+ *  into the coin page from live. It's used by that one change only: a change with no cue of
+ *  its own drops it too. */
 export function nextScreen(cue) {
   nextCue = cue;
 }

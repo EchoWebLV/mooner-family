@@ -1,6 +1,7 @@
-// Launching: it slides up after the 3-2-1 (or opens here when the room opened late). The
-// launching scene zooms out slowly, the coin chip, the room's chat over the scene, and the
-// four steps: `step` as each ticks done, `tick` as "N to go" goes down.
+// Launching: it slides up after the 3-2-1 with `whoosh` (or opens here when the room opened
+// late, the room's own whoosh already played). The launching scene zooms out slowly, the coin
+// chip, the room's chat over the scene, and the four steps: `step` as each ticks done, `tick`
+// as "N to go" goes down.
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -34,12 +35,16 @@ const doneFromTop = (steps) => {
 
 /** `steps`: launchSteps(...) for the presale. `late`: the room opened while it was already
  *  launching; the steps done by then show ticked at once. After the 3-2-1, the steps that
- *  landed during it tick in one by one. */
-export function MomentLaunching({ view, steps, late, onClose }) {
+ *  landed during it tick in one by one. `again`: this screen showed before (the room is back
+ *  in front): the steps done show ticked at once, and no whoosh or host sound. Read once, as
+ *  it opens. */
+export function MomentLaunching({ view, steps, late, again, onClose }) {
   const insets = useSafeAreaInsets();
+  const [first] = useState(() => !late && !again); // straight from the 3-2-1
+  const [quietHost] = useState(() => !!again);
   const target = doneFromTop(steps.steps);
   // the steps shown done; then one more every STEP_GAP_MS until they match the chain
-  const [shown, setShown] = useState(() => (late ? target : Math.min(target, 1)));
+  const [shown, setShown] = useState(() => (first ? Math.min(target, 1) : target));
   useEffect(() => {
     if (shown > target) {
       setShown(target);
@@ -54,8 +59,8 @@ export function MomentLaunching({ view, steps, late, onClose }) {
   }, [shown, target]);
 
   useEffect(() => {
-    cue("whoosh");
-  }, []);
+    if (first) cue("whoosh");
+  }, [first]);
 
   // `tick` when "N to go" goes down and some are still to go (the last one ticks the step)
   const toGo = useRef(steps.toGo);
@@ -96,18 +101,25 @@ export function MomentLaunching({ view, steps, late, onClose }) {
         </Card>
       </View>
       <View style={{ paddingHorizontal: S.gutter, paddingBottom: insets.bottom + 16, gap: 12 }}>
-        <Host line={HOST_LINE} sound={isArmed()} />
+        <Host line={HOST_LINE} sound={!quietHost && isArmed()} />
         <Button kind="quiet" title="Close" onPress={onClose} />
       </View>
     </Move>
   );
 }
 
+/** A step's state as a screen reader says it. */
+const STATE_SAID = { done: "done", now: "in progress", todo: "to do" };
+
 /** A step: a tick that pops in when done, a spinner while it's the one going on, else a dot. */
 function StepRow({ label, state }) {
   const color = state === "todo" ? C.text2 : C.text0;
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 24 }}>
+    <View
+      accessible
+      accessibilityLabel={`${label}, ${STATE_SAID[state]}`}
+      style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 24 }}
+    >
       <View style={{ width: 20, alignItems: "center" }}>
         {state === "done" ? (
           <Move kind="pop">

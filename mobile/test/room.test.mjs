@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentScreen, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf, walletsIn, whoKnown } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentNews, momentScreen, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf, walletsIn, whoKnown } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -191,6 +191,21 @@ test("momentScreen: pool full until the 3-2-1 is done, then launching until your
   // a failed launch says so at once, mid-countdown too
   assert.equal(at({ phase: "failed" }), "failed");
   assert.equal(at({ phase: "failed", counted: true }), "failed");
+});
+
+test("momentNews: what a screen reader hears as a launch screen shows, each line once", () => {
+  const none = new Set();
+  assert.deepEqual(momentNews(null, {}, none), []);
+  assert.deepEqual(momentNews("launching", { ticker: "MOON" }, none), [], "its steps say themselves");
+  assert.deepEqual(momentNews("full", { ticker: "MOON" }, none), ["Pool full.", "Launching on Meteora."]);
+  assert.deepEqual(momentNews("live", { ticker: "MOON", claimed: false }, none), ["$MOON is live on Meteora."]);
+  assert.deepEqual(momentNews("live", { ticker: "MOON", claimed: true }, none), ["$MOON is live on Meteora.", "Your tokens arrived."]);
+  assert.deepEqual(momentNews("live", { ticker: "", claimed: false }, none), ["Live on Meteora."], "no ticker known");
+  assert.deepEqual(momentNews("failed", { refund: false }, none), ["The launch didn't go through."]);
+  assert.deepEqual(momentNews("failed", { refund: true }, none), ["The launch didn't go through.", "Your SOL comes back by itself."]);
+  // said already: a screen shown again says nothing; tokens arriving later say just that
+  assert.deepEqual(momentNews("full", {}, new Set(["Pool full.", "Launching on Meteora."])), []);
+  assert.deepEqual(momentNews("live", { ticker: "MOON", claimed: true }, new Set(["$MOON is live on Meteora."])), ["Your tokens arrived."]);
 });
 
 test("hhmm: two digits each", () => {

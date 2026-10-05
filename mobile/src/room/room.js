@@ -184,6 +184,20 @@ export function momentScreen({ phase, late, counted, stepsDone, claimed }) {
   return claimed || stepsDone ? "live" : "launching";
 }
 
+/** The lines a screen reader hears as launch screen `screen` (momentScreen's) shows, in the
+ *  screens' own words, less those in `said` (a Set of lines already heard): a screen shown
+ *  again says nothing, and tokens arriving on the live screen say just that. Launching says
+ *  nothing here: its steps read themselves. `ticker`: the coin's symbol or ""; `claimed`:
+ *  this wallet's tokens arrived; `refund`: a failed launch gives this wallet's SOL back. */
+export function momentNews(screen, { ticker, claimed, refund } = {}, said) {
+  const lines =
+    screen === "full" ? ["Pool full.", "Launching on Meteora."]
+    : screen === "live" ? [ticker ? `$${ticker} is live on Meteora.` : "Live on Meteora.", claimed && "Your tokens arrived."]
+    : screen === "failed" ? ["The launch didn't go through.", refund && "Your SOL comes back by itself."]
+    : [];
+  return lines.filter((l) => l && !said.has(l));
+}
+
 /** "09:05": a chat row's time (ms) on this phone's clock. */
 export function hhmm(ms) {
   const d = new Date(ms);
