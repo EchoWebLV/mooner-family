@@ -26,8 +26,8 @@ import { useAccount, useSigner } from "../../src/wallet";
 
 /** How long "Copied" shows after a copy. */
 const COPIED_MS = 2_000;
-/** Where back goes when the coin was opened from a link: the Launched tab. */
-const LAUNCHED = "/(tabs)/launched";
+/** Where back goes when the coin was opened from a link: Pulse. */
+const HOME = "/(tabs)";
 
 export default function Coin() {
   const params = useLocalSearchParams();
@@ -64,7 +64,7 @@ export default function Coin() {
 
   return (
     <Screen padded={false}>
-      <TopBar title={token ? `$${token.symbol}` : ""} fallback={LAUNCHED} />
+      <TopBar title={token ? `$${token.symbol}` : ""} fallback={HOME} />
       {shows === "coin" ? (
         <ScrollView contentContainerStyle={{ paddingHorizontal: S.gutter, paddingBottom: 32, gap: 16 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>

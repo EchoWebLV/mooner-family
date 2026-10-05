@@ -14,15 +14,6 @@ export function LiveIcon({ color, size = 22 }) {
   );
 }
 
-/** An arrow up and to the right. */
-export function LaunchedIcon({ color, size = 22 }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Path d="M6 18 L18 6 M8 6 H18 V16" stroke={color} {...STROKE} />
-    </Svg>
-  );
-}
-
 /** A person, outlined: a head over shoulders. */
 export function MeIcon({ color, size = 22 }) {
   return (

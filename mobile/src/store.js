@@ -626,23 +626,6 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
 // ---- selectors: call inside useMemo with stable slices, never inside useStore ----
 
-const raisedOf = (v) => BigInt(v.raised ?? 0);
-
-/** Open presales, fullest first (they fill soonest), then the nearest deadline. */
-export function liveList(s) {
-  return Object.values(s.presales)
-    .filter((v) => v.state === "OPEN")
-    .sort((a, b) => {
-      const d = raisedOf(b) - raisedOf(a);
-      return d !== 0n ? (d > 0n ? 1 : -1) : Number(a.deadlineTs ?? 0) - Number(b.deadlineTs ?? 0);
-    });
-}
-
-/** Launched coins, newest first. */
-export function launchedList(s) {
-  return Object.values(s.launched).sort((a, b) => (b.launch?.at ?? 0) - (a.launch?.at ?? 0));
-}
-
 /** Presale keys this wallet is in or was in: the open list's users, watched seats, and the
  *  ones joined from this phone. */
 export function myPresales(s) {

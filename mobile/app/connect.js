@@ -1,5 +1,5 @@
 // Sign-in: connect Seed Vault (or any Solana wallet on the phone), or look around first.
-// It opens on a cold start (index.js replaces itself with it) or on top of the app (Live's
+// It opens on a cold start (index.js replaces itself with it) or on top of the app (Pulse's
 // header, a presale's "Connect to join"); either way it leaves for where the person was.
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";

@@ -115,7 +115,7 @@ function Wallet({ wallet, leaving, onDisconnect }) {
       contentContainerStyle={{ padding: S.gutter, paddingBottom: 32 }}
       ItemSeparatorComponent={Gap}
       ListHeaderComponent={<Profile wallet={wallet} lamports={lamports} solUsd={solUsd} />}
-      ListEmptyComponent={<Empty title="You're not in any presale yet" body="Join one from Live." />}
+      ListEmptyComponent={<Empty title="You're not in any presale yet" body="Join one from Pulse." />}
       ListFooterComponent={
         <View style={{ marginTop: 32, gap: 16 }}>
           <SoundsRow />

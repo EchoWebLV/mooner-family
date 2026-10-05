@@ -1,7 +1,7 @@
 // The phone's store with a fake socket, API, flows and secure storage.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMoonerStore, launchedList, liveList, myPresales } from "../src/store.js";
+import { createMoonerStore, myPresales } from "../src/store.js";
 
 const W = "Wallet1111";
 const signer = { publicKey: { toBase58: () => W }, signTransaction: async (t) => t, sendTransaction: async () => "SIG", signMessage: async () => new Uint8Array(64) };
@@ -303,7 +303,7 @@ test("sendChat: a 401 forgets the session", async () => {
   assert.equal(store.getState().session, null);
 });
 
-test("selectors: Live fullest first, Launched newest first, my presales", () => {
+test("selectors: my presales", () => {
   const s = {
     wallet: W,
     presales: {
@@ -315,8 +315,6 @@ test("selectors: Live fullest first, Launched newest first, my presales", () => 
     views: {},
     mine: { L1: { deposit: "1", at: 1 } },
   };
-  assert.deepEqual(liveList(s).map((v) => v.presale), ["B", "A"]);
-  assert.deepEqual(launchedList(s).map((r) => r.presale), ["L2", "L1"]);
   assert.deepEqual(myPresales(s).sort(), ["B", "L1"]);
 });
 
