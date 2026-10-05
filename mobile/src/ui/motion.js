@@ -1,6 +1,8 @@
 // Plays moves.js with core Animated on the native driver (opacity and transform only).
 // `Move` runs its move once, when it mounts or its `kind` changes; give it a new `key` to
-// run it again for new content. Reduce motion turns every entrance into a fade.
+// run it again for new content. Reduce motion turns every entrance into a fade. A change to
+// Reduce motion never replays a move: it applies to moves that start after it (a finished
+// move ends in the same place either way).
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Easing, View } from "react-native";
 import { moveFor } from "./moves";
@@ -40,7 +42,9 @@ export function useReducedMotion() {
 export function Move({ kind = "rise", delay = 0, style, children, pointerEvents }) {
   const reduced = useReducedMotion();
   const m = moveFor(kind, reduced);
-  const t = useRef(new Animated.Value(m.ms === 0 ? 1 : 0)).current;
+  const tRef = useRef(null);
+  if (!tRef.current) tRef.current = new Animated.Value(m.ms === 0 ? 1 : 0);
+  const t = tRef.current;
 
   useEffect(() => {
     if (m.ms === 0) {
@@ -58,7 +62,7 @@ export function Move({ kind = "rise", delay = 0, style, children, pointerEvents 
     run.start();
     return () => run.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t, kind, reduced, delay]);
+  }, [t, kind, delay]);
 
   const range = (a, b, clamp) =>
     t.interpolate({ inputRange: [0, 1], outputRange: [a, b], extrapolate: clamp ? "clamp" : "extend" });
