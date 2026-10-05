@@ -171,6 +171,16 @@ test("chat keeps the last 200", () => {
   assert.equal(ids[199], 201);
 });
 
+test("chat: lines pushed one by one are marked live, the snapshot's aren't", () => {
+  const { store, push } = rig();
+  store.getState().watch("A");
+  push("chat:A", "snapshot", [{ id: 1, text: "gm" }]);
+  push("chat:A", "message", { id: 2, text: ":lfg:" });
+  const rows = store.getState().chats.A;
+  assert.equal(rows[0].live, undefined);
+  assert.equal(rows[1].live, true);
+});
+
 test("setWallet: its SOL, its saved sign-in and presales; switching away lets go", async () => {
   const { store, push, listening, disk } = rig();
   disk.set(`mooner:login:${W}`, { token: "old", exp: 2_000_000 });

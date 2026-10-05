@@ -155,7 +155,9 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       rows = [...m.data, ...had.filter((r) => r.id > last)];
     } else if (m.type === "message") {
       if (had.some((r) => r.id === m.data.id)) return;
-      rows = [...had, m.data].sort((a, b) => a.id - b.id);
+      // live: pushed while the room is open (the snapshot's lines aren't), so a screen can
+      // react to new lines only (chat sound, floating emojis)
+      rows = [...had, { ...m.data, live: true }].sort((a, b) => a.id - b.id);
     } else return;
     patch("chats", (c) => ({ ...c, [channel]: rows.slice(-CHAT_KEEP) }));
   };

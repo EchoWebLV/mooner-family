@@ -1,0 +1,74 @@
+// Pulse's three lanes (spec §1), as plain functions of the server's `presales` and `launched`
+// feeds (each keyed by presale), so Node tests run them.
+import { stageOf } from "../../../engine/src/views.js";
+import { curveOf } from "../launched/coin.js";
+
+/** How long an expired presale stays in New Pairs (ms), as on the web. */
+export const EXPIRED_STAYS_MS = 3_000;
+
+/** `seen` (presale -> when Pulse first saw it expired, ms) after this read: new expired
+ *  presales get `nowMs`, presales gone from the feed are dropped. Pass -Infinity as `nowMs`
+ *  for the first read, so presales already expired then never show. Returns `seen` itself
+ *  when nothing changed. */
+export function expiredSeen(seen, presales, launched, nowMs) {
+  const next = { ...seen };
+  let changed = false;
+  for (const v of Object.values(presales)) {
+    if (next[v.presale] == null && stageOf(v, launched[v.presale]) === "expired") {
+      next[v.presale] = nowMs;
+      changed = true;
+    }
+  }
+  for (const k of Object.keys(next)) {
+    if (!presales[k]) {
+      delete next[k];
+      changed = true;
+    }
+  }
+  return changed ? next : seen;
+}
+
+/** New Pairs: presales with a coin that are filling or launching, and expired ones for
+ *  EXPIRED_STAYS_MS after `seen` says they expired (one not in `seen` yet has just expired).
+ *  Newest opened first. */
+export function newPairs(presales, launched, nowMs, seen) {
+  return Object.values(presales)
+    .filter((v) => {
+      if (!v.token) return false;
+      const stage = stageOf(v, launched[v.presale]);
+      if (stage === "presale" || stage === "launching") return true;
+      return stage === "expired" && nowMs - (seen[v.presale] ?? nowMs) < EXPIRED_STAYS_MS;
+    })
+    .sort((a, b) => Number(b.openedTs ?? 0) - Number(a.openedTs ?? 0) || (a.presale < b.presale ? -1 : a.presale > b.presale ? 1 : 0));
+}
+
+const curveFill = (r) => (r.pool ? curveOf(r.pool).fill : -1);
+const newest = (a, b) => Number(b.launch?.at ?? 0) - Number(a.launch?.at ?? 0);
+
+/** Final Stretch: launched coins on the curve, closest to migrating first, then the newest.
+ *  A coin whose pool isn't read yet goes last. */
+export function finalStretch(launched) {
+  return Object.values(launched)
+    .filter((r) => r.token && !r.pool?.migrated)
+    .sort((a, b) => curveFill(b) - curveFill(a) || newest(a, b));
+}
+
+/** Migrated: coins whose curve filled and moved to Meteora DAMM v2, newest launch first (the
+ *  rows carry no migration time). */
+export function migrated(launched) {
+  return Object.values(launched)
+    .filter((r) => r.token && r.pool?.migrated)
+    .sort(newest);
+}
+
+/** The header's "X SOL filling N pools": open presales with a coin, and their SOL (BigInt). */
+export function filling(presales, launched) {
+  let count = 0;
+  let lamports = 0n;
+  for (const v of Object.values(presales)) {
+    if (!v.token || stageOf(v, launched[v.presale]) !== "presale") continue;
+    count++;
+    lamports += BigInt(v.raised ?? 0);
+  }
+  return { count, lamports };
+}
