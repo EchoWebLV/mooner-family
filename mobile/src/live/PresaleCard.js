@@ -13,7 +13,9 @@ import { C, F, R } from "../ui/theme";
 import { Countdown, timeUp } from "./Countdown";
 
 /** `view`: a `presales` list item; `info`: store.info (numbers in info.N); `wallet`: the
- *  connected wallet or null; `stage`: views.stageOf for it (presale, launching or expired).
+ *  connected wallet or null; `stage`: lanes.js pairStage for it (presale, launching or
+ *  expired; a launched presale whose launched row hasn't arrived yet is launching). Any
+ *  stage but presale and expired shows as launching.
  *  The list item names who's in only while it's OPEN, so a launching card shows no faces.
  *  Expired, or past its deadline, the card dims and stays tappable: the room says why it
  *  can't be joined. Join opens the room, like the rest of the card. A view with no coin
@@ -25,11 +27,12 @@ export function PresaleCard({ view, info, wallet, stage, onPress }) {
   const who = whoIsIn(view);
   const mine = wallet ? who.find((r) => r.user === wallet) : null;
   const open = stage === "presale";
-  const dim = stage === "expired" || (open && up);
+  const expired = stage === "expired";
+  const dim = expired || (open && up);
   const target = info.N.TARGET;
   const label =
     `$${token.symbol}, ${solText(view.raised)} of ${solText(target)} SOL` +
-    (stage === "launching" ? ", launching" : stage === "expired" ? ", expired" : "") +
+    (open ? "" : expired ? ", expired" : ", launching") +
     (mine ? `, you're in with ${solText(mine.commit)} SOL` : "");
   return (
     <View style={dim ? { opacity: 0.5 } : null}>
@@ -48,10 +51,10 @@ export function PresaleCard({ view, info, wallet, stage, onPress }) {
               <T v="body" numberOfLines={1} style={{ flexShrink: 1, fontFamily: F.semi }}>{token.name}</T>
               {open ? (
                 <Countdown deadlineTs={view.deadlineTs} onTimeUp={setUp} />
-              ) : stage === "launching" ? (
-                <Pill text="Launching" color={C.up} />
-              ) : (
+              ) : expired ? (
                 <Pill text="Expired" color={C.text2} />
+              ) : (
+                <Pill text="Launching" color={C.up} />
               )}
             </View>
             <T v="small" numberOfLines={1} style={{ fontFamily: F.mono }}>{`$${token.symbol}`}</T>

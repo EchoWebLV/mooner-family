@@ -28,14 +28,23 @@ export function expiredSeen(seen, presales, launched, nowMs) {
   return changed ? next : seen;
 }
 
-/** New Pairs: presales with a coin that are filling or launching, and expired ones for
- *  EXPIRED_STAYS_MS after `seen` says they expired (one not in `seen` yet has just expired).
- *  Newest opened first. */
+/** The stage a presale shows at in New Pairs: stageOf's, but a launched presale (SETTLED, or
+ *  CLOSED with its launch) whose `launched` row hasn't arrived yet is "launching", not
+ *  "live": Final Stretch, built from the launched feed, doesn't have it yet. */
+export function pairStage(view, row) {
+  const stage = stageOf(view, row);
+  return stage === "live" && !row ? "launching" : stage;
+}
+
+/** New Pairs: presales with a coin that are filling or launching (pairStage: a launched one
+ *  stays until its `launched` row arrives, so its card never vanishes in between), and
+ *  expired ones for EXPIRED_STAYS_MS after `seen` says they expired (one not in `seen` yet
+ *  has just expired). Newest opened first. */
 export function newPairs(presales, launched, nowMs, seen) {
   return Object.values(presales)
     .filter((v) => {
       if (!v.token) return false;
-      const stage = stageOf(v, launched[v.presale]);
+      const stage = pairStage(v, launched[v.presale]);
       if (stage === "presale" || stage === "launching") return true;
       return stage === "expired" && nowMs - (seen[v.presale] ?? nowMs) < EXPIRED_STAYS_MS;
     })

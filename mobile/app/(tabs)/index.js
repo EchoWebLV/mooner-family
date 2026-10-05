@@ -5,10 +5,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ActivityIndicator, FlatList, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { useStore } from "zustand";
-import { GRAD_SOL, stageOf } from "../../../engine/src/views.js";
+import { GRAD_SOL } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { MarketCard } from "../../src/launched/MarketCard";
-import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs } from "../../src/live/lanes";
+import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs, pairStage } from "../../src/live/lanes";
 import { PresaleCard } from "../../src/live/PresaleCard";
 import { solText } from "../../src/ui/format";
 import { Empty, PillButton, Screen, T } from "../../src/ui/kit";
@@ -87,7 +87,7 @@ export default function Pulse() {
           view={item}
           info={info}
           wallet={wallet}
-          stage={stageOf(item, launched[item.presale])}
+          stage={pairStage(item, launched[item.presale])}
           onPress={() => router.push(`/presale/${item.presale}`)}
         />
       </FadeOnce>

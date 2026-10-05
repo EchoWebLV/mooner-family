@@ -1,7 +1,7 @@
 // Pulse's three lanes from the server's feeds: presales filling, coins on the curve, migrated.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs } from "../src/live/lanes.js";
+import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs, pairStage } from "../src/live/lanes.js";
 
 const token = { symbol: "T", name: "T", image: "" };
 const P = (presale, state, openedTs, over = {}) => ({ presale, state, openedTs, raised: "0", token, ...over });
@@ -21,6 +21,23 @@ test("newPairs: open, full and launching presales with a coin, newest first", ()
   );
   const launched = byKey(R("F", 1, pool(1)));
   assert.deepEqual(keys(newPairs(presales, launched, 0, {})), ["D", "B", "A", "C"]);
+});
+
+test("newPairs: a launched presale whose launched row hasn't arrived stays, launching, until the row does", () => {
+  const presales = byKey(P("S", "SETTLED", 1), P("C", "CLOSED", 2, { launch: { at: 5 } }), P("X", "CLOSED", 3));
+  // no row yet: not in Final Stretch, so New Pairs keeps it (X closed without a launch: expired)
+  assert.deepEqual(keys(newPairs(presales, {}, 0, { X: -Infinity })), ["C", "S"]);
+  assert.deepEqual(keys(finalStretch({})), []);
+  assert.equal(pairStage(presales.S, undefined), "launching");
+  assert.equal(pairStage(presales.C, undefined), "launching");
+  // the rows arrive: they leave New Pairs for Final Stretch
+  const launched = byKey(R("S", 1, pool(1)), R("C", 2, null));
+  assert.deepEqual(keys(newPairs(presales, launched, 0, { X: -Infinity })), []);
+  assert.deepEqual(keys(finalStretch(launched)), ["S", "C"]);
+  assert.equal(pairStage(presales.S, launched.S), "live");
+  assert.equal(pairStage(P("O", "OPEN", 1), undefined), "presale");
+  assert.equal(pairStage(P("F", "FULL", 1), undefined), "launching");
+  assert.equal(pairStage(presales.X, undefined), "expired");
 });
 
 test("newPairs: an expired presale stays 3 s from when Pulse first saw it so", () => {
