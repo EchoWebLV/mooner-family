@@ -30,7 +30,7 @@ export function heroOf(view, launched, N, nowMs) {
 }
 
 /** The pool as `n` cells, each a tenth (with n 10) of `target`, filled 0..1 by `raised`
- *  (lamports: BigInt, string or number). */
+ *  (integer lamports: BigInt, string or integer number). No target (0 or missing): none filled. */
 export function cellsOf(raised, target, n = 10) {
   const t = Number(BigInt(target ?? 0));
   const r = Number(BigInt(raised ?? 0));
@@ -38,11 +38,13 @@ export function cellsOf(raised, target, n = 10) {
   return Array.from({ length: n }, (_, i) => Math.min(1, Math.max(0, f * n - i)));
 }
 
-/** Under the pool's cells: "3 wallets in · 1.25 SOL to go", or "… · full". */
+/** Under the pool's cells: "3 wallets in · 1.25 SOL to go", or "… · full". With no target
+ *  known (N.TARGET 0 or missing) just "3 wallets in", as cellsOf then shows no cell filled. */
 export function poolLine(view, N) {
   const n = whoIsIn(view).length;
-  const left = roomOf(view, N);
   const wallets = `${n} wallet${n === 1 ? "" : "s"} in`;
+  if (!(BigInt(N?.TARGET ?? 0) > 0n)) return wallets;
+  const left = roomOf(view, N);
   return left > 0n ? `${wallets} · ${solText(left)} SOL to go` : `${wallets} · full`;
 }
 

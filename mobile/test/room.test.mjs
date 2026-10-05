@@ -199,3 +199,10 @@ test("poolLine: the wallets in, and the SOL to go or full", () => {
   assert.equal(poolLine({ raised: "1000000000", users: users(10) }, N), "10 wallets in · full");
   assert.equal(poolLine({ raised: "0", users: [] }, N), "0 wallets in · 1 SOL to go");
 });
+
+test("poolLine: with no target known (0 or missing) it never says full, as cellsOf shows none filled", () => {
+  const users = [{ user: "w0", commit: "100000000" }];
+  assert.equal(poolLine({ raised: "100000000", users }, { TARGET: "0" }), "1 wallet in");
+  assert.equal(poolLine({ raised: "100000000", users }, {}), "1 wallet in");
+  assert.equal(poolLine({ raised: "0", users: [] }, null), "0 wallets in");
+});

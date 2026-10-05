@@ -1,7 +1,8 @@
 // The Mooner host: its picture and a light bubble that pops in and types its line, 18 ms a
-// character (moves.js). A new line pops and types again, and plays `host` once.
+// character (moves.js). A new line pops and types again, and plays `host` once. Only a new
+// line types: a change to Reduce motion or `sound` never retypes the line on screen.
 import { useEffect, useRef, useState } from "react";
-import { Image, View } from "react-native";
+import { Image, Text, View } from "react-native";
 import { T } from "./kit";
 import { Move, useReducedMotion } from "./motion";
 import { TYPE_MS, typedText } from "./moves";
@@ -17,13 +18,18 @@ export function Host({ line, sound = true }) {
   const reduced = useReducedMotion();
   const [shown, setShown] = useState(reduced ? full : "");
   const said = useRef(null);
+  // read when a line starts, so a change to either doesn't start it again
+  const reducedRef = useRef(reduced);
+  reducedRef.current = reduced;
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
 
   useEffect(() => {
-    if (sound && full && said.current !== full) {
+    if (soundRef.current && full && said.current !== full) {
       said.current = full;
       play("host");
     }
-    if (reduced) {
+    if (reducedRef.current) {
       setShown(full);
       return;
     }
@@ -35,9 +41,11 @@ export function Host({ line, sound = true }) {
       if (next === full) clearInterval(t);
     }, TYPE_MS);
     return () => clearInterval(t);
-  }, [full, reduced, sound]);
+  }, [full]);
 
   if (!full) return null;
+  // for the render before a new line's effect resets `shown`, the old line's text never shows
+  const typed = full.startsWith(shown) ? shown : "";
   const text = { fontFamily: F.bold, fontSize: 13, lineHeight: 17 };
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
@@ -46,14 +54,18 @@ export function Host({ line, sound = true }) {
         <View
           accessible
           accessibilityLabel={full}
+          accessibilityLiveRegion="polite"
           style={{
             backgroundColor: C.text0, paddingHorizontal: 13, paddingVertical: 9,
             borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 4,
           }}
         >
-          {/* the whole line, unseen, holds the bubble's size while it types */}
-          <T color={C.bg0} style={[text, { opacity: 0 }]}>{full}</T>
-          <T color={C.bg0} style={[text, { position: "absolute", left: 13, right: 13, top: 9 }]}>{shown}</T>
+          {/* the whole line is laid out from the start, its untyped rest unseen, so the
+              bubble keeps its size and no word jumps to the next line as it types */}
+          <T color={C.bg0} style={text}>
+            {typed}
+            <Text style={{ color: "transparent" }}>{full.slice(typed.length)}</Text>
+          </T>
         </View>
       </Move>
     </View>
