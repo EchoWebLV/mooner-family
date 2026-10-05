@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, newLines, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -215,4 +215,19 @@ test("newLines: only lines pushed live since the last read; the first read is ne
   assert.deepEqual(newLines(more, 4), { lines: [], lastId: 4 });
   assert.deepEqual(newLines([], null), { lines: [], lastId: -Infinity });
   assert.equal(newLines([{ id: 1, text: ":gm:", live: true }], -Infinity).lines.length, 1, "the chat was empty when the screen opened");
+});
+
+test("newLinesOn: a new channel (or none yet) is a first read: its live rows never replay", () => {
+  const a = [{ id: 5, text: ":lfg:", live: true }];
+  let r = newLinesOn(a, "A", null);
+  assert.deepEqual(r, { lines: [], last: { channel: "A", lastId: 5 } });
+  const b = [{ id: 2, text: ":moon:", live: true }, { id: 3, text: ":gm:", live: true }];
+  r = newLinesOn(b, "B", r.last);
+  assert.deepEqual(r, { lines: [], last: { channel: "B", lastId: 3 } }, "B's ids are below A's: none is new");
+  const b2 = [...b, { id: 9, text: ":gg:", live: true }];
+  assert.deepEqual(newLinesOn(b2, "B", r.last), { lines: [b2[2]], last: { channel: "B", lastId: 9 } });
+  r = newLinesOn([], undefined, null);
+  assert.deepEqual(r, { lines: [], last: null }, "no channel yet: nothing kept");
+  assert.deepEqual(newLinesOn(a, "A", r.last).lines, [], "the channel's first rows after none are a first read");
+  assert.deepEqual(newLinesOn(a, "A", { channel: "B", lastId: 1 }).lines, [], "a lower last id from another channel never counts");
 });

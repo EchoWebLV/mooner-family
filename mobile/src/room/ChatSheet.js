@@ -2,7 +2,7 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, TextInput, View, useWindowDimensions } from "react-native";
 import { router } from "expo-router";
-import { CHAT_MAX, clipChat, codePoints } from "../../../engine/src/emoji.js";
+import { CHAT_MAX, codePoints } from "../../../engine/src/emoji.js";
 import { useStore } from "zustand";
 import { store } from "../app";
 import { Face } from "../ui/Face";
@@ -11,14 +11,12 @@ import { SendIcon } from "../ui/icons";
 import { Button, Sheet, T } from "../ui/kit";
 import { play } from "../ui/sound";
 import { C, F, R } from "../ui/theme";
+import { typedChat } from "./chat";
 import { ChatText } from "./ChatText";
 import { EmojiRow } from "./EmojiRow";
 import { hhmm } from "./room";
 
 const EMPTY = [];
-/** The server refuses any control character (engine/server/social.js postChat); a pasted
- *  new line or tab becomes a space. */
-const CONTROL = /[\u0000-\u001f\u007f]/g;
 
 /** `channel`: the presale key; `wallet`: the connected wallet (base58) or null. Memo: the
  *  room re-renders every second for its clock, the chat needn't. */
@@ -85,7 +83,7 @@ export const ChatSheet = memo(function ChatSheet({ open, onClose, channel, walle
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <TextInput
                 value={text}
-                onChangeText={(t) => setText(clipChat(t.replace(CONTROL, " ")))}
+                onChangeText={(t) => setText((prev) => typedChat(prev, t))}
                 placeholder="Say something"
                 placeholderTextColor={C.text2}
                 returnKeyType="send"

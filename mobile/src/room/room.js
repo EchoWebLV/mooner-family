@@ -57,6 +57,16 @@ export function newLines(rows, lastId) {
   return { lines: rows.filter((r) => r.live && r.id > lastId), lastId: newest };
 }
 
+/** newLines for one channel's rows: { lines, last }, `last` being { channel, lastId } to pass
+ *  back next time, or null. Chat ids are one count across every channel, so a last id read on
+ *  another channel means nothing here: a new channel, or none yet (`channel` undefined), is a
+ *  first read. */
+export function newLinesOn(rows, channel, last) {
+  if (channel == null) return { lines: [], last: null };
+  const r = newLines(rows, last?.channel === channel ? last.lastId : null);
+  return { lines: r.lines, last: { channel, lastId: r.lastId } };
+}
+
 /** The commit to remember for claimedOf after `view`: this wallet's seat's commit once
  *  commits are fixed (any state but OPEN; set_commit runs only while OPEN), else `had`.
  *  `view`: a detail view (with `seats`). A get-back closes a seat while OPEN, so it never counts. */

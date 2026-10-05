@@ -11,7 +11,7 @@ export function EmojiRow({ onPick, disabled }) {
         <Pressable
           key={name}
           accessibilityRole="button"
-          accessibilityLabel={`:${name}:`}
+          accessibilityLabel={name}
           disabled={disabled}
           onPress={() => onPick(name)}
           style={({ pressed }) => [
