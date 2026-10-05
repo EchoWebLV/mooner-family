@@ -13,13 +13,18 @@ export const STEP_LABELS = ["Pool full", "Meteora pool created", "One buy, one p
  *   both tick when the row, or a launched state, is seen.
  * - toGo: the committed seats still in the room once launched (a claim closes a seat), or
  *   null before launch or when the view has no seats (a list view). Only a known 0 finishes.
+ *   A launched presale that is CLOSED has 0 to go whatever seats a client still holds: the
+ *   program closes a settled presale only once every seat has claimed (finish.rs).
+ * - "Pool full" is always done: this is for the screens after POOL FULL; callers don't ask
+ *   for an OPEN presale. LAUNCHING never outlives its transaction (release and settle are in
+ *   the same one), so a LAUNCHING view counts as launched only with its row.
  * - failed: the presale ended without a launch; then no step is "now".
  */
 export function launchSteps(view, row) {
   const state = view?.state;
   const launched = !!row || state === "SETTLED" || (state === "CLOSED" && !!view?.launch);
   const failed = !launched && (state === "FAILED" || state === "EXPIRED" || state === "CLOSED");
-  const toGo = launched && Array.isArray(view?.seats) ? whoIsIn(view).length : null;
+  const toGo = launched && state === "CLOSED" ? 0 : launched && Array.isArray(view?.seats) ? whoIsIn(view).length : null;
   const done = [true, launched, launched, toGo === 0];
   const now = failed ? -1 : done.indexOf(false);
   const steps = STEP_LABELS.map((label, i) => ({

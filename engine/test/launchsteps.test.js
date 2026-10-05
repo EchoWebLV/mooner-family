@@ -24,7 +24,7 @@ test("the launched row ticks the pool and the buy together; committed seats left
   const r = launchSteps({ state: "LAUNCHING", seats: [seat("a", 5), seat("b", 3), seat("c", 0)] }, ROW);
   assert.deepEqual(states(r), ["done", "done", "done", "now"]);
   assert.equal(r.toGo, 2); // c has nothing in the pool
-  assert.equal(r.steps[3].label, "Sending everyone their tokens · 2 to go");
+  assert.deepEqual(r.steps.map((s) => s.label), [...STEP_LABELS.slice(0, 3), "Sending everyone their tokens · 2 to go"]);
   assert.equal(r.done, false);
 });
 
@@ -46,6 +46,16 @@ test("a closed record with its launch is done", () => {
   const r = launchSteps({ state: "CLOSED", launch: { sig: "S" }, seats: [] }, undefined);
   assert.equal(r.done, true);
   assert.equal(r.failed, false);
+});
+
+test("closed after its launch: done, even with seats a client still holds", () => {
+  for (const view of [{ state: "CLOSED", launch: { sig: "S" }, seats: [seat("a", 5)] }, { state: "CLOSED", launch: { sig: "S" } }]) {
+    const r = launchSteps(view, undefined);
+    assert.equal(r.toGo, 0);
+    assert.equal(r.done, true);
+    assert.equal(r.steps[3].label, "Sending everyone their tokens");
+  }
+  assert.equal(launchSteps({ state: "CLOSED", seats: [seat("a", 5)] }, ROW).done, true);
 });
 
 test("a view with no seats (the list's) never says the tokens went out", () => {
