@@ -2,7 +2,7 @@
 // time, your position, its mint to copy, its links, the seat this phone joined with, and
 // sticky Buy and Sell buttons. `key` is the coin's presale.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, View } from "react-native";
+import { AccessibilityInfo, ActivityIndicator, ScrollView, View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
@@ -51,7 +51,13 @@ export default function Coin() {
   const account = useAccount(); // undefined while the saved wallet is read on a cold start
   const signer = useSigner();
   const [sheet, setSheet] = useState(null); // "buy" | "sell" | null
-  const [done, setDone] = useState(null); // what the last trade here did
+  // what the last trade here did, and which trade it was: two trades can read the same
+  // (tokensText rounds), and each one's card rises in again
+  const [done, setDone] = useState(null); // { text, n } | null
+  const onDone = useCallback((text) => {
+    setDone((d) => ({ text, n: (d?.n ?? 0) + 1 }));
+    AccessibilityInfo.announceForAccessibility(text);
+  }, []);
   const shows = coinScreenState({ row, loaded, view });
   const token = row?.token;
   const youWereIn = inWith(detail, wallet, mine);
@@ -77,12 +83,10 @@ export default function Coin() {
           </View>
           <PriceChart stats={stats} missing={statsMissing} error={statsError} sqrtPrice={atMigration(row.pool) ? null : row.pool?.sqrtPrice} />
           {done ? (
-            <Move kind="rise" key={done}>
-              <View accessibilityLiveRegion="polite">
-                <Card>
-                  <T color={C.up}>{done}</T>
-                </Card>
-              </View>
+            <Move kind="rise" key={done.n}>
+              <Card>
+                <T color={C.up}>{done.text}</T>
+              </Card>
             </Move>
           ) : null}
           {position ? (
@@ -121,7 +125,7 @@ export default function Coin() {
           signer={signer}
           sheet={sheet}
           setSheet={setSheet}
-          onDone={setDone}
+          onDone={onDone}
           holding={holding}
           lamports={lamports}
         />

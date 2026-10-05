@@ -2,16 +2,15 @@
 // the slippage, then sign once in the wallet. Jupiter routes the trade through the coin's
 // Meteora pool.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, TextInput, View } from "react-native";
+import { AppState, Pressable, TextInput, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { useIsFocused } from "expo-router";
+import { useNavigation } from "expo-router";
 import { useStore } from "zustand";
 import { sellAmount } from "../../../engine/src/swap.js";
 import { store } from "../app";
 import { Button, PillButton, Sheet, Steps, T } from "../ui/kit";
 import { Move } from "../ui/motion";
 import { isArmed, play } from "../ui/sound";
-import { useAppActive } from "../ui/useAppActive";
 import { C, F, R } from "../ui/theme";
 import { useNow } from "../ui/useNow";
 import { atMigration } from "./coin";
@@ -37,15 +36,12 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
   const buying = side === "buy";
 
   // The sheet's own sounds (a quote's `tick`, a buy's `coins`) arrive late, from a promise:
-  // quiet unless the app was touched, is in front and this coin's screen has focus then.
-  const focused = useIsFocused();
-  const active = useAppActive();
-  const heard = useRef(false);
-  useEffect(() => {
-    heard.current = focused && active;
-  }, [focused, active]);
+  // quiet unless the app was touched, is in front and this coin's screen has focus when the
+  // sound is due. Each is read live then: isFocused() reads the navigator's state now, so a
+  // coin screen gone back from (unmounted) reads as not focused.
+  const navigation = useNavigation();
   const cue = (name) => {
-    if (heard.current && isArmed()) play(name);
+    if (isArmed() && navigation.isFocused() && AppState.currentState === "active") play(name);
   };
 
   const amount = useMemo(() => {
@@ -67,7 +63,8 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
 
   // A price once the amount sits still and the lock is over: one ask per amount the user
   // picks (and one when the lock ends), never on a timer. A price from inside the tax's
-  // seconds would be stale by the time Buy opens.
+  // seconds would be stale by the time Buy opens. Any change to the amount, the opening or
+  // the lock drops a price still on its way, so an old amount's quote never ticks.
   const ask = (a) => {
     const n = ++asked.current;
     setPriced(null);
@@ -79,6 +76,7 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
     });
   };
   useEffect(() => {
+    asked.current++;
     if (!open || locked) return;
     const t = setTimeout(() => ask(amount), QUOTE_AFTER_MS);
     return () => clearTimeout(t);
@@ -113,12 +111,15 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
   async function go() {
     if (store.getState().busy || amount == null || !signer || !q) return;
     setError(null);
+    const n = asked.current; // moves on if the sheet closes or the amount changes meanwhile
     const r = await store.getState().trade(side, mint, amount, signer, { atLeast: q.minOut });
     const buzz = r.ok ? "Success" : r.moved ? "Warning" : "Error";
     Haptics.notificationAsync(Haptics.NotificationFeedbackType[buzz]).catch(() => {});
     if (r.moved) {
+      const shown = n === asked.current; // the sheet is still open at this amount
       asked.current++; // a price still on its way is older than this one
       setPriced({ amount, ok: true, value: r.value.quote });
+      if (shown) cue("tick"); // a quote value arrived
     }
     if (!r.ok) return setError(r.error);
     if (buying) cue("coins");
@@ -161,7 +162,7 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
             }}
           />
         ) : (
-          <Line label="You hold" value={holding ? `${tokensText(holding.raw)} $${symbol}` : "Reading…"} />
+          <Line label="You hold" value={holding ? `${tokensText(holding.raw)} $${symbol}` : "Reading…"} still />
         )}
         {typed && amount == null ? <T v="small" color={C.down}>Type an amount of SOL, like 0.25.</T> : null}
         <View style={{ gap: 8 }}>
@@ -194,13 +195,14 @@ export function TradeSheet({ open, side, onClose, onDone, row, holding, lamports
   );
 }
 
-/** A label on the left, its value on the right. A new value rises in; "…" (waiting) doesn't. */
-function Line({ label, value, color }) {
+/** A label on the left, its value on the right. A new quote value rises in; "…" (waiting)
+ *  doesn't, and neither does a `still` line's (the balance, which isn't a quote value). */
+function Line({ label, value, color, still = false }) {
   const text = <T v="num" color={color} style={{ textAlign: "right" }}>{value}</T>;
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
       <T v="small">{label}</T>
-      {value === "…" ? (
+      {still || value === "…" ? (
         <View style={{ flexShrink: 1 }}>{text}</View>
       ) : (
         <Move kind="rise" key={value} style={{ flexShrink: 1 }}>
