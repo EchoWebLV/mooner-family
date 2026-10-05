@@ -1,38 +1,53 @@
-// The presale room: the ring filling as SOL comes in, who's in, the coin, and your part at
-// the bottom (connect, join, your seat). Chat slides up; the launch plays full screen.
+// The presale room: its scene with the coin, time left and the last chat lines; the pool as
+// cells; who's in; your seat; the coin. The host, your button and the chat sit at the bottom.
+// The chat slides up; the launch plays full screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Share, View } from "react-native";
 import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
+import { chatGate } from "../../../engine/src/cues.js";
 import { seatOf, whoIsIn } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
 import { useAccount, useSigner } from "../../src/wallet";
 import { stillIn } from "../../src/launched/coin";
+import { ChatLines } from "../../src/room/ChatLines";
 import { ChatSheet } from "../../src/room/ChatSheet";
+import { Crowd } from "../../src/room/Crowd";
+import { FloatingEmojis } from "../../src/room/FloatingEmojis";
 import { JoinSheet } from "../../src/room/JoinSheet";
 import { LaunchOverlay } from "../../src/room/LaunchOverlay";
-import { Line, YourSeat } from "../../src/room/YourSeat";
-import { bottomOf, claimedOf, heroOf, isKey, lockedCommit, refToNote } from "../../src/room/room";
+import { GetBack, Line, SeatCard } from "../../src/room/YourSeat";
+import { useNewLines } from "../../src/room/useNewLines";
+import { bottomOf, claimedOf, heroOf, isKey, joinedSince, lockedCommit, poolLine, refToNote } from "../../src/room/room";
 import { shareOf } from "../../src/room/share";
 import { BASE } from "../../src/config";
+import { Cells } from "../../src/ui/Cells";
 import { CoinImage } from "../../src/ui/CoinImage";
-import { Face, Faces } from "../../src/ui/Face";
+import { Face } from "../../src/ui/Face";
 import { shortWallet, solText } from "../../src/ui/format";
-import { ChatIcon, CheckIcon, ShareIcon } from "../../src/ui/icons";
+import { BackIcon, ChatIcon, CheckIcon, ShareIcon } from "../../src/ui/icons";
+import { Host } from "../../src/ui/Host";
 import { Button, Card, Empty, Pill, Screen, Sheet, Steps, T } from "../../src/ui/kit";
 import { LinkPills } from "../../src/ui/LinkPills";
-import { Ring } from "../../src/ui/Ring";
+import { Move } from "../../src/ui/motion";
+import { Scene } from "../../src/ui/Scene";
+import { play } from "../../src/ui/sound";
 import { TopBar, goBack } from "../../src/ui/TopBar";
 import { useNow } from "../../src/ui/useNow";
-import { C, F, S } from "../../src/ui/theme";
+import { C, F, R, S } from "../../src/ui/theme";
 
-const FACES = 8;
 /** How long "X SOL is back in your wallet" stays. */
 const BACK_NOTE_MS = 4_000;
 /** Where back goes when the room was opened from a link. */
 const HOME = "/(tabs)";
+/** The scene's height; the top row, the chat strip and the pool sit over it. */
+const SCENE_H = 300;
+/** bg0 at 60%: the round buttons over the scene. */
+const SCENE_BUTTON = `${C.bg0}99`;
+const WITH_SEAT = "Share your link. It launches the moment the pool is full.";
+const WITHOUT_SEAT = "Take a seat. It launches the moment the pool is full.";
 
 const tap = () => Haptics.selectionAsync().catch(() => {});
 
@@ -82,6 +97,7 @@ export default function Room() {
   const [backNote, setBackNote] = useState(null);
   const openJoin = useCallback(() => setJoinOpen(true), []);
   const closeJoin = useCallback(() => setJoinOpen(false), []);
+  const openChat = useCallback(() => setChatOpen(true), []);
   const closeChat = useCallback(() => setChatOpen(false), []);
   const onBack = useCallback((deposit) => setBackNote(`${solText(deposit)} SOL is back in your wallet`), []);
 
@@ -94,6 +110,22 @@ export default function Room() {
   const who = useMemo(() => (view ? whoIsIn(view) : []), [view]);
   const seat = useMemo(() => (view && wallet ? seatOf(view, wallet) : null), [view, wallet]);
   const ticker = view?.token?.symbol;
+
+  // `join` when a wallet takes a seat, from this visit's first snapshot on
+  const before = useRef(null);
+  useEffect(() => {
+    if (!ready) return;
+    const joined = joinedSince(before.current, who);
+    before.current = new Set(who.map((w) => w.user));
+    if (joined.length && focused) play("join");
+  }, [ready, who, focused]);
+
+  // `chat` when a line arrives, at most one every 400 ms
+  const [chatSound] = useState(() => chatGate());
+  const onLine = useCallback(() => {
+    if (focused && chatSound(Date.now())) play("chat");
+  }, [focused, chatSound]);
+  useNewLines(key, onLine);
 
   // Whether this wallet's tokens arrived: its seat's commit last seen after OPEN (kept here,
   // per presale and wallet), else a join from this phone not taken back (the keeper delivers
@@ -133,65 +165,101 @@ export default function Room() {
   const bottom = bottomOf(view, wallet, info.N, now, claimed);
   // A join going on with its sheet closed (by a tap outside it, or back): its steps show here.
   const joinBusy = busy?.kind === "join" && busy.key === key && !joinOpen && bottom.kind !== "seat";
-  // null while the presale is OPEN past its deadline: no Share button then (src/room/share.js)
+  // null while the presale is OPEN past its deadline: no Share or Invite then (src/room/share.js)
   const shareText = shareOf({ view, launched, wallet, N: info.N, base: BASE, now });
   const onShare = () => {
     if (shareText) Share.share(shareText, { dialogTitle: "Share this presale" }).catch(() => {});
   };
+  const hostLine =
+    hero.stage !== "presale" ? null
+    : bottom.kind === "seat" ? WITH_SEAT
+    : bottom.kind === "join" || bottom.kind === "connect" ? WITHOUT_SEAT
+    : null;
+  const main =
+    bottom.kind === "connect" ? <Button title="Connect to join" onPress={() => router.push("/connect")} />
+    : bottom.kind === "seat" ? (shareText ? <Button title="Invite" onPress={onShare} /> : null)
+    : bottom.kind === "claimed" ? <Button title={ticker ? `See $${ticker}` : "See the coin"} onPress={() => router.push(`/coin/${key}`)} />
+    : joinBusy ? <Button title="Join" onPress={openJoin} busy />
+    : bottom.kind === "join" ? <Button title="Join" onPress={openJoin} />
+    : null;
+  const timeColor = hero.stage === "presale" ? C.text0 : hero.color === C.text2 ? C.text1 : hero.color;
 
   return (
     <Screen padded={false}>
-      <TopBar
-        title={ticker ? `$${ticker}` : "Presale"}
-        fallback={HOME}
-        side={100}
-        right={
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            {shareText ? <ShareButton onPress={onShare} /> : null}
-            <ChatButton count={chatCount} onPress={() => setChatOpen(true)} />
+      <ScrollView contentContainerStyle={{ paddingBottom: 16 }}>
+        <Scene name="room" height={SCENE_H} style={{ position: "absolute", top: 0, left: 0, right: 0 }} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: S.gutter, paddingTop: 6 }}>
+          <SceneButton label="Back" onPress={() => goBack(HOME)}>
+            <BackIcon color={C.text0} />
+          </SceneButton>
+          {view.token ? <CoinImage uri={view.token.image} size={42} ticker={view.token.symbol} /> : null}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T v="h2" numberOfLines={1}>{ticker ? `$${ticker}` : "Presale"}</T>
+            {view.token?.name ? <T v="small" color={C.text0} numberOfLines={1}>{`Presale · ${view.token.name}`}</T> : null}
           </View>
-        }
-      />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.gutter, paddingBottom: 24, gap: 24 }}>
-        <View style={{ alignItems: "center", gap: 12, paddingTop: 8 }}>
-          <Ring size={260} fill={hero.fill} color={hero.color}>
-            <T v="bigNum">{solText(view.raised)}</T>
-            <T v="small">{`of ${solText(info.N.TARGET)} SOL`}</T>
-          </Ring>
-          {hero.stage === "presale" ? (
-            <T v="num">{hero.under}</T>
-          ) : (
-            <T v="body" color={hero.color === C.text2 ? C.text1 : hero.color} style={{ fontFamily: F.medium }}>{hero.under}</T>
-          )}
+          <T v="num" color={timeColor} style={{ fontSize: 16 }}>{hero.under}</T>
+          {shareText && bottom.kind !== "seat" ? (
+            <SceneButton label="Share" onPress={onShare}>
+              <ShareIcon color={C.text0} size={20} />
+            </SceneButton>
+          ) : null}
         </View>
-        <WhoIsIn rows={who} onFace={setFace} />
-        {view.token ? <Coin token={view.token} /> : null}
+        <View style={{ height: 100, justifyContent: "flex-end", paddingHorizontal: S.gutter, paddingBottom: 6 }}>
+          <ChatLines channel={key} onPress={openChat} />
+        </View>
+        <View style={{ paddingHorizontal: S.gutter, gap: 12 }}>
+          <Move kind="rise">
+            <View style={{ gap: 6 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+                <T v="label">Pool</T>
+                <T v="num" color={C.text2} style={{ fontSize: 13 }}>
+                  <T v="num" color={hero.color} style={{ fontSize: 13 }}>{solText(view.raised)}</T>
+                  {` / ${solText(info.N.TARGET)} SOL`}
+                </T>
+              </View>
+              <Cells raised={view.raised} target={info.N.TARGET} color={hero.stage === "expired" ? C.text2 : C.er} />
+              {detail ? <T v="small">{poolLine(detail, info.N)}</T> : null}
+            </View>
+          </Move>
+          <Move kind="rise" delay={90}>
+            <Card style={{ gap: 12, paddingHorizontal: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6 }}>
+                <T v="label">Who's in</T>
+                <T v="num" color={C.text2} style={{ fontSize: 12 }}>{who.length}</T>
+              </View>
+              <Crowd who={who} me={wallet} onFace={setFace} />
+            </Card>
+          </Move>
+          {bottom.kind === "seat" ? (
+            <Move kind="rise" delay={180}>
+              <SeatCard view={view} launched={launched} seat={bottom.seat} wallet={wallet} now={now} />
+            </Move>
+          ) : null}
+          {view.token ? (
+            <Move kind="rise" delay={270}>
+              <Coin token={view.token} />
+            </Move>
+          ) : null}
+        </View>
+        <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, height: SCENE_H - 40 }}>
+          <FloatingEmojis channel={key} on={focused && !chatOpen} />
+        </View>
       </ScrollView>
-      <View
-        style={{
-          borderTopWidth: 1, borderColor: C.line, backgroundColor: C.bg0, paddingHorizontal: S.gutter,
-          paddingTop: 12, paddingBottom: insets.bottom + 12, gap: 10,
-        }}
-      >
+      <View style={{ paddingHorizontal: S.gutter, paddingTop: 10, paddingBottom: insets.bottom + 10, gap: 10, backgroundColor: C.bg0 }}>
+        {hostLine ? <Host line={hostLine} /> : null}
         {backNote ? <T v="small" color={C.up} style={{ textAlign: "center" }}>{backNote}</T> : null}
-        {bottom.kind === "connect" ? <Button title="Connect to join" onPress={() => router.push("/connect")} /> : null}
-        {bottom.kind === "seat" ? (
-          <YourSeat view={view} launched={launched} seat={bottom.seat} wallet={wallet} now={now} signer={signer} onBack={onBack} />
-        ) : null}
         {bottom.kind === "claimed" ? (
-          <>
-            <Line icon={<CheckIcon color={C.gold} />} color={C.gold}>Your tokens arrived</Line>
-            <Button title={ticker ? `See $${ticker}` : "See the coin"} onPress={() => router.push(`/coin/${key}`)} />
-          </>
+          <Line icon={<CheckIcon color={C.gold} />} color={C.gold}>Your tokens arrived</Line>
         ) : null}
-        {joinBusy ? (
-          <>
-            <Steps step={busy.step} />
-            <Button title="Join" onPress={openJoin} busy />
-          </>
-        ) : null}
-        {bottom.kind === "join" && !joinBusy ? <Button title="Join" onPress={openJoin} /> : null}
+        {joinBusy ? <Steps step={busy.step} /> : null}
         {bottom.kind === "why" && !joinBusy ? <T v="small" color={C.text2} style={{ textAlign: "center" }}>{bottom.why}</T> : null}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flex: 1 }}>{main}</View>
+          <ChatButton count={chatCount} onPress={openChat} />
+        </View>
+        {bottom.kind === "seat" ? (
+          <GetBack view={view} launched={launched} seat={bottom.seat} wallet={wallet} now={now} signer={signer} onBack={onBack} />
+        ) : null}
       </View>
 
       <JoinSheet
@@ -211,58 +279,48 @@ export default function Room() {
   );
 }
 
-/** Opens Android's share sheet with the presale's link (src/room/share.js). */
-function ShareButton({ onPress }) {
+/** A round button over the scene, on a dark veil. */
+function SceneButton({ label, onPress, children }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Share"
-      hitSlop={{ top: 8, bottom: 8, left: 8, right: 0 }}
-      onPress={() => {
-        tap();
-        onPress();
-      }}
-      style={({ pressed }) => [{ width: 44, height: 44, alignItems: "center", justifyContent: "center" }, pressed && { opacity: 0.6 }]}
-    >
-      <ShareIcon color={C.text0} />
-    </Pressable>
-  );
-}
-
-/** The chat, with its message count, for the top bar's right side. */
-function ChatButton({ count, onPress }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={count ? `Chat, ${count} messages` : "Chat"}
-      hitSlop={8}
+      accessibilityLabel={label}
+      hitSlop={6}
       onPress={() => {
         tap();
         onPress();
       }}
       style={({ pressed }) => [
-        { width: 56, height: 44, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, paddingRight: 8 },
+        { width: 40, height: 40, borderRadius: 20, backgroundColor: SCENE_BUTTON, alignItems: "center", justifyContent: "center" },
         pressed && { opacity: 0.6 },
       ]}
     >
-      <ChatIcon color={C.text0} />
-      {count > 0 ? <T v="num" style={{ fontSize: 13 }} color={C.text1}>{count}</T> : null}
+      {children}
     </Pressable>
   );
 }
 
-/** "Who's in" and their faces, biggest commit first; a tap opens that person's card. */
-function WhoIsIn({ rows, onFace }) {
-  const wallets = useMemo(() => rows.map((r) => r.user), [rows]);
+/** The chat, with its message count, next to the main button. */
+function ChatButton({ count, onPress }) {
   return (
-    <View style={{ alignItems: "center", gap: 10 }}>
-      <T v="label">Who's in</T>
-      {rows.length ? (
-        <Faces wallets={wallets} size={36} max={FACES} ring={C.bg0} onPress={(w) => onFace(rows.find((r) => r.user === w))} />
-      ) : (
-        <T v="small" color={C.text2}>Nobody yet</T>
-      )}
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={count ? `Chat, ${count} messages` : "Chat"}
+      onPress={() => {
+        tap();
+        onPress();
+      }}
+      style={({ pressed }) => [
+        {
+          minWidth: 52, height: 52, paddingHorizontal: 14, borderRadius: R.pill, borderWidth: 1, borderColor: C.lineStrong,
+          backgroundColor: C.bg2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+        },
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <ChatIcon color={C.text0} />
+      {count > 0 ? <T v="num" color={C.text1} style={{ fontSize: 13 }}>{count}</T> : null}
+    </Pressable>
   );
 }
 

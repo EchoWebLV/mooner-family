@@ -1,7 +1,7 @@
 // The presale room's choices: the ring, the bottom area, the join pick, the seat, the launch moment.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, lockedCommit, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
+import { bottomOf, cellsOf, claimedOf, heroOf, hhmm, isKey, joinedSince, lockedCommit, momentStep, newLines, newLinesOn, pickOf, poolLine, refToNote, seatPlan, shortOf } from "../src/room/room.js";
 import { C } from "../src/ui/theme.js";
 
 const N = { TARGET: 500_000_000n, MIN_SEAT: 100_000_000n, MAX_SEAT: 500_000_000n, STEP: 10_000_000n };
@@ -134,17 +134,17 @@ test("shortOf: the seat plus fees and rent against the wallet", () => {
 test("seatPlan: in, out of the pool, creator, locked", () => {
   const plan = (view, seat) => seatPlan(view, null, seat, ME, NOW);
   const seat = (over) => ({ deposit: 250_000_000n, commit: 250_000_000n, creator: false, settled: false, ...over });
-  assert.deepEqual(plan(open({ seats: [seatRow()] }), seat()), { title: "You're in · 0.25 SOL", note: null, back: true });
+  assert.deepEqual(plan(open({ seats: [seatRow()] }), seat()), { title: "Your seat · 0.25 SOL", note: null, back: true });
   assert.deepEqual(plan(open({ seats: [seatRow({ commit: "0" })] }), seat({ commit: 0n })), {
     title: "In your seat · 0.25 SOL, out of the pool", note: null, back: true,
   });
-  assert.deepEqual(plan(open({ seats: [seatRow({ creator: true })] }), seat({ creator: true })), { title: "You're in · 0.25 SOL", note: "creator", back: false });
+  assert.deepEqual(plan(open({ seats: [seatRow({ creator: true })] }), seat({ creator: true })), { title: "Your seat · 0.25 SOL", note: "creator", back: false });
   const launching = open({ state: "LAUNCHING", seats: [seatRow()] });
-  assert.deepEqual(plan(launching, seat()), { title: "You're in · 0.25 SOL", note: "locked", back: false });
+  assert.deepEqual(plan(launching, seat()), { title: "Your seat · 0.25 SOL", note: "locked", back: false });
   assert.equal(plan(open({ state: "LAUNCHING", seats: [seatRow({ creator: true })] }), seat({ creator: true })).note, "locked");
   // launched, not claimed yet (a claim closes the seat, and the room says so without it)
   const live = open({ state: "SETTLED", seats: [seatRow({ settled: true })] });
-  assert.deepEqual(plan(live, seat({ settled: true })), { title: "You're in · 0.25 SOL", note: "locked", back: false });
+  assert.deepEqual(plan(live, seat({ settled: true })), { title: "Your seat · 0.25 SOL", note: "locked", back: false });
   // expired before filling: the seat's SOL can come back
   assert.equal(plan(open({ state: "EXPIRED", seats: [seatRow()] }), seat()).back, true);
 });
@@ -230,4 +230,11 @@ test("newLinesOn: a new channel (or none yet) is a first read: its live rows nev
   assert.deepEqual(r, { lines: [], last: null }, "no channel yet: nothing kept");
   assert.deepEqual(newLinesOn(a, "A", r.last).lines, [], "the channel's first rows after none are a first read");
   assert.deepEqual(newLinesOn(a, "A", { channel: "B", lastId: 1 }).lines, [], "a lower last id from another channel never counts");
+});
+
+test("joinedSince: the wallets new since the last read; nobody on the first", () => {
+  const who = [{ user: "a" }, { user: "b" }, { user: "c" }];
+  assert.deepEqual(joinedSince(null, who), []);
+  assert.deepEqual(joinedSince(new Set(["a"]), who), ["b", "c"]);
+  assert.deepEqual(joinedSince(new Set(["a", "b", "c", "d"]), who), [], "a wallet that left joins nothing");
 });

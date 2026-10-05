@@ -67,6 +67,13 @@ export function newLinesOn(rows, channel, last) {
   return { lines: r.lines, last: { channel, lastId: r.lastId } };
 }
 
+/** The wallets in `who` (whoIsIn rows) that `before` (a Set of wallets from the last read)
+ *  hadn't. `before` null is the first read: nobody is new. */
+export function joinedSince(before, who) {
+  if (before == null) return [];
+  return who.filter((w) => !before.has(w.user)).map((w) => w.user);
+}
+
 /** The commit to remember for claimedOf after `view`: this wallet's seat's commit once
  *  commits are fixed (any state but OPEN; set_commit runs only while OPEN), else `had`.
  *  `view`: a detail view (with `seats`). A get-back closes a seat while OPEN, so it never counts. */
@@ -133,7 +140,7 @@ export function seatPlan(view, launched, seat, wallet, nowMs) {
   const out = seat.commit === 0n;
   const title = out
     ? `In your seat · ${solText(seat.deposit)} SOL, out of the pool`
-    : `You're in · ${solText(seat.commit)} SOL`;
+    : `Your seat · ${solText(seat.commit)} SOL`;
   let note = null;
   if (!out && PAST.has(stage)) note = "locked";
   else if (seat.creator) note = "creator";
