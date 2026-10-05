@@ -429,8 +429,15 @@ test("limits: sockets per address, and a socket that sends too much", async () =
     for (let i = 0; i < 4; i++) a.sub("sol");
     assert.match((await a.next((m) => m.error)).error, /too many messages/);
     a.close();
-    await wait(50);
-    const again = await s.client();
+    // the server frees the place when it sees the close, which can take longer than a moment
+    // while the whole suite runs at once: try again until it has
+    let again;
+    for (let i = 0; !again; i++) {
+      await wait(50);
+      again = await s.client().catch((e) => {
+        if (i >= 40 || !/429/.test(e.message)) throw e;
+      });
+    }
     again.close();
   } finally {
     b.close();
