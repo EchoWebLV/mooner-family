@@ -17,7 +17,7 @@ import { ChatSheet } from "../../src/room/ChatSheet";
 import { Crowd } from "../../src/room/Crowd";
 import { FloatingEmojis } from "../../src/room/FloatingEmojis";
 import { JoinSheet } from "../../src/room/JoinSheet";
-import { LaunchOverlay } from "../../src/room/LaunchOverlay";
+import { LaunchMoment, useMoment } from "../../src/room/LaunchMoment";
 import { GetBack, Line, SeatCard } from "../../src/room/YourSeat";
 import { useNewLines } from "../../src/room/useNewLines";
 import { bottomOf, claimedOf, heroOf, isKey, joinedSince, lockedCommit, poolLine, refToNote, walletsIn, whoKnown } from "../../src/room/room";
@@ -139,6 +139,8 @@ export default function Room() {
   const locked = lockedCommit(detail, wallet, same ? lock.commit : null);
   if (!same || lock.commit !== locked) setLock({ key, wallet, commit: locked });
   const claimed = claimedOf(detail, wallet, locked ?? (stillIn(mineEntry) ? 1n : null));
+  const moment = useMoment({ view, launched, ready });
+  const momentOn = moment.phase != null && moment.phase !== "done";
 
   if (!valid || missing) {
     return (
@@ -253,7 +255,7 @@ export default function Room() {
           ) : null}
         </View>
         <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, height: SCENE_H - 40 }}>
-          <FloatingEmojis channel={key} on={focused && !chatOpen && !joinOpen && !face} />
+          <FloatingEmojis channel={key} on={focused && !chatOpen && !joinOpen && !face && !momentOn} />
         </View>
       </ScrollView>
       <View style={{ paddingHorizontal: S.gutter, paddingTop: 10, paddingBottom: insets.bottom + 10, gap: 10, backgroundColor: C.bg0 }}>
@@ -287,7 +289,20 @@ export default function Room() {
       />
       <ChatSheet open={chatOpen} onClose={closeChat} channel={key} wallet={wallet} signer={signer} />
       <FaceSheet row={face} onClose={() => setFace(null)} />
-      <LaunchOverlay view={view} launched={launched} seat={seat} claimed={claimed} ready={ready} focused={focused} />
+      <LaunchMoment
+        moment={moment}
+        view={view}
+        detail={detail}
+        launched={launched}
+        who={who}
+        seat={seat}
+        commit={locked}
+        claimed={claimed}
+        focused={focused}
+        wallet={wallet}
+        N={info.N}
+        onShare={shareText ? onShare : null}
+      />
     </Screen>
   );
 }
