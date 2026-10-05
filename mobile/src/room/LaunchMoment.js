@@ -99,6 +99,7 @@ export function LaunchMoment({ moment, view, launched, who, seat, commit, claime
             wallet={wallet}
             claimed={claimed}
             commit={commit ?? seat?.commit ?? null}
+            again={shownBefore.current.has("live")}
             onShare={onShare}
             onClose={close}
           />
