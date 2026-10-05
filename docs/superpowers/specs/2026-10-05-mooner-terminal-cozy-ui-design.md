@@ -1,6 +1,6 @@
 # Mooner UI: Terminal + cozy art, design
 
-- **Date:** 2026-10-05 · **Branch:** `feat/mooner-wireframe` · **Status:** approved in conversation, spec under review
+- **Date:** 2026-10-05 · **Branch:** `feat/mooner-wireframe` · **Status:** approved ("go", 2026-10-05). Plans: `docs/superpowers/plans/2026-10-05-mooner-ui-shared-phone.md` (shared code and the phone), `docs/superpowers/plans/2026-10-05-mooner-ui-web.md` (the website)
 - **Scope:** one look for the phone app (`mobile/`) and the website (`web/`):
   - Terminal UI with the cozy scenes and the Mooner host;
   - Pulse with three lanes, which also replaces the phone's Live and Launched tabs;
@@ -87,10 +87,10 @@ The demo the user approved (`docs/superpowers/2026-10-05-mooner-launch-terminal-
 - **Flat:**
   - no drop shadows, glows, bevels or fake 3D;
   - the mockup's `.card.glow` on the live screen is dropped;
-  - text over a scene gets a dark veil (a gradient to `bg-0`), not a text shadow.
+  - text over a scene gets a dark veil, not a text shadow: `bg-0` at 60% at the top (under the top row) fading out a fifth of the way down, clear through the middle, and `bg-0` at the bottom.
 - **Art:**
   - the room, launching and live screens each have one scene: tall on the phone, wide on the web, cropped with `object-fit: cover`;
-  - the host (`host.png`) speaks in a bubble on those three screens and in the room's chat as "Mooner".
+  - the host (`host.png`) speaks in a bubble on those three screens. Its lines stay in the bubble; they aren't added to the chat.
 - **Pictures:** 3D Mooner PFPs come from the apps' own renderers:
   - phone: `mobile/src/pfp/PfpRenderer.js`;
   - web: `web/src/lib/pfp/`.
@@ -113,12 +113,12 @@ The demo the user approved (`docs/superpowers/2026-10-05-mooner-launch-terminal-
 **Phone:**
 - The tabs become **Pulse · Create · Me**. Pulse replaces Live and Launched; `launched.js` is removed.
 - Pulse has three lanes you swipe between, with a tab strip on top. Each tab shows its lane's count:
-  - **New Pairs:** presales filling. State OPEN, plus FULL and LAUNCHING (shown "Launching"). Expired presales stay 3 s, as on the web. Newest first.
+  - **New Pairs:** presales filling. State OPEN, plus FULL and LAUNCHING (shown "Launching"). A presale that `stageOf` already calls live but has no `launched` row yet also shows "Launching" (`pairStage`), so it doesn't vanish between the launch and the feed. Expired presales stay 3 s, as on the web; past its deadline an OPEN card says "Time's up". Newest first.
   - **Final Stretch:** live coins on the curve, sorted by `curveOf(pool)`, closest to migrating first.
-  - **Migrated:** coins with `pool.migrated`, newest migration first.
+  - **Migrated:** coins with `pool.migrated`, newest launch first (`launch.at`): `launched` rows carry no migration time.
 - Cards follow the mockup:
   - presale cards: coin image, ticker, pool cells, SOL in / pool, wallets, time left, Faces, and "You're in · X SOL" or Join;
-  - market cards: market cap, curve bar, change.
+  - market cards: market cap and curve bar. No change figure: the `launched` feed has no price history, and a socket watches at most 4 coins.
 - Tapping a card opens the room or the coin page.
 - The header keeps the wallet's SOL and adds the web's "X SOL filling N pools" line.
 - The lane logic is a pure module, `mobile/src/live/lanes.js`, tested like `room.js`. It reuses `stageOf` and `curveOf`. `liveList` and `launchedList` in `store.js` are replaced by it.
@@ -131,9 +131,9 @@ Top to bottom on the phone:
 1. The scene (`room`) with the coin image, ticker, "Presale · Name" and time left over a veil.
 2. The last 3 chat lines over the scene's bottom edge.
 3. **Pool:** SOL in / pool, 10 cells (each a tenth of the pool, filled by SOL in), "N wallets in · X SOL to go".
-4. **Who's in:** a grid of PFPs with each wallet's SOL, then "+N". Once XP exists, the frame is the best title's rarity and the corner is that badge.
-5. **Your seat,** in gold: your PFP, "Your seat · X SOL", ≈ tokens. The demo's "3 joined via your link" is left out: no feed reports it today.
-6. The host's line, Invite, the chat button, and "Get my X SOL back".
+4. **Who's in:** a grid of PFPs with each wallet's SOL, then "+N" (not tappable). Once XP exists, the frame is the best title's rarity and the corner is that badge.
+5. **Your seat,** in gold: your PFP and "Your seat · X SOL". No ≈ tokens: the engine has no shared curve estimate (the web's `allocationFor` uses web-only constants); the real amount shows on the live screen. The demo's "3 joined via your link" is left out: no feed reports it today.
+6. The host's line, Invite (with a seat; without one, Share is a round button over the scene), the chat button, and "Get my X SOL back".
 
 The ring on the phone's room is replaced by the pool cells. The join sheet and seat logic stay (`JoinSheet.js`, `YourSeat.js`, `seatPlan`, `bottomOf`).
 
@@ -144,10 +144,10 @@ The ring on the phone's room is replaced by the pool cells. The join sheet and s
 - **12 Mooner emojis:** diamond, fire, gg, gm, jeet, lfg, moon, ngmi, pump, rug, ser, wen. You type them as `:name:`.
 - The text stays plain on the wire: no server change, and old clients show `:lfg:`.
 - Each app turns the known `:name:` tokens into images inline. Unknown names stay as text.
-- On the web, the existing `$TICKER` links still work alongside emojis.
-- An emoji row sits above the input. Tapping an emoji inserts `:name:`.
+- On the web, the existing `$TICKER` links still work alongside emojis. A ticker is 1–10 letters or digits, as the server's `api.js` accepts.
+- An emoji row sits above the input. Tapping an emoji adds `:name:` at the end of the message, not at the cursor. At 280 code points more typing is refused (the end of the message is never cut off); only a paste that would go past the limit is cut.
 - A message that is only emojis shows them larger.
-- **Floating emojis:** when a room chat line with emojis arrives while you're on the room, launching or live screen, up to 4 of its emojis float up over the scene.
+- **Floating emojis:** when a room chat line with emojis arrives while you're on the room, launching or live screen, up to 4 of its emojis float up over the scene. All lines share one queue: floats start `FLOAT_GAP_MS` apart, at most 10 in flight and 10 waiting (the oldest waiting is dropped). What waits is dropped when a sheet or the launch moment covers the scene, and a channel change (or the first read of one) replays nothing.
 - **The host's lines** are the moments' own lines (see 4). They're local to the app and never sent to the server.
 - **Length:** both apps count code points, as the server does, so emojis no longer count double.
 
@@ -178,8 +178,10 @@ These screens follow real state, built on the phone's `momentStep` and on one sh
 4. **Failed or expired:** the existing "The launch didn't go through." and refund copy, on the room's scene, with no stamp and no sound.
 
 **Opening the room late:**
-- Opened while FULL or LAUNCHING: it opens on the launching screen with the done steps already ticked, with no POOL FULL and no countdown. This is the one new case in `momentStep`, which today starts nothing on first sight.
-- Opened after live: the room in its live state, as today (the "Your tokens arrived · See $TICKER" bottom). Nothing replays.
+- Opened while FULL or LAUNCHING: it opens on the launching screen with the done steps already ticked, with no POOL FULL and no countdown. This is the one new case in `momentStep`, which today starts nothing on first sight. On the phone, `momentScreen` (`room.js`) picks the screen from the phase, whether the moment started late, whether the 3-2-1 has finished, whether every step is done, and whether your tokens arrived.
+- Opened after live: the room in its live state, as today (the "Your tokens arrived · See $TICKER" bottom). Nothing replays. The keeper's token delivery happens while the stage is already live, so a room reopened during it opens live, not on the launching screen.
+- A moment screen shown again (the room refocused, or the phone unlocked) shows as it was: no whoosh, stamp, liftoff or coins, no steps re-ticking, the host quiet.
+- **Away from the app:** the moment only shows while the room is focused and the app is in front. Locked or in another app, it hides, and its 3-2-1 starts over on return, so no sound plays from a pocket and no overdue countdown fires in a burst.
 
 **Web:**
 - `LaunchSequence` keeps its overlay but takes its steps from the shared function. `launchPhase` and its timers are deleted.
@@ -242,7 +244,10 @@ These screens follow real state, built on the phone's `momentStep` and on one sh
 
 **Rules:**
 - **Pulse is quiet.** On Pulse only `tap` plays. That covers its global chat on the web.
+- **Only where you are:** a screen's own sounds (host, join, chat, the moment's cues, a quote's tick) play only after the first touch, with the app in front and the screen focused. `join` plays only while the presale takes seats, so the seat that fills the pool doesn't stack on POOL FULL. `chat` stays quiet under POOL FULL and failed, which don't show the chat. The emoji cue plays at most every 400 ms.
+- **Screen sounds on the phone** come from the route: `whoosh` into a room (`/presale/…`), `tap` into any other screen, and live's Trade whooshes into the coin page. Nothing plays before the first touch, so opening the app or a link is quiet.
 - **Other people's trades** on the coin page are silent. The demo played one; a busy coin would chatter. This is a new call, made here.
+- **Volume:** sounds follow the media volume. The ringer's silent mode doesn't mute them on Android; the Sounds switch does. The app never takes audio focus from other apps and never records.
 - **Mute:** a "Sounds" switch, on by default. On the phone it's in Me; on the web it's in the wallet menu. It's kept on the device (`expo-secure-store` is already used; on the web, `localStorage`).
 
 **How each app plays sound:**
@@ -271,7 +276,7 @@ These screens follow real state, built on the phone's `momentStep` and on one sh
 - the launching screen slides up;
 - the host's bubble pops and types at 18 ms per character.
 
-**On Pulse, the interface only fades.** That covers new cards, a card leaving its lane, and lane counts.
+**On Pulse, the interface only fades.** That covers new cards and lane counts, and on the web a card leaving its lane. On the phone a card leaving its lane just goes: core `Animated` can't animate an unmount without a library.
 
 **Never:**
 - bumps;
@@ -349,7 +354,7 @@ That adds about 1 MB to each app. The logo stays `assets/mooner.svg`, never redr
   - Each boundary gets a test: exactly 280 code points; an unknown `:name:`; a seat claimed while the socket was down.
 - **Web:** the three engine modules are covered by the engine tests. Web screens are checked in the browser preview against a local server: Pulse quiet, room cues, the launch steps on a devnet presale.
 - **Phone:**
-  - `npm run bundle:check`, then a dev build on the Seeker;
-  - a devnet-sized presale run through pool full to live, screen-recorded with sound;
+  - `npm run bundle:check`, then a release build on the Seeker (the JS is bundled in; no Metro);
+  - the phone runs on mainnet only, so a mainnet presale (the 0.5 SOL testing pool), filled by the user, is run through pool full to live, screen-recorded with sound;
   - the result is compared with the approved demo video.
 - **No new lint or typecheck.** The web's `tsc -p tsconfig.check.json` must not go above its baseline of 55 errors.
