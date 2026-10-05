@@ -1,4 +1,4 @@
-// What the Launched list and the coin screen say: price, market cap, curve, launch time, your seat.
+// What Pulse's market cards and the coin screen say: price, market cap, curve, launch time, your seat.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

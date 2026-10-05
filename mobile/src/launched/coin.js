@@ -1,4 +1,4 @@
-// What the Launched list and the coin screen say about a launched coin, as plain functions of
+// What Pulse's market cards and the coin screen say about a launched coin, as plain functions of
 // its `launched` row (no React Native, so Node tests run them).
 import { GRAD_SOL, marketCapSol, priceFromSqrt, seatOf } from "../../../engine/src/views.js";
 import { compact, shortWallet, solText, usd } from "../ui/format.js";
@@ -59,7 +59,7 @@ export function inWith(detail, wallet, mine) {
 }
 
 /** What the coin screen shows: "coin" once its launched row has the coin; "wait" (a spinner)
- *  while the Launched feed hasn't loaded, or while the presale's view (`views[key]` or the
+ *  while the launched feed hasn't loaded, or while the presale's view (`views[key]` or the
  *  list's, either may be missing) says it launched or is launching but its row hasn't come
  *  yet; else "missing". */
 export function coinScreenState({ row, loaded, view }) {
