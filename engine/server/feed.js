@@ -10,6 +10,8 @@
 //   - each watched wallet's SOL: `wallet:<wallet>`
 //   - SOL/USD from Pyth's price account: `sol`
 //   - chat messages and pictures as the server saves them: `chat:<channel>`, `profiles`
+//   - XP rows (xp.js) on `profiles` too, type "xp": the board after the pictures, then the
+//     rows that change (xpChanged)
 // A socket that joins a topic gets its snapshot first, then the changes.
 
 import { EventEmitter } from "node:events";
@@ -56,11 +58,12 @@ export class Feed extends EventEmitter {
    * holders, the supply); by default one of its own to l1's endpoint, built here once
    * (coinstats.js statsConnection: a 429 fails at once, 10 s a request). `dammTries`: reads
    * of the DAMM v2 pool after a migration, `retryMs` apart; if none finds it, the feed looks
-   * again the next time the DBC pool changes (or at the next start).
+   * again the next time the DBC pool changes (or at the next start). `xpBoard()`: the XP
+   * rows sent after the pictures on `profiles` (XpLedger.board), or null for none.
    */
-  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, statsMs = 60_000, dammTries = 10, fetch = globalThis.fetch, statsConn, now = Date.now, log = console.log }) {
+  constructor({ reads, l1, ers, pid, dbcConfig, store, db, solFeed = PYTH_SOL_USD, paceMs = 1_000, poolPaceMs = 500, retryMs = 3_000, maxWallets = 2_000, statsMs = 60_000, dammTries = 10, fetch = globalThis.fetch, statsConn, xpBoard = null, now = Date.now, log = console.log }) {
     super({ captureRejections: true });
-    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, statsMs, dammTries, fetch, now, log });
+    Object.assign(this, { reads, l1, ers, pid, dbcConfig, store, db, solFeed, paceMs, poolPaceMs, retryMs, maxWallets, statsMs, dammTries, fetch, xpBoard, now, log });
     this.statsChain = chainReads(statsConn ?? statsConnection(l1.rpcEndpoint), { now, log });
     this.hub = null;
     this.subs = []; // [conn, id, "program" | "account"]
@@ -480,6 +483,16 @@ export class Feed extends EventEmitter {
     this.publish("profiles", { type: "upsert", data: { wallet, pfp } });
   }
 
+  /** Wallets' XP rows changed (xprules.js, xproutes.js): to everyone on `profiles`. */
+  xpChanged(rows) {
+    if (rows.length) this.publish("profiles", { type: "xp", data: rows });
+  }
+
+  /** The feed read `mint`'s DBC pool as migrated (at start, or a flip since). */
+  isMigrated(mint) {
+    return this.pools.get(mint)?.migrated === true;
+  }
+
   /** What the feed is watching and what it heard, for /api/health. */
   status() {
     const damm = [...this.pools.values()].filter((p) => p.damm).length;
@@ -529,7 +542,11 @@ export class Feed extends EventEmitter {
       const [kind, arg] = topic.split(":");
       if (topic === "presales") return send({ type: "snapshot", data: await this.fresh(topic, () => this.reads.listPresales()) });
       if (topic === "launched") return send({ type: "snapshot", data: await this.fresh(topic, () => this.reads.listLaunched()) });
-      if (topic === "profiles") return send({ type: "snapshot", data: allProfiles(this.db) });
+      if (topic === "profiles") {
+        send({ type: "snapshot", data: allProfiles(this.db) });
+        if (this.xpBoard) send({ type: "xp", data: this.xpBoard() });
+        return;
+      }
       if (topic === "sol") return this.sol && send({ type: "snapshot", data: this.sol });
       if (kind === "chat") return send({ type: "snapshot", data: chatRows(this.db, arg) });
       if (kind === "wallet") return send({ type: "snapshot", data: { lamports: await this.fresh(topic, () => this.reads.balance(new PublicKey(arg))) } });
