@@ -13,8 +13,7 @@ import { Button, T } from "../ui/kit";
 import { play } from "../ui/sound";
 import { TitleTag } from "../ui/TitleTag";
 import { C, F, R } from "../ui/theme";
-import { tagText } from "../xp/look";
-import { mainTitleOf } from "../xp/rows";
+import { mainTitleOf, tagWords } from "../xp/rows";
 import { readableChat, typedChat } from "./chat";
 import { ChatText } from "./ChatText";
 import { EmojiRow } from "./EmojiRow";
@@ -158,7 +157,7 @@ const Gap = () => <View style={{ height: 14 }} />;
 function Row({ row, me, size, tags }) {
   const xp = useStore(store, (s) => (tags ? s.xp?.[row.wallet] : undefined));
   const main = mainTitleOf(xp);
-  const label = [shortWallet(row.wallet), main && tagText(main.title, main.level), hhmm(row.at), readableChat(row.text)]
+  const label = [shortWallet(row.wallet), main && tagWords(main.title, main.level), hhmm(row.at), readableChat(row.text)]
     .filter(Boolean)
     .join(", ");
   return (

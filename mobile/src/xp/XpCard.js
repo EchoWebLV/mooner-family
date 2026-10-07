@@ -121,7 +121,7 @@ function Tags({ row }) {
  *  while it works, so a screen reader's focus stays on it. */
 function GenesisRow({ has, onPassed }) {
   const signer = useSigner();
-  const signedIn = useStore(store, (s) => s.session != null);
+  const signedIn = useStore(store, (s) => s.session != null && s.session.exp > Date.now() && s.wallet === signer?.publicKey.toBase58());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const pressing = useRef(false); // set at once, so a second tap before the re-render does nothing

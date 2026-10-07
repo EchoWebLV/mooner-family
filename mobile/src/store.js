@@ -636,7 +636,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
   /** Posts to presale `key`'s chat, signing in first if needed. `opts.signIn` is for tests. */
   async function sendChat(key, text, signer, opts) {
-    let session = get().session;
+    let session = get().wallet === signer.publicKey.toBase58() ? get().session : null; // not another wallet's
     if (!session || session.exp <= now()) {
       const r = await signIn(signer, opts);
       if (!r.ok) return r;

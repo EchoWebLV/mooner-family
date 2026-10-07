@@ -1230,3 +1230,13 @@ test("xp: of two reads out at once the newer answer stays, whichever lands first
   await tick();
   assert.equal(store.getState().xp[W].total, 50, "a push while it read stays");
 });
+
+test("sendChat: a sign-in kept for another wallet isn't used; the signer signs in", async () => {
+  const { store, calls } = rig({ now: 1_790_000_000_000, api: { xp: async (w) => xpRow(w, 0) } });
+  await store.getState().setWallet("Other");
+  await tick();
+  store.setState({ session: { token: "others", exp: 1_790_000_100_000 } });
+  const r = await store.getState().sendChat("global", "gm", signer, { signIn: async () => ({ token: "mine", exp: 1_790_000_100_000 }) });
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls.filter((c) => c[0] === "chat").map((c) => c[1]), ["mine"]);
+});
