@@ -1,25 +1,29 @@
-// Pulse: three lanes you swipe between (New Pairs, Final Stretch, Migrated), from the presales
-// and launched feeds the server pushes. Quiet but for a tap when the lane changes; cards and
-// lane counts only fade in, once.
+// Pulse: the room's picture with Ranks and Chat on it and the SOL filling the pools; then three
+// lanes you swipe between (Filling, Live, Mooned), from the presales and launched feeds the
+// server pushes. Quiet but for a tap when the lane changes; cards and lane counts only fade
+// in, once.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, View } from "react-native";
 import { router } from "expo-router";
 import { useStore } from "zustand";
 import { GRAD_SOL } from "../../../engine/src/views.js";
 import { store } from "../../src/app";
+import { unreadOf } from "../../src/chat/rooms";
 import { MarketCard } from "../../src/launched/MarketCard";
 import { EXPIRED_STAYS_MS, expiredSeen, filling, finalStretch, migrated, newPairs, settledLane } from "../../src/live/lanes";
 import { PresaleCard } from "../../src/live/PresaleCard";
 import { solText } from "../../src/ui/format";
-import { Empty, PillButton, Screen, T } from "../../src/ui/kit";
+import { Glass, SceneHeader } from "../../src/ui/Glass";
+import { ChatIcon, TrophyIcon } from "../../src/ui/icons";
+import { Empty, T } from "../../src/ui/kit";
 import { FadeOnce, Move } from "../../src/ui/motion";
 import { play } from "../../src/ui/sound";
 import { C, F, S } from "../../src/ui/theme";
 
 const LANES = [
-  { id: "new", title: "New Pairs", empty: "No presales right now", body: "New ones show up here the moment they open." },
-  { id: "final", title: "Final Stretch", empty: "No coins on the curve", body: "Coins land here the moment their presale fills." },
-  { id: "migrated", title: "Migrated", empty: "Nothing migrated yet", body: `Coins move here when their curve reaches ${GRAD_SOL} SOL.` },
+  { id: "new", title: "Filling", empty: "No pools filling right now", body: "New ones show up here the moment they open." },
+  { id: "final", title: "Live", empty: "Nothing live yet", body: "Coins land here the moment their pool fills." },
+  { id: "migrated", title: "Mooned", empty: "Nothing mooned yet", body: `Coins move here when their curve reaches ${GRAD_SOL} SOL.` },
 ];
 
 export default function Pulse() {
@@ -58,7 +62,7 @@ export default function Pulse() {
     return () => clearTimeout(t);
   }, [seen, now]);
 
-  // final and migrated read only the launched feed; each card gets its row (New Pairs: the
+  // final and migrated read only the launched feed; each card gets its row (Filling: the
   // presales row and its stage), so a push re-renders only the cards whose rows it changed
   const pairs = useMemo(() => newPairs(presales, launched, now, seen), [presales, launched, now, seen]);
   const onCurve = useMemo(() => finalStretch(launched), [launched]);
@@ -137,8 +141,20 @@ export default function Pulse() {
   ];
 
   return (
-    <Screen padded={false}>
-      <Header count={bothLoaded ? pool.count : null} lamports={pool.lamports} />
+    <View style={{ flex: 1, backgroundColor: C.bg0 }}>
+      <SceneHeader
+        name="room"
+        height={236}
+        title="Pulse"
+        right={[
+          <Glass key="ranks" label="Ranks" onPress={openRanks}>
+            <TrophyIcon color={C.text0} size={20} />
+          </Glass>,
+          <ChatGlass key="chat" />,
+        ]}
+      >
+        <Stat count={bothLoaded ? pool.count : null} lamports={pool.lamports} />
+      </SceneHeader>
       <LaneTabs lane={lane} counts={counts} onPick={goTo} />
       <View style={{ flex: 1 }} onLayout={(e) => setPageW(e.nativeEvent.layout.width)}>
         {pageW > 0 ? (
@@ -156,14 +172,44 @@ export default function Pulse() {
           </ScrollView>
         ) : null}
       </View>
-    </Screen>
+    </View>
   );
 }
 
 const openPresale = (key) => router.push(`/presale/${key}`);
 const openCoin = (key) => router.push(`/coin/${key}`);
+const openRanks = () => router.push("/ranks");
+const openChat = () => router.push("/chat");
 
-/** Final Stretch's or Migrated's renderItem. */
+/** Chat's glass button, with the dot while a global line came live since Everyone was last
+ *  shown (store chatSeen). */
+const ChatGlass = memo(function ChatGlass() {
+  const unread = useStore(store, (s) => unreadOf(s.chats.global, s.chatSeen));
+  return (
+    <Glass label="Chat" onPress={openChat} dot={unread}>
+      <ChatIcon color={C.text0} size={20} />
+    </Glass>
+  );
+});
+
+/** The SOL filling the pools, big and green, over "filling N pools right now", at the
+ *  scene's bottom left. `count` null (the feeds aren't in yet): blank, keeping its height. */
+const Stat = memo(function Stat({ count, lamports }) {
+  return (
+    <View style={{ flex: 1, justifyContent: "flex-end", paddingHorizontal: S.gutter, paddingBottom: 12 }}>
+      {count == null ? (
+        <View style={{ height: 52 }} />
+      ) : (
+        <View style={{ height: 52, justifyContent: "flex-end" }}>
+          <T style={{ fontFamily: F.mono, fontSize: 26, letterSpacing: -0.5, color: C.up }}>{`${solText(lamports)} SOL`}</T>
+          <T v="small" numberOfLines={1}>{`filling ${count} pool${count === 1 ? "" : "s"} right now`}</T>
+        </View>
+      )}
+    </View>
+  );
+});
+
+/** Live's or Mooned's renderItem. */
 const marketItem = (laneId, solUsd) =>
   function renderMarket({ item }) {
     return (
@@ -178,7 +224,7 @@ const Gap = () => <View style={{ height: 10 }} />;
 const LIST_PAD = { paddingHorizontal: S.gutter, paddingTop: 12, paddingBottom: S.gutter };
 const keyOf = (r) => r.presale;
 
-/** One lane's list, or a spinner until its feed (and, for New Pairs, the pool size) is in.
+/** One lane's list, or a spinner until its feed (and, for Filling, the pool size) is in.
  *  A lane not shown is hidden from TalkBack, so it reads only the lane on screen. */
 const Lane = memo(function Lane({ lane, data, renderItem, ready, error, width, current }) {
   const some = data.length > 0;
@@ -216,11 +262,16 @@ const Lane = memo(function Lane({ lane, data, renderItem, ready, error, width, c
   );
 });
 
-/** The three lanes' names and counts; the one shown is underlined in the ER colour. A new
- *  count fades in; a null count (its feeds not in yet) isn't drawn. */
+/** The three lanes as one segmented control: the shown lane on a raised pill, its count in
+ *  green. A new count fades in; a null count (its feeds not in yet) isn't drawn. */
 const LaneTabs = memo(function LaneTabs({ lane, counts, onPick }) {
   return (
-    <View style={{ flexDirection: "row", marginHorizontal: S.gutter, borderBottomWidth: 1, borderColor: C.line }}>
+    <View
+      style={{
+        flexDirection: "row", marginHorizontal: S.gutter, marginTop: 12, padding: 3,
+        backgroundColor: C.bg1, borderWidth: 1, borderColor: C.line, borderRadius: 12,
+      }}
+    >
       {LANES.map((l, i) => {
         const on = i === lane;
         const n = counts[l.id];
@@ -232,54 +283,19 @@ const LaneTabs = memo(function LaneTabs({ lane, counts, onPick }) {
             accessibilityLabel={n == null ? l.title : `${l.title}, ${n}`}
             onPress={() => onPick(i)}
             style={{
-              flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
-              paddingVertical: 10, marginBottom: -1, borderBottomWidth: 2, borderColor: on ? C.er : "transparent",
+              flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5,
+              paddingVertical: 8, borderRadius: 9, backgroundColor: on ? C.bg3 : "transparent",
             }}
           >
-            <T v="small" color={on ? C.text0 : C.text2} style={{ fontFamily: F.semi }}>{l.title}</T>
+            <T style={{ fontFamily: F.medium, fontSize: 14, color: on ? C.text0 : C.text2 }}>{l.title}</T>
             {n == null ? null : (
               <Move kind="fade" key={n}>
-                <T v="small" color={C.text2} style={{ fontFamily: F.mono, fontSize: 11 }}>{String(n)}</T>
+                <T style={{ fontFamily: F.mono, fontSize: 12, color: on ? C.up : C.text2, opacity: on ? 1 : 0.7 }}>{String(n)}</T>
               </Move>
             )}
           </Pressable>
         );
       })}
-    </View>
-  );
-});
-
-/** "Pulse" over "X SOL filling N pools" (`count` null: the feeds aren't in yet, and the line
- *  is blank, keeping its height), and on the right the wallet's SOL, or a small "Connect"
- *  with no wallet. */
-const Header = memo(function Header({ count, lamports: filled }) {
-  const wallet = useStore(store, (s) => s.wallet);
-  const lamports = useStore(store, (s) => s.lamports);
-  return (
-    <View
-      style={{
-        flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-        paddingHorizontal: S.gutter, paddingTop: 12, paddingBottom: 10, minHeight: 56,
-      }}
-    >
-      <View style={{ gap: 2, flexShrink: 1 }}>
-        <T v="title">Pulse</T>
-        {count == null ? (
-          <T v="small" importantForAccessibility="no" accessibilityElementsHidden>{" "}</T>
-        ) : (
-          <T v="small" numberOfLines={1}>
-            <T v="small" color={C.er} style={{ fontFamily: F.mono }}>{`${solText(filled)} SOL`}</T>
-            {` filling ${count} pool${count === 1 ? "" : "s"}`}
-          </T>
-        )}
-      </View>
-      {!wallet ? (
-        <PillButton title="Connect" onPress={() => router.push("/connect")} />
-      ) : lamports == null ? (
-        <ActivityIndicator size="small" color={C.text1} />
-      ) : (
-        <T v="num">{`${solText(lamports)} SOL`}</T>
-      )}
     </View>
   );
 });
