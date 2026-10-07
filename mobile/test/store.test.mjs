@@ -1,6 +1,7 @@
 // The phone's store with a fake socket, API, flows and secure storage.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { unreadOf } from "../src/chat/rooms.js";
 import { createMoonerStore, myPresales } from "../src/store.js";
 
 const W = "Wallet1111";
@@ -916,6 +917,20 @@ test("global chat: kept for the app's run; seeChat marks its newest line seen", 
   store.getState().seeChat();
   store.getState().seeChat();
   assert.equal(store.getState().chatSeen, 12);
+  stop();
+});
+
+test("global chat: a reconnect's snapshot keeps a line that came live unread", () => {
+  const { store, push } = rig();
+  const stop = store.getState().start();
+  push("chat:global", "snapshot", [{ id: 4, text: "gm" }]);
+  push("chat:global", "message", { id: 9, text: "wagmi" });
+  assert.equal(unreadOf(store.getState().chats.global, store.getState().chatSeen), true);
+  // the socket came back: the server sends the whole channel again
+  push("chat:global", "snapshot", [{ id: 4, text: "gm" }, { id: 9, text: "wagmi" }, { id: 11, text: "lfg" }]);
+  const s = store.getState();
+  assert.equal(unreadOf(s.chats.global, s.chatSeen), true, "the dot stays until Chat shows Everyone");
+  assert.deepEqual(s.chats.global.map((r) => [r.id, r.live === true]), [[4, false], [9, true], [11, false]]);
   stop();
 });
 

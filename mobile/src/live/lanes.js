@@ -92,7 +92,7 @@ export function filling(presales, launched) {
  *  null to ignore it. On Android a cancelled animated scroll (a second tab tap, a drag, a
  *  scrollTo) still sends a momentum end, wherever it stopped: one off a page boundary, or
  *  on a page other than `target` (the lane a tab tap is scrolling to, null with none), is
- *  ignored, so it neither plays a tap nor moves the underline. */
+ *  ignored, so it neither plays a tap nor moves the lane tabs' pill. */
 export function settledLane(x, pageW, target) {
   if (!(pageW > 0)) return null;
   const i = Math.round(x / pageW);

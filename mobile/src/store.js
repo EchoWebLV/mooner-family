@@ -162,11 +162,14 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     let rows;
     if (m.type === "snapshot") {
       const last = m.data.length ? m.data[m.data.length - 1].id : 0;
-      rows = [...m.data, ...had.filter((r) => r.id > last)];
+      // a reconnect's snapshot has the lines that came live before: they stay live, so the
+      // unread dot stays until Chat shows them
+      const wasLive = new Set(had.filter((r) => r.live).map((r) => r.id));
+      rows = [...m.data.map((r) => (wasLive.has(r.id) ? { ...r, live: true } : r)), ...had.filter((r) => r.id > last)];
     } else if (m.type === "message") {
       if (had.some((r) => r.id === m.data.id)) return;
-      // live: pushed while the room is open (the snapshot's lines aren't), so a screen can
-      // react to new lines only (chat sound, floating emojis)
+      // live: pushed while the room is open (a snapshot's lines aren't, but for the ones that
+      // came live before), so a screen can react to new lines only (chat sound, floating emojis)
       rows = [...had, { ...m.data, live: true }].sort((a, b) => a.id - b.id);
     } else return;
     patch("chats", (c) => ({ ...c, [channel]: rows.slice(-CHAT_KEEP) }));

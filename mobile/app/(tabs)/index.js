@@ -142,19 +142,7 @@ export default function Pulse() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
-      <SceneHeader
-        name="room"
-        height={236}
-        title="Pulse"
-        right={[
-          <Glass key="ranks" label="Ranks" onPress={openRanks}>
-            <TrophyIcon color={C.text0} size={20} />
-          </Glass>,
-          <ChatGlass key="chat" />,
-        ]}
-      >
-        <Stat count={bothLoaded ? pool.count : null} lamports={pool.lamports} />
-      </SceneHeader>
+      <PulseScene count={bothLoaded ? pool.count : null} lamports={bothLoaded ? pool.lamports : null} />
       <LaneTabs lane={lane} counts={counts} onPick={goTo} />
       <View style={{ flex: 1 }} onLayout={(e) => setPageW(e.nativeEvent.layout.width)}>
         {pageW > 0 ? (
@@ -192,22 +180,46 @@ const ChatGlass = memo(function ChatGlass() {
   );
 });
 
+/** The room's picture: Ranks and Chat on glass, the Stat at its bottom left. Memoized on the
+ *  two numbers (lamports a BigInt, which memo compares by value), so a push that changes
+ *  neither redraws none of it. */
+const PulseScene = memo(function PulseScene({ count, lamports }) {
+  return (
+    <SceneHeader
+      name="room"
+      height={236}
+      title="Pulse"
+      right={[
+        <Glass key="ranks" label="Ranks" onPress={openRanks}>
+          <TrophyIcon color={C.text0} size={20} />
+        </Glass>,
+        <ChatGlass key="chat" />,
+      ]}
+    >
+      <Stat count={count} lamports={lamports} />
+    </SceneHeader>
+  );
+});
+
 /** The SOL filling the pools, big and green, over "filling N pools right now", at the
- *  scene's bottom left. `count` null (the feeds aren't in yet): blank, keeping its height. */
-const Stat = memo(function Stat({ count, lamports }) {
+ *  scene's bottom left; one line to a screen reader. `count` null (the feeds aren't in yet):
+ *  blank, keeping its height. Text grows to 1.5× at most, so it stays in the scene. */
+function Stat({ count, lamports }) {
+  const sol = count == null ? "" : `${solText(lamports)} SOL`;
+  const pools = count == null ? "" : `filling ${count} pool${count === 1 ? "" : "s"} right now`;
   return (
     <View style={{ flex: 1, justifyContent: "flex-end", paddingHorizontal: S.gutter, paddingBottom: 12 }}>
       {count == null ? (
         <View style={{ height: 52 }} />
       ) : (
-        <View style={{ height: 52, justifyContent: "flex-end" }}>
-          <T style={{ fontFamily: F.mono, fontSize: 26, letterSpacing: -0.5, color: C.up }}>{`${solText(lamports)} SOL`}</T>
-          <T v="small" numberOfLines={1}>{`filling ${count} pool${count === 1 ? "" : "s"} right now`}</T>
+        <View accessible accessibilityLabel={`${sol}, ${pools}`} style={{ minHeight: 52, justifyContent: "flex-end" }}>
+          <T maxFontSizeMultiplier={1.5} style={{ fontFamily: F.mono, fontSize: 26, letterSpacing: -0.5, color: C.up }}>{sol}</T>
+          <T v="small" numberOfLines={1} maxFontSizeMultiplier={1.5}>{pools}</T>
         </View>
       )}
     </View>
   );
-});
+}
 
 /** Live's or Mooned's renderItem. */
 const marketItem = (laneId, solUsd) =>
@@ -267,6 +279,7 @@ const Lane = memo(function Lane({ lane, data, renderItem, ready, error, width, c
 const LaneTabs = memo(function LaneTabs({ lane, counts, onPick }) {
   return (
     <View
+      accessibilityRole="tablist"
       style={{
         flexDirection: "row", marginHorizontal: S.gutter, marginTop: 12, padding: 3,
         backgroundColor: C.bg1, borderWidth: 1, borderColor: C.line, borderRadius: 12,
@@ -281,6 +294,7 @@ const LaneTabs = memo(function LaneTabs({ lane, counts, onPick }) {
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             accessibilityLabel={n == null ? l.title : `${l.title}, ${n}`}
+            hitSlop={{ top: 6, bottom: 6 }}
             onPress={() => onPick(i)}
             style={{
               flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5,
