@@ -661,16 +661,24 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   // ---- XP ----
 
   let xpReads = 0; // readXp's calls, so an older one can't say failed over a newer one
+  let xpWrote = 0; // the newest read whose answer went in
+  let xpReadRow = null; // the row that answer put in
   /** The connected wallet's own XP row, read when the wallet comes (the board on `profiles`
    *  holds the top 500 only), on retryXp and on a reconnect; pushes keep it in between. The
-   *  answer replaces the row that was there when the read began; a row a push brought while
-   *  it was on its way stays. Only the newest read may say it failed. */
+   *  answer replaces the row that was there when the read began, or one an older read put in;
+   *  a row a push brought while it was on its way stays, and an answer older than one already
+   *  in is dropped. Only the newest read may say it failed. */
   async function readXp(wallet) {
     const n = ++xpReads;
     const had = get().xp[wallet];
     try {
       const row = await api.xp(wallet);
-      patch("xp", (x) => mergeXp(x, [row], x[wallet] !== had));
+      if (n < xpWrote) return;
+      patch("xp", (x) => mergeXp(x, [row], x[wallet] !== had && x[wallet] !== xpReadRow));
+      if (get().xp[wallet] === row) {
+        xpWrote = n;
+        xpReadRow = row;
+      }
     } catch {
       if (get().wallet === wallet && n === xpReads) set({ xpFailed: true });
     }

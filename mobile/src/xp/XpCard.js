@@ -12,7 +12,7 @@ import { TitleTag } from "../ui/TitleTag";
 import { C, F } from "../ui/theme";
 import { useSigner } from "../wallet";
 import { TITLE_COLORS, nextLevelOf, tagText } from "./look";
-import { GENESIS_XP, mainTitleOf, titlesOf, xpNum, xpText } from "./rows";
+import { GENESIS_XP, mainTitleOf, tagWords, titlesOf, xpNum, xpText } from "./rows";
 
 /** `wallet`: the connected one. A spinner until its row is here (the read on connect, or a
  *  push); a failed read says so with Try again. The server's rows are the only numbers shown. */
@@ -72,7 +72,7 @@ function Progress({ row }) {
   return (
     <>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <T style={{ fontFamily: F.semi, fontSize: 22, color }}>{tagText(main.title, main.level)}</T>
+        <T accessibilityLabel={tagWords(main.title, main.level)} style={{ fontFamily: F.semi, fontSize: 22, color }}>{tagText(main.title, main.level)}</T>
         {streak > 0 ? <T v="small" color={C.text0}>{`🔥 ${streak} ${streak === 1 ? "day" : "days"}`}</T> : null}
       </View>
       {/* the fill and the rest share the row by `fill` (0..1); hidden from a screen reader,
@@ -87,7 +87,13 @@ function Progress({ row }) {
       </View>
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
         <T v="small" style={{ fontFamily: F.mono, flexShrink: 1 }}>{next.max ? xpText(main.xp) : `${xpNum(main.xp)} / ${xpText(next.to)}`}</T>
-        <T v="small" style={{ flexShrink: 1, textAlign: "right" }}>{next.max ? "Max level" : `${xpNum(next.left)} to ${tagText(main.title, next.level + 1)}`}</T>
+        <T
+          v="small"
+          accessibilityLabel={next.max ? undefined : `${xpText(next.left)} to ${tagWords(main.title, next.level + 1)}`}
+          style={{ flexShrink: 1, textAlign: "right" }}
+        >
+          {next.max ? "Max level" : `${xpNum(next.left)} to ${tagText(main.title, next.level + 1)}`}
+        </T>
       </View>
       <Tags row={row} />
     </>

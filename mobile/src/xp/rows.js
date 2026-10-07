@@ -6,6 +6,9 @@ import { BOARD_TOP, POINTS, TITLES, levelOf } from "../../../engine/src/xp.js";
 /** What each title is called on screen. */
 export const TITLE_NAMES = { dev: "Dev", kol: "KOL", raider: "Raider", diamond: "Diamond Hands" };
 
+/** "KOL level 2", for a screen reader ("KOL II" on screen); "" with no title. */
+export const tagWords = (title, level) => (title ? `${TITLE_NAMES[title]} level ${level}` : "");
+
 /** The leaderboard's tabs: Overall (by total), then one per title (by that title's XP). */
 export const BOARDS = [{ key: "overall", name: "Overall" }, ...TITLES.map((t) => ({ key: t, name: TITLE_NAMES[t] }))];
 
@@ -81,7 +84,8 @@ export function boardOf(rows, board, me) {
  *   { kind: "unknown" }                    not loaded, no wallet, or no row of yours yet
  *   { kind: "none" }                       no XP on this board
  *   { kind: "past", ...entry }             behind the top BOARD_TOP
- *   { kind: "ranked", rank, of, ...entry } `of`: how many are on the board, or "500+"
+ *   { kind: "ranked", rank, of, ...entry } `of`: how many are on the board; once BOARD_TOP
+ *                                          rows have XP, "500+" on Overall and "<n>+" on a title's
  *  `entry`: entryOf's { wallet, xp, title, level }. */
 export function rankOf(rows, board, wallet, loaded) {
   const mine = wallet ? rows[wallet] : undefined;
@@ -91,7 +95,9 @@ export function rankOf(rows, board, wallet, loaded) {
   if (xp <= 0) return { kind: "none" };
   let ahead = 0;
   let on = 0;
+  let all = 0; // rows with any XP: fewer than BOARD_TOP and every board here is whole
   for (const r of Object.values(rows)) {
+    if ((r.total ?? 0) > 0) all++;
     const x = xpOf(r);
     if (x <= 0) continue;
     on++;
@@ -99,5 +105,6 @@ export function rankOf(rows, board, wallet, loaded) {
   }
   const entry = entryOf(mine, board, xp);
   if (ahead >= BOARD_TOP) return { kind: "past", ...entry };
-  return { kind: "ranked", rank: ahead + 1, of: on < BOARD_TOP ? on : `${BOARD_TOP}+`, ...entry };
+  const of = all < BOARD_TOP ? on : board === "overall" ? `${BOARD_TOP}+` : `${on}+`;
+  return { kind: "ranked", rank: ahead + 1, of, ...entry };
 }

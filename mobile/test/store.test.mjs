@@ -1198,3 +1198,35 @@ test("checkGenesis: a sign-in kept for another wallet isn't used; the signer sig
   assert.equal(r.ok, true);
   assert.deepEqual(posted, ["mine"]);
 });
+
+test("xp: of two reads out at once the newer answer stays, whichever lands first; a push still beats both", async () => {
+  const calls = [];
+  const { store, push, goUp } = rig({ api: { xp: (w) => new Promise((ok, no) => calls.push({ w, ok, no })) } });
+  store.getState().start();
+  goUp(true);
+  await store.getState().setWallet(W); // read 1
+  goUp(false);
+  goUp(true); // a reconnect: read 2 while read 1 is out
+  assert.equal(calls.length, 2);
+  calls[0].ok(xpRow(W, 25));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 25, "the older answer goes in while the newer is out");
+  calls[1].ok(xpRow(W, 30));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 30, "the newer answer replaces it");
+  goUp(false);
+  goUp(true); // read 3
+  goUp(false);
+  goUp(true); // read 4
+  calls[3].ok(xpRow(W, 40));
+  await tick();
+  calls[2].ok(xpRow(W, 35));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 40, "an older answer after a newer one is dropped");
+  goUp(false);
+  goUp(true); // read 5
+  push("profiles", "xp", [xpRow(W, 50)]);
+  calls[4].ok(xpRow(W, 45));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 50, "a push while it read stays");
+});

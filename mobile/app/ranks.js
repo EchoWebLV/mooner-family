@@ -18,12 +18,9 @@ import { Move } from "../src/ui/motion";
 import { TitleTag } from "../src/ui/TitleTag";
 import { C, F, R, S } from "../src/ui/theme";
 import { PODIUM, TITLE_COLORS } from "../src/xp/look";
-import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, rankOf, xpNum, xpText } from "../src/xp/rows";
+import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, rankOf, tagWords, xpNum, xpText } from "../src/xp/rows";
 
 const CHIPS = BOARDS.map((b) => ({ key: b.key, label: b.name }));
-
-/** "KOL level 2", for a screen reader ("KOL II" on screen); "" with no title. */
-const tagWords = (title, level) => (title ? `${TITLE_NAMES[title]} level ${level}` : "");
 
 /** A row's words for a screen reader, its parts joined by commas, empty ones left out. */
 const words = (...parts) => parts.filter(Boolean).join(", ");
@@ -197,6 +194,15 @@ function MyRow({ wallet, board }) {
         </View>
         <T style={{ fontFamily: F.mono, fontSize: 14 }}>{xpNum(me.xp)}</T>
       </>
+    );
+  } else if (me.kind === "none" && board !== "overall") {
+    const earn = EARN.find((e) => e.title === board)?.text;
+    label = words(`You: no ${TITLE_NAMES[board]} XP yet`, earn);
+    body = (
+      <View style={{ flex: 1, gap: 2 }}>
+        <T v="small" color={C.text1}>{`No ${TITLE_NAMES[board]} XP yet`}</T>
+        {earn ? <T v="small" color={C.text2}>{earn}</T> : null}
+      </View>
     );
   } else if (me.kind === "none") {
     label = "You: not ranked yet, chip in to a launch";

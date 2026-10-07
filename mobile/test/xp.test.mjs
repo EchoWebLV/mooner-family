@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BOARD_TOP, LEVEL_XP, POINTS, TITLES, levelOf } from "../../engine/src/xp.js";
-import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, mainTitleOf, mergeXp, rankOf, titlesOf, xpNum, xpText } from "../src/xp/rows.js";
+import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, mainTitleOf, mergeXp, rankOf, tagWords, titlesOf, xpNum, xpText } from "../src/xp/rows.js";
 
 const row = (wallet, titles = {}, more = {}) => {
   const t = { dev: 0, kol: 0, raider: 0, diamond: 0, ...titles };
@@ -156,4 +156,24 @@ test("rank: from BOARD_TOP rows on the board, `of` is BOARD_TOP+; past it, only 
   // a row the board didn't have (read on connect, or a change pushed later) ranks past it
   const more = many(BOARD_TOP + 1);
   assert.deepEqual(rankOf(more, "overall", `W${BOARD_TOP}`, true), { kind: "past", wallet: `W${BOARD_TOP}`, xp: 1, title: "kol", level: 1 });
+});
+
+test("rank: a tie at the cut goes by wallet, as the board's last row does", () => {
+  const rows = { ...many(BOARD_TOP), W500: row("W500", { kol: 1 }) }; // W499 and W500 both have 1
+  assert.equal(rankOf(rows, "overall", "W499", true).rank, BOARD_TOP);
+  assert.equal(rankOf(rows, "overall", "W500", true).kind, "past");
+  assert.equal(boardOf(rows, "overall", null).at(-1).wallet, "W499");
+});
+
+test("rank: once BOARD_TOP rows have XP, a title's board may miss some, so `of` is its count and a plus", () => {
+  const rows = { ...many(BOARD_TOP), D: row("D", { dev: 50 }) };
+  assert.deepEqual(rankOf(rows, "dev", "D", true), { kind: "ranked", rank: 1, of: "1+", wallet: "D", xp: 50, title: "dev", level: 1 });
+  const few = { ...many(3), D: row("D", { dev: 50 }) };
+  assert.equal(rankOf(few, "dev", "D", true).of, 1, "fewer rows: every board is whole");
+});
+
+test("a tag's words for a screen reader", () => {
+  assert.equal(tagWords("kol", 2), "KOL level 2");
+  assert.equal(tagWords("diamond", 5), "Diamond Hands level 5");
+  assert.equal(tagWords(null, null), "");
 });
