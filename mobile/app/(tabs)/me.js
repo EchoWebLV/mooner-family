@@ -1,10 +1,12 @@
-// Me: the connected wallet (its face, address and SOL) and the presales it's in or was in;
-// with no wallet, the same Connect Seed Vault as the Connect screen.
+// Me: the live picture with Settings (Sounds, Disconnect) on glass; your face, wallet and Copy;
+// your balance and rank; your XP and the Seeker Genesis check; and your launches. With no
+// wallet, the same Connect Seed Vault as the Connect screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, Switch, View } from "react-native";
+import { ActivityIndicator, Animated, Pressable, Switch, View } from "react-native";
 import { router } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
 import { store } from "../../src/app";
 import { rowsOf } from "../../src/me";
@@ -12,14 +14,24 @@ import { useConnect } from "../../src/useConnect";
 import { useAccount, useWalletActions } from "../../src/wallet";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face } from "../../src/ui/Face";
+import { Glass, SceneHeader } from "../../src/ui/Glass";
+import { CheckIcon, CopyIcon, SettingsIcon } from "../../src/ui/icons";
 import { Logo } from "../../src/ui/Logo";
 import { setSoundsOn, useSoundsOn } from "../../src/ui/sound";
 import { shortWallet, solText, usd } from "../../src/ui/format";
-import { Button, Card, Empty, Pill, Screen, T } from "../../src/ui/kit";
-import { C, F, R, S } from "../../src/ui/theme";
+import { Button, Card, Empty, Pill, Sheet, T } from "../../src/ui/kit";
+import { C, F, S } from "../../src/ui/theme";
+import { XpCard } from "../../src/xp/XpCard";
+import { boardOf } from "../../src/xp/rows";
 
-/** How long "Copied" shows after a copy. */
+/** How long the tick shows after a copy. */
 const COPIED_MS = 2_000;
+
+/** The picture's height, the status bar's room included. */
+const SCENE_PT = 150;
+
+/** Your face's size; half of it hangs over the picture's bottom edge. */
+const FACE_PT = 92;
 
 /** The status pill's colour for each kind of row (me.js statusOf). */
 const PILL = { launched: C.gold, back: C.text1, in: C.up, closed: C.text2 };
@@ -30,6 +42,7 @@ export default function Me() {
   const { disconnect } = useWalletActions();
   const [leaving, setLeaving] = useState(false);
   const leavingNow = useRef(false); // set at once, so a second tap before the re-render does nothing
+  const [settings, setSettings] = useState(false);
 
   // The store forgets the wallet first; if the adapter then fails to, Connect is still the
   // right place to go and there's nothing for the person to do about it.
@@ -48,18 +61,23 @@ export default function Me() {
     }
   }
 
-  let body;
-  if (wallet) body = <Wallet wallet={wallet} leaving={leaving} onDisconnect={signOut} />;
-  else if (account === undefined || leaving) body = <Loading />;
-  else body = <SignedOut />;
-
   return (
-    <Screen padded={false}>
-      <View style={{ paddingHorizontal: S.gutter, paddingTop: 12, minHeight: 56, justifyContent: "center" }}>
-        <T v="title">Me</T>
-      </View>
-      {body}
-    </Screen>
+    <View style={{ flex: 1, backgroundColor: C.bg0 }}>
+      {wallet ? (
+        <Wallet wallet={wallet} onSettings={() => setSettings(true)} />
+      ) : (
+        <>
+          <SceneHeader name="live" height={SCENE_PT} motion="lift" title="Me" />
+          {account === undefined || leaving ? <Loading /> : <SignedOut />}
+        </>
+      )}
+      <Sheet open={settings && !!wallet} onClose={() => setSettings(false)} title="Settings">
+        <View style={{ gap: 16 }}>
+          <SoundsRow />
+          <Button title="Disconnect" kind="quiet" busy={leaving} onPress={signOut} />
+        </View>
+      </Sheet>
+    </View>
   );
 }
 
@@ -78,7 +96,7 @@ function SignedOut() {
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 16, paddingHorizontal: S.gutter, paddingBottom: 32 }}>
       <Logo size={96} />
-      <T v="body" color={C.text1} style={{ textAlign: "center" }}>Connect your wallet to see your presales</T>
+      <T v="body" color={C.text1} style={{ textAlign: "center" }}>Connect your wallet to see your launches</T>
       {error ? <T v="small" color={C.down} style={{ textAlign: "center" }}>{error}</T> : null}
       <Button title="Connect Seed Vault" onPress={connect} busy={busy} />
       <View style={{ alignSelf: "stretch" }}>
@@ -88,11 +106,11 @@ function SignedOut() {
   );
 }
 
-/** The wallet's page: its face, address and SOL, its presales, and Disconnect at the end, all
- *  in one list so the whole page scrolls. */
-function Wallet({ wallet, leaving, onDisconnect }) {
-  const lamports = useStore(store, (s) => s.lamports);
-  const solUsd = useStore(store, (s) => s.solUsd);
+/** The wallet's page, all in one list so it scrolls: the scene with the gear, you, your
+ *  balance and rank, your XP, then your launches. The phone draws edge to edge, so the status
+ *  bar is see-through: a bg0 scrim fills in under it as the picture scrolls away, solid by the
+ *  time your face gets there, so the rows never show under the clock. */
+function Wallet({ wallet, onSettings }) {
   const presales = useStore(store, (s) => s.presales);
   const views = useStore(store, (s) => s.views);
   const launched = useStore(store, (s) => s.launched);
@@ -100,55 +118,118 @@ function Wallet({ wallet, leaving, onDisconnect }) {
   const presalesLoaded = useStore(store, (s) => s.loaded.presales);
   const launchedLoaded = useStore(store, (s) => s.loaded.launched);
   const ready = presalesLoaded && launchedLoaded;
-  const rows = useMemo(
-    () => rowsOf({ wallet, presales, views, launched, mine }),
-    [wallet, presales, views, launched, mine],
-  );
-
-  const renderItem = useCallback(({ item }) => <PresaleRow row={item} ready={ready} />, [ready]);
-
-  return (
-    <FlatList
-      data={rows}
-      keyExtractor={(r) => r.key}
-      renderItem={renderItem}
-      contentContainerStyle={{ padding: S.gutter, paddingBottom: 32 }}
-      ItemSeparatorComponent={Gap}
-      ListHeaderComponent={<Profile wallet={wallet} lamports={lamports} solUsd={solUsd} />}
-      ListEmptyComponent={<Empty title="You're not in any presale yet" body="Join one from Pulse." />}
-      ListFooterComponent={
-        <View style={{ marginTop: 32, gap: 16 }}>
-          <SoundsRow />
-          <Button title="Disconnect" kind="quiet" busy={leaving} onPress={onDisconnect} />
-        </View>
-      }
-    />
-  );
-}
-
-/** The face with a gold ring, the short address with Copy, the SOL (and its dollars when the
- *  price is known); "–" until the server has sent the balance. Then the list's label. */
-function Profile({ wallet, lamports, solUsd }) {
-  const known = lamports != null;
-  return (
-    <View>
-      <View style={{ alignItems: "center", gap: 12, paddingTop: 8, paddingBottom: 28 }}>
-        <Face wallet={wallet} size={96} ring={C.gold} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <T v="num">{shortWallet(wallet)}</T>
-          <CopyButton text={wallet} label="Copy the wallet address" />
-        </View>
-        <View style={{ alignItems: "center", gap: 2 }}>
-          <T v="bigNum">{known ? `${solText(lamports, 3)} SOL` : "–"}</T>
-          {known && solUsd > 0 ? <T v="small">{`≈ ${usd((lamports / 1e9) * solUsd)}`}</T> : null}
-        </View>
+  const rows = useMemo(() => rowsOf({ wallet, presales, views, launched, mine }), [wallet, presales, views, launched, mine]);
+  const renderItem = useCallback(
+    ({ item }) => (
+      <View style={{ paddingHorizontal: S.gutter }}>
+        <PresaleRow row={item} ready={ready} />
       </View>
-      <T v="label" style={{ marginBottom: 12 }}>Your presales</T>
+    ),
+    [ready],
+  );
+
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef(null);
+  if (!scrollRef.current) scrollRef.current = new Animated.Value(0);
+  const scrollY = scrollRef.current;
+  const onScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const scrim = useMemo(() => {
+    const solidAt = Math.max(1, SCENE_PT - FACE_PT / 2 - insets.top); // your face's top reaches the clock
+    return scrollY.interpolate({ inputRange: [0, solidAt], outputRange: [0, 1], extrapolate: "clamp" });
+  }, [scrollY, insets.top]);
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Animated.FlatList
+        data={rows}
+        keyExtractor={(r) => r.key}
+        renderItem={renderItem}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 32 }}
+        ItemSeparatorComponent={Gap}
+        ListHeaderComponent={
+          <View>
+            <SceneHeader
+              name="live"
+              height={SCENE_PT}
+              motion="lift"
+              title="Me"
+              right={
+                <Glass label="Settings" onPress={onSettings}>
+                  <SettingsIcon color={C.text0} size={20} />
+                </Glass>
+              }
+            />
+            <View style={{ paddingHorizontal: S.gutter, gap: 12 }}>
+              <You wallet={wallet} />
+              <Boxes wallet={wallet} />
+              <XpCard wallet={wallet} />
+              <T v="label" style={{ marginTop: 12, marginBottom: 0 }}>Your launches</T>
+            </View>
+            <View style={{ height: 12 }} />
+          </View>
+        }
+        ListEmptyComponent={<Empty title="You're not in any launch yet" body="Chip in to one from Pulse." />}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: insets.top, backgroundColor: C.bg0, opacity: scrim }}
+      />
     </View>
   );
 }
 
-/** "Copy": a tick of haptics, `text` on the clipboard, then "Copied" for COPIED_MS. */
+/** Your face (gold ring) over the scene's bottom edge, your short wallet and Copy. */
+function You({ wallet }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 14, marginTop: -FACE_PT / 2 }}>
+      <Face wallet={wallet} size={FACE_PT} ring={C.gold} />
+      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, paddingBottom: 10 }}>
+        <T v="num" style={{ fontSize: 17 }}>{shortWallet(wallet)}</T>
+        <CopyButton text={wallet} label="Copy the wallet address" />
+      </View>
+    </View>
+  );
+}
+
+/** Balance ("2.41 SOL", ≈ dollars when the price is known) and Rank on Overall ("#14", "of
+ *  N"; "–" until the XP rows come; "Not ranked" without a row there). Rank opens Ranks. */
+function Boxes({ wallet }) {
+  const lamports = useStore(store, (s) => s.lamports);
+  const solUsd = useStore(store, (s) => s.solUsd);
+  const xp = useStore(store, (s) => s.xp);
+  const xpLoaded = useStore(store, (s) => s.xpLoaded);
+  const board = useMemo(() => boardOf(xp, "overall", wallet), [xp, wallet]);
+  const mine = board.find((r) => r.mine);
+  const known = lamports != null;
+  let rank = "–";
+  let of = null;
+  if (xpLoaded) {
+    rank = mine ? `#${mine.rank}` : "Not ranked";
+    of = mine ? `of ${board.length}` : null;
+  }
+  return (
+    <View style={{ flexDirection: "row", gap: 12 }}>
+      <Card style={{ flex: 1, gap: 4 }}>
+        <T v="label">Balance</T>
+        <T style={{ fontFamily: F.mono, fontSize: 20 }}>{known ? `${solText(lamports)} SOL` : "–"}</T>
+        {known && solUsd > 0 ? <T v="small">{`≈ ${usd((lamports / 1e9) * solUsd)}`}</T> : null}
+      </Card>
+      <Card style={{ flex: 1, gap: 4 }} onPress={() => router.push("/ranks")} accessibilityLabel={of ? `Rank ${rank} ${of}` : `Rank ${rank}`}>
+        <T v="label">Rank</T>
+        <T style={{ fontFamily: F.mono, fontSize: 20 }}>{rank}</T>
+        {of ? <T v="small">{of}</T> : null}
+      </Card>
+    </View>
+  );
+}
+
+/** Copy: a round button with the copy icon. A tick of haptics, `text` on the clipboard, then
+ *  a green tick (and "Copied" for a screen reader) for COPIED_MS. */
 function CopyButton({ text, label }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef(null);
@@ -182,13 +263,13 @@ function CopyButton({ text, label }) {
       onPress={copy}
       style={({ pressed }) => [
         {
-          height: 30, paddingHorizontal: 12, borderRadius: R.pill, backgroundColor: C.bg2,
+          width: 32, height: 32, borderRadius: 16, backgroundColor: C.bg2,
           borderWidth: 1, borderColor: C.lineStrong, alignItems: "center", justifyContent: "center",
         },
         pressed && { opacity: 0.85 },
       ]}
     >
-      <T style={{ fontFamily: F.medium, fontSize: 14 }} color={copied ? C.up : C.text0}>{copied ? "Copied" : "Copy"}</T>
+      {copied ? <CheckIcon color={C.up} size={14} /> : <CopyIcon color={C.text1} size={16} />}
     </Pressable>
   );
 }
