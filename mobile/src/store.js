@@ -23,6 +23,7 @@ import {
   openLanded,
   shortOfOpen,
 } from "./create/rules.js";
+import { mergeXp } from "./xp/rows.js";
 
 const CHAT_KEEP = 200;
 /** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
@@ -80,6 +81,12 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     // coin's pool changes are upserts too. A coin first seen in a snapshot has none.
     launchSeen: {},
     profiles: {}, // wallet -> Mooner picture traits
+    // wallet -> XP row (engine/server/xp.js): the board's top 500 and its changes, pushed on
+    // `profiles`; the connected wallet's own row, read once; a Genesis answer's row
+    xp: {},
+    xpLoaded: false, // true from the first "xp" message: {} before that is "not here yet"
+    xpFailed: false, // the read of the connected wallet's own row failed (a push of it still fills it)
+    profilesLoaded: false, // true from the profiles topic's first snapshot (Ranks: before it, a spinner)
     solUsd: 0,
     wallet: null, // base58
     lamports: null,
@@ -133,8 +140,10 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   }
 
   function onProfiles(m) {
-    if (m.type === "snapshot") set({ profiles: m.data ?? {} });
+    if (m.type === "snapshot") set({ profiles: m.data ?? {}, profilesLoaded: true });
     else if (m.type === "upsert") patch("profiles", (p) => ({ ...p, [m.data.wallet]: m.data.pfp }));
+    // XP rows: the board right after the pictures, then the rows that changed
+    else if (m.type === "xp") set((s) => ({ xp: mergeXp(s.xp, m.data), xpLoaded: true }));
   }
 
   function onSol(m) {
@@ -274,8 +283,9 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     if (wallet === get().wallet) return;
     walletOff?.();
     walletOff = null;
-    set({ wallet, lamports: null, session: null, mine: {}, holdings: {}, opening: undefined });
+    set({ wallet, lamports: null, session: null, mine: {}, holdings: {}, opening: undefined, xpFailed: false });
     if (!wallet) return;
+    readXp(wallet);
     walletOff = live.subscribe(`wallet:${wallet}`, (m) => {
       if (m.type !== "snapshot" || m.data?.lamports == null) return;
       const was = get().lamports;
@@ -628,16 +638,54 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
       await api.sendChat(session.token, key, text.trim());
       return { ok: true };
     } catch (e) {
-      if (e.status === 401) {
-        const wallet = signer.publicKey.toBase58();
-        if (get().wallet === wallet) set({ session: null });
-        await keep(() => saved(loginName(wallet)).clear());
-      }
+      if (e.status === 401) await forgetSignIn(signer.publicKey.toBase58());
       return { ok: false, error: explain(e) };
     }
   }
 
-  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening });
+  /** A 401: the sign-in this phone kept for `wallet` is no good. Forget it, so the next press
+   *  signs in again. */
+  async function forgetSignIn(wallet) {
+    if (get().wallet === wallet) set({ session: null });
+    await keep(() => saved(loginName(wallet)).clear());
+  }
+
+  // ---- XP ----
+
+  /** The connected wallet's own XP row, read once when the wallet comes: the board on
+   *  `profiles` holds the top 500 only. Pushes keep it after that; nothing reads it again. A
+   *  row a push brought while this read was on its way stays. */
+  async function readXp(wallet) {
+    try {
+      const row = await api.xp(wallet);
+      patch("xp", (x) => mergeXp(x, [row], true));
+    } catch {
+      if (get().wallet === wallet) set({ xpFailed: true });
+    }
+  }
+
+  /** The Seeker Genesis check for the signer's wallet, signing in first if needed (as
+   *  sendChat does). The server reads the wallet's tokens and decides. Returns { ok: true,
+   *  fresh, genesis } (`fresh`: the first time), or { ok: false, error } with the server's
+   *  words. The answer's row goes into `xp` like a pushed one. `opts.signIn` is for tests. */
+  async function checkGenesis(signer, opts) {
+    let session = get().session;
+    if (!session || session.exp <= now()) {
+      const r = await signIn(signer, opts);
+      if (!r.ok) return r;
+      session = r.session;
+    }
+    try {
+      const r = await api.genesis(session.token);
+      patch("xp", (x) => mergeXp(x, [r.xp]));
+      return { ok: true, fresh: r.fresh === true, genesis: r.genesis };
+    } catch (e) {
+      if (e.status === 401) await forgetSignIn(signer.publicKey.toBase58());
+      return { ok: false, error: explain(e) };
+    }
+  }
+
+  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening, checkGenesis });
   return store;
 }
 

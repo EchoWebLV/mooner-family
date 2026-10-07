@@ -934,3 +934,166 @@ test("watchChat: a presale room's chat while Chat shows it; global needs none", 
   assert.equal(listening("chat:global"), false, "start() owns global");
   none();
 });
+
+// ---- XP ----
+
+const xpRow = (wallet, total, more = {}) => ({
+  wallet,
+  total,
+  titles: { dev: total, kol: 0, raider: 0, diamond: 0 },
+  streak: { days: 0, best: 0, last: null },
+  genesis: null,
+  ...more,
+});
+const apiError = (status, message) => Object.assign(new Error(message), { status });
+
+test("xp: pushed rows merge by wallet, none goes, junk is skipped; loaded from the first message", () => {
+  const { store, push } = rig();
+  store.getState().start();
+  assert.equal(store.getState().xpLoaded, false);
+  push("profiles", "xp", [xpRow("A", 100), xpRow("B", 50)]);
+  push("profiles", "xp", [xpRow("A", 300), { total: 1 }, null]);
+  const s = store.getState();
+  assert.equal(s.xpLoaded, true);
+  assert.deepEqual(Object.keys(s.xp).sort(), ["A", "B"]);
+  assert.equal(s.xp.A.total, 300);
+  assert.equal(s.xp.B.total, 50, "a row not in the message stays");
+  push("profiles", "xp", []);
+  assert.equal(store.getState().xp, s.xp, "no rows: the same object");
+  push("profiles", "snapshot", { X: { skin: 1 } });
+  assert.equal(store.getState().xp, s.xp, "the pictures' snapshot leaves the rows alone");
+});
+
+test("xp: your own row is read once when the wallet comes; after that rows come only as pushes", async () => {
+  const reads = [];
+  const { store, push } = rig({ api: { xp: async (w) => (reads.push(w), xpRow(w, 25)) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  await tick();
+  assert.deepEqual(reads, [W]);
+  assert.equal(store.getState().xp[W].total, 25);
+  push("profiles", "xp", [xpRow(W, 125)]);
+  push("profiles", "xp", [xpRow("B", 5)]);
+  await tick();
+  assert.deepEqual(reads, [W], "pushes never read again");
+  assert.equal(store.getState().xp[W].total, 125);
+  await store.getState().setWallet(null);
+  assert.deepEqual(reads, [W], "no wallet: nothing to read");
+});
+
+test("xp: a push that lands while your row's read is on its way isn't undone by the read", async () => {
+  let answer;
+  const { store, push } = rig({ api: { xp: () => new Promise((r) => (answer = r)) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  push("profiles", "xp", [xpRow(W, 300)]);
+  answer(xpRow(W, 100));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 300);
+});
+
+test("xp: a failed read says so for that wallet only; a push still fills the row", async () => {
+  const fail = [];
+  const { store, push } = rig({ api: { xp: (w) => new Promise((_, no) => fail.push([w, no])) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  fail[0][1](apiError(429, "too many requests, try again later"));
+  await tick();
+  assert.equal(store.getState().xpFailed, true);
+  push("profiles", "xp", [xpRow(W, 40)]);
+  assert.equal(store.getState().xp[W].total, 40);
+  await store.getState().setWallet("Other");
+  assert.equal(store.getState().xpFailed, false, "a wallet change starts over");
+  await store.getState().setWallet(W);
+  await store.getState().setWallet("Other");
+  fail[2][1](apiError(503, "down")); // W's second read fails after the switch
+  await tick();
+  assert.equal(store.getState().xpFailed, false, "an old wallet's failure isn't the new one's");
+});
+
+test("checkGenesis signs in when the sign-in ran out, posts the token, and the answer's row goes in", async () => {
+  const posted = [];
+  const row = xpRow(W, 250, { genesis: { mint: "M", at: 7 } });
+  const { store } = rig({
+    now: 1_790_000_000_000,
+    api: {
+      xp: async (w) => xpRow(w, 0),
+      genesis: async (token) => (posted.push(token), { wallet: W, genesis: row.genesis, fresh: posted.length === 1, xp: row }),
+    },
+  });
+  await store.getState().setWallet(W);
+  await tick();
+  store.setState({ session: { token: "old", exp: 1_790_000_000_000 } }); // runs out right now
+  const signed = [];
+  const r = await store.getState().checkGenesis(signer, { signIn: async () => (signed.push(1), { token: "fresh", exp: 1_790_000_100_000 }) });
+  assert.deepEqual(r, { ok: true, fresh: true, genesis: { mint: "M", at: 7 } });
+  assert.deepEqual(signed, [1]);
+  assert.deepEqual(posted, ["fresh"]);
+  assert.equal(store.getState().xp[W], row, "the answer's row replaces the one read before");
+  const again = await store.getState().checkGenesis(signer, { signIn: async () => assert.fail("still signed in") });
+  assert.deepEqual(again, { ok: true, fresh: false, genesis: { mint: "M", at: 7 } });
+  assert.deepEqual(posted, ["fresh", "fresh"]);
+});
+
+test("checkGenesis: a sign-in that fails stops there", async () => {
+  const { store } = rig({ api: { genesis: async () => assert.fail("no token to post") } });
+  await store.getState().setWallet(W);
+  const r = await store.getState().checkGenesis(signer, { signIn: async () => { throw new Error("User rejected the request."); } });
+  assert.deepEqual(r, { ok: false, error: "You cancelled it in your wallet." });
+});
+
+test("checkGenesis: the server's words as they are; the sign-in stays", async () => {
+  const cases = [
+    [404, "no Seeker Genesis Token in this wallet"],
+    [409, "this Seeker's Genesis Token was already used by Abcd…wxyz"],
+    [503, "couldn't read this wallet's tokens, try again"],
+    [429, "too many Genesis checks from this wallet, try again later"],
+  ];
+  for (const [status, error] of cases) {
+    const { store } = rig({ api: { xp: async (w) => xpRow(w, 0), genesis: async () => { throw apiError(status, error); } } });
+    await store.getState().setWallet(W);
+    await tick();
+    store.setState({ session: { token: "t", exp: 9e15 } });
+    const before = store.getState().xp;
+    assert.deepEqual(await store.getState().checkGenesis(signer), { ok: false, error }, String(status));
+    assert.deepEqual(store.getState().session, { token: "t", exp: 9e15 }, `${status} keeps the sign-in`);
+    assert.equal(store.getState().xp, before, `${status} changes no row`);
+  }
+});
+
+test("checkGenesis: a 401 forgets the sign-in here and on disk; the next press signs in again", async () => {
+  let first = true;
+  const { store, disk } = rig({
+    now: 1_790_000_000_000,
+    api: {
+      genesis: async () => {
+        if (first) {
+          first = false;
+          throw apiError(401, "your sign-in ran out, sign in again");
+        }
+        return { wallet: W, genesis: { mint: "M", at: 1 }, fresh: false, xp: xpRow(W, 250) };
+      },
+    },
+  });
+  await store.getState().setWallet(W);
+  await store.getState().signIn(signer, { signIn: async () => ({ token: "old", exp: 1_790_000_100_000 }) });
+  assert.ok(disk.has(`mooner:login:${W}`));
+  const r = await store.getState().checkGenesis(signer);
+  assert.deepEqual(r, { ok: false, error: "your sign-in ran out, sign in again" });
+  assert.equal(store.getState().session, null);
+  assert.equal(disk.has(`mooner:login:${W}`), false);
+  const signed = [];
+  const again = await store.getState().checkGenesis(signer, { signIn: async () => (signed.push(1), { token: "new", exp: 1_790_000_100_000 }) });
+  assert.equal(again.ok, true);
+  assert.deepEqual(signed, [1]);
+});
+
+test("profilesLoaded: from the pictures' first snapshot", () => {
+  const { store, push } = rig();
+  store.getState().start();
+  assert.equal(store.getState().profilesLoaded, false);
+  push("profiles", "upsert", { wallet: "Y", pfp: { skin: 2 } });
+  assert.equal(store.getState().profilesLoaded, false, "an upsert isn't the snapshot");
+  push("profiles", "snapshot", {});
+  assert.equal(store.getState().profilesLoaded, true);
+});
