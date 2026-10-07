@@ -1112,3 +1112,32 @@ test("profilesLoaded: from the pictures' first snapshot", () => {
   push("profiles", "snapshot", {});
   assert.equal(store.getState().profilesLoaded, true);
 });
+
+test("xp: an older read of the same wallet that fails late doesn't say failed over a newer one", async () => {
+  const calls = [];
+  const { store } = rig({ api: { xp: (w) => new Promise((ok, no) => calls.push({ w, ok, no })) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  await store.getState().setWallet("Other");
+  await store.getState().setWallet(W);
+  calls[2].ok(xpRow(W, 40));
+  await tick();
+  calls[0].no(apiError(503, "down")); // W's first read fails after the second one came
+  await tick();
+  assert.equal(store.getState().xp[W].total, 40);
+  assert.equal(store.getState().xpFailed, false);
+});
+
+test("checkGenesis: a sign-in kept for another wallet isn't used; the signer signs in", async () => {
+  const posted = [];
+  const { store } = rig({
+    now: 1_790_000_000_000,
+    api: { xp: async (w) => xpRow(w, 0), genesis: async (token) => (posted.push(token), { wallet: W, genesis: null, fresh: false, xp: xpRow(W, 0) }) },
+  });
+  await store.getState().setWallet("Other");
+  await tick();
+  store.setState({ session: { token: "others", exp: 1_790_000_100_000 } });
+  const r = await store.getState().checkGenesis(signer, { signIn: async () => ({ token: "mine", exp: 1_790_000_100_000 }) });
+  assert.equal(r.ok, true);
+  assert.deepEqual(posted, ["mine"]);
+});

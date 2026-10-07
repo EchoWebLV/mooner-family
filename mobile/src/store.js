@@ -655,15 +655,18 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
 
   // ---- XP ----
 
+  let xpReads = 0; // readXp's calls, so an older one can't say failed over a newer one
   /** The connected wallet's own XP row, read once when the wallet comes: the board on
    *  `profiles` holds the top 500 only. Pushes keep it after that; nothing reads it again. A
-   *  row a push brought while this read was on its way stays. */
+   *  row a push brought while this read was on its way stays. Only the newest read may say it
+   *  failed. */
   async function readXp(wallet) {
+    const n = ++xpReads;
     try {
       const row = await api.xp(wallet);
       patch("xp", (x) => mergeXp(x, [row], true));
     } catch {
-      if (get().wallet === wallet) set({ xpFailed: true });
+      if (get().wallet === wallet && n === xpReads) set({ xpFailed: true });
     }
   }
 
@@ -672,7 +675,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
    *  fresh, genesis } (`fresh`: the first time), or { ok: false, error } with the server's
    *  words. The answer's row goes into `xp` like a pushed one. `opts.signIn` is for tests. */
   async function checkGenesis(signer, opts) {
-    let session = get().session;
+    let session = get().wallet === signer.publicKey.toBase58() ? get().session : null; // not another wallet's
     if (!session || session.exp <= now()) {
       const r = await signIn(signer, opts);
       if (!r.ok) return r;
