@@ -15,5 +15,6 @@ export function roomsOf(s) {
 }
 
 /** Whether `rows` (a channel's lines, oldest first) has a line pushed live after the line
- *  `seen` (an id). The snapshot's lines never count. */
+ *  `seen` (an id). Only lines flagged live count (a reconnect's snapshot keeps the flag on
+ *  lines that had it). */
 export const unreadOf = (rows, seen) => (rows ?? []).some((r) => r.live && r.id > seen);
