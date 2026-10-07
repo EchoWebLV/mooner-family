@@ -97,7 +97,7 @@ export function SendIcon({ color, size = 20 }) {
 export function TrophyIcon({ color, size = 22 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Path d="M8 21 H16 M12 17 V21 M7 4 H17 V9 C17 11.8 14.8 14 12 14 C9.2 14 7 11.8 7 9 Z" stroke={color} {...STROKE} />
+      <Path d="M8 21 H16 M12 14 V21 M7 4 H17 V9 C17 11.8 14.8 14 12 14 C9.2 14 7 11.8 7 9 Z" stroke={color} {...STROKE} />
       <Path d="M7 6 H5 C3.9 6 3 6.9 3 8 C3 9.7 4.3 11 6 11 H7.3 M17 6 H19 C20.1 6 21 6.9 21 8 C21 9.7 19.7 11 18 11 H16.7" stroke={color} {...STROKE} />
     </Svg>
   );

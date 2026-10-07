@@ -12,6 +12,8 @@ export function ChipRow({ items, value, onPick }) {
   return (
     <ScrollView
       horizontal
+      accessibilityRole="tablist"
+      keyboardShouldPersistTaps="handled"
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ paddingHorizontal: S.gutter, paddingVertical: 10, gap: 8 }}
       style={{ flexGrow: 0 }}
@@ -24,6 +26,7 @@ export function ChipRow({ items, value, onPick }) {
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             accessibilityLabel={it.label}
+            hitSlop={{ top: 7, bottom: 7, left: 4, right: 4 }}
             onPress={() => {
               if (on) return;
               Haptics.selectionAsync().catch(() => {});

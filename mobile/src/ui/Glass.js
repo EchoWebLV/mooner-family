@@ -72,8 +72,9 @@ export function GlassPill({ text, label }) {
 }
 
 /** A screen's picture header: the Scene `name` at `height` (the status bar's room included),
- *  a 56 pt row with `left`, the title and `right` (one element or several, 10 pt apart),
- *  then `children` in the room left under the row. */
+ *  a 56 pt row with `left`, the title and `right` (an element, a fragment or a keyed array,
+ *  10 pt apart), then `children` in the room left under the row. Only at the top of a screen:
+ *  the SafeAreaView pads by the root's insets wherever it sits. */
 export function SceneHeader({ name, height, title, left, right, motion = "still", children }) {
   return (
     <Scene name={name} height={height} motion={motion}>

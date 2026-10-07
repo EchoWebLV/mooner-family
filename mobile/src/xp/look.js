@@ -24,7 +24,7 @@ export function nextLevelOf(xp) {
   const level = levelOf(xp);
   if (level >= LEVEL_XP.length) return { level, to: null, left: 0, max: true, fill: 1 };
   const to = LEVEL_XP[level];
-  return { level, to, left: to - xp, max: false, fill: xp / to };
+  return { level, to, left: to - xp, max: false, fill: Math.min(1, Math.max(0, xp / to)) };
 }
 
 /** The podium's rings: 1 gold, 2 silver, 3 bronze. */
