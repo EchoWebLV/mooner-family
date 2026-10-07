@@ -15,14 +15,14 @@ import { TITLE_COLORS, nextLevelOf, tagText } from "./look";
 import { GENESIS_XP, mainTitleOf, titlesOf, xpNum, xpText } from "./rows";
 
 /** `wallet`: the connected one. A spinner until its row is here (the read on connect, or a
- *  push); the server's rows are the only numbers shown. */
+ *  push); a failed read says so with Try again. The server's rows are the only numbers shown. */
 export function XpCard({ wallet }) {
   const row = useStore(store, (s) => s.xp[wallet]);
   const failed = useStore(store, (s) => s.xpFailed);
   const [passed, setPassed] = useState(false);
   let body;
   if (row) body = <Progress row={row} />;
-  else if (failed) body = <T v="small" color={C.text2}>Couldn't read your XP right now.</T>;
+  else if (failed) body = <ReadFailed />;
   else body = <ActivityIndicator color={C.text1} style={{ alignSelf: "flex-start" }} />;
   return (
     <>
@@ -39,6 +39,17 @@ export function XpCard({ wallet }) {
         </View>
       </Sheet>
     </>
+  );
+}
+
+/** Your row's read failed (and no push brought it): say so, and Try again (the store reads
+ *  it again, with the spinner meanwhile). */
+function ReadFailed() {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+      <T v="small" color={C.text2} style={{ flex: 1 }}>Couldn't read your XP right now.</T>
+      <PillButton title="Try again" onPress={() => store.getState().retryXp()} accessibilityLabel="Try reading your XP again" />
+    </View>
   );
 }
 
@@ -64,35 +75,44 @@ function Progress({ row }) {
         <T style={{ fontFamily: F.semi, fontSize: 22, color }}>{tagText(main.title, main.level)}</T>
         {streak > 0 ? <T v="small" color={C.text0}>{`🔥 ${streak} ${streak === 1 ? "day" : "days"}`}</T> : null}
       </View>
-      {/* the fill and the rest share the row by `fill` (0..1) */}
-      <View style={{ height: 8, borderRadius: 4, backgroundColor: C.bg3, overflow: "hidden", flexDirection: "row" }}>
+      {/* the fill and the rest share the row by `fill` (0..1); hidden from a screen reader,
+          the line under it says the same */}
+      <View
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
+        style={{ height: 8, borderRadius: 4, backgroundColor: C.bg3, overflow: "hidden", flexDirection: "row" }}
+      >
         <View style={{ flex: next.fill, borderRadius: 4, backgroundColor: color }} />
         <View style={{ flex: 1 - next.fill }} />
       </View>
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
-        <T v="small" style={{ fontFamily: F.mono }}>{next.max ? xpText(main.xp) : `${xpNum(main.xp)} / ${xpText(next.to)}`}</T>
-        <T v="small">{next.max ? "Max level" : `${xpNum(next.left)} to ${tagText(main.title, next.level + 1)}`}</T>
+        <T v="small" style={{ fontFamily: F.mono, flexShrink: 1 }}>{next.max ? xpText(main.xp) : `${xpNum(main.xp)} / ${xpText(next.to)}`}</T>
+        <T v="small" style={{ flexShrink: 1, textAlign: "right" }}>{next.max ? "Max level" : `${xpNum(next.left)} to ${tagText(main.title, next.level + 1)}`}</T>
       </View>
       <Tags row={row} />
     </>
   );
 }
 
-/** The four title tags; a title with no XP is dimmed. */
+/** The four title tags; a title with no XP is dimmed (and says so to a screen reader). */
 function Tags({ row }) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-      {titlesOf(row).map((t) => (
-        <View key={t.title} style={{ opacity: t.xp > 0 ? 1 : 0.35 }}>
-          <TitleTag title={t.title} level={t.level} />
-        </View>
-      ))}
+      {titlesOf(row).map((t) => {
+        const none = t.xp <= 0;
+        return (
+          <View key={t.title} accessible={none} accessibilityLabel={none ? `${t.name}, no XP yet` : undefined} style={{ opacity: none ? 0.35 : 1 }}>
+            <TitleTag title={t.title} level={t.level} />
+          </View>
+        );
+      })}
     </View>
   );
 }
 
 /** "Seeker Genesis": Check (the server reads the wallet's tokens and decides), or the mark
- *  once your row has it. The first pass calls `onPassed` (the sheet). */
+ *  once your row has it. The first pass calls `onPassed` (the sheet). Check stays in place
+ *  while it works, so a screen reader's focus stays on it. */
 function GenesisRow({ has, onPassed }) {
   const signer = useSigner();
   const signedIn = useStore(store, (s) => s.session != null);
@@ -139,14 +159,12 @@ function GenesisRow({ has, onPassed }) {
           >
             <CheckIcon color={C.gold} size={16} />
           </View>
-        ) : busy ? (
-          <ActivityIndicator color={C.text1} />
         ) : (
-          <PillButton title="Check" onPress={check} accessibilityLabel="Check this wallet for a Seeker Genesis Token" />
+          <PillButton title="Check" busy={busy} onPress={check} accessibilityLabel="Check this wallet for a Seeker Genesis Token" />
         )}
       </View>
       {!has && !signedIn ? <T v="small" color={C.text2}>Your wallet signs you in to Mooner first. No SOL moves.</T> : null}
-      {error ? <T v="small" color={C.down}>{error}</T> : null}
+      {error && !has ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
     </View>
   );
 }

@@ -108,13 +108,16 @@ export function Card({ children, onPress, style, accessibilityLabel }) {
 
 /** A small quiet oval button that hugs its title ("Connect", "Copy"). `color` tints the
  *  title; `accessibilityLabel` defaults to it. `live` makes a screen reader say the new
- *  label when it changes ("Copied"). */
-export function PillButton({ title, onPress, color = C.text0, accessibilityLabel, live }) {
+ *  label when it changes ("Copied"). `busy`: a spinner over the title, same size, no presses
+ *  (it stays mounted, so a screen reader's focus stays on it). */
+export function PillButton({ title, onPress, color = C.text0, accessibilityLabel, live, busy }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? title}
       accessibilityLiveRegion={live ? "polite" : undefined}
+      accessibilityState={{ disabled: !!busy, busy: !!busy }}
+      disabled={!!busy}
       hitSlop={8}
       onPress={(e) => {
         Haptics.selectionAsync().catch(() => {});
@@ -128,7 +131,8 @@ export function PillButton({ title, onPress, color = C.text0, accessibilityLabel
         pressed && { opacity: 0.85 },
       ]}
     >
-      <Text style={{ fontFamily: F.semi, fontSize: 14, color }}>{title}</Text>
+      <Text style={{ fontFamily: F.semi, fontSize: 14, color, opacity: busy ? 0 : 1 }}>{title}</Text>
+      {busy ? <ActivityIndicator size="small" color={C.text1} style={StyleSheet.absoluteFill} /> : null}
     </Pressable>
   );
 }

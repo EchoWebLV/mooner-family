@@ -8,6 +8,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
+import { BOARD_TOP } from "../../../engine/src/xp.js";
 import { store } from "../../src/app";
 import { rowsOf } from "../../src/me";
 import { useConnect } from "../../src/useConnect";
@@ -22,7 +23,7 @@ import { shortWallet, solText, usd } from "../../src/ui/format";
 import { Button, Card, Empty, Pill, Sheet, T } from "../../src/ui/kit";
 import { C, F, S } from "../../src/ui/theme";
 import { XpCard } from "../../src/xp/XpCard";
-import { boardOf } from "../../src/xp/rows";
+import { rankOf } from "../../src/xp/rows";
 
 /** How long the tick shows after a copy. */
 const COPIED_MS = 2_000;
@@ -43,6 +44,11 @@ export default function Me() {
   const [leaving, setLeaving] = useState(false);
   const leavingNow = useRef(false); // set at once, so a second tap before the re-render does nothing
   const [settings, setSettings] = useState(false);
+  const openSettings = useCallback(() => setSettings(true), []);
+  // a sheet left open by a wallet that went must not open again for the next one
+  useEffect(() => {
+    if (!wallet) setSettings(false);
+  }, [wallet]);
 
   // The store forgets the wallet first; if the adapter then fails to, Connect is still the
   // right place to go and there's nothing for the person to do about it.
@@ -64,7 +70,8 @@ export default function Me() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
       {wallet ? (
-        <Wallet wallet={wallet} onSettings={() => setSettings(true)} />
+        // keyed: a new wallet's page starts fresh (the Genesis row's busy and error with it)
+        <Wallet key={wallet} wallet={wallet} onSettings={openSettings} />
       ) : (
         <>
           <SceneHeader name="live" height={SCENE_PT} motion="lift" title="Me" />
@@ -140,6 +147,33 @@ function Wallet({ wallet, onSettings }) {
     const solidAt = Math.max(1, SCENE_PT - FACE_PT / 2 - insets.top); // your face's top reaches the clock
     return scrollY.interpolate({ inputRange: [0, solidAt], outputRange: [0, 1], extrapolate: "clamp" });
   }, [scrollY, insets.top]);
+  // built once per wallet: a push to the launches' feeds redraws the rows, not all of this
+  // (each part reads the store on its own)
+  const header = useMemo(
+    () => (
+      <View>
+        <SceneHeader
+          name="live"
+          height={SCENE_PT}
+          motion="lift"
+          title="Me"
+          right={
+            <Glass label="Settings" onPress={onSettings}>
+              <SettingsIcon color={C.text0} size={20} />
+            </Glass>
+          }
+        />
+        <View style={{ paddingHorizontal: S.gutter, gap: 12 }}>
+          <You wallet={wallet} />
+          <Boxes wallet={wallet} />
+          <XpCard wallet={wallet} />
+          <T v="label" style={{ marginTop: 12, marginBottom: 0 }}>Your launches</T>
+        </View>
+        <View style={{ height: 12 }} />
+      </View>
+    ),
+    [wallet, onSettings],
+  );
 
   return (
     <View style={{ flex: 1 }}>
@@ -151,28 +185,7 @@ function Wallet({ wallet, onSettings }) {
         scrollEventThrottle={16}
         contentContainerStyle={{ paddingBottom: 32 }}
         ItemSeparatorComponent={Gap}
-        ListHeaderComponent={
-          <View>
-            <SceneHeader
-              name="live"
-              height={SCENE_PT}
-              motion="lift"
-              title="Me"
-              right={
-                <Glass label="Settings" onPress={onSettings}>
-                  <SettingsIcon color={C.text0} size={20} />
-                </Glass>
-              }
-            />
-            <View style={{ paddingHorizontal: S.gutter, gap: 12 }}>
-              <You wallet={wallet} />
-              <Boxes wallet={wallet} />
-              <XpCard wallet={wallet} />
-              <T v="label" style={{ marginTop: 12, marginBottom: 0 }}>Your launches</T>
-            </View>
-            <View style={{ height: 12 }} />
-          </View>
-        }
+        ListHeaderComponent={header}
         ListEmptyComponent={<Empty title="You're not in any launch yet" body="Chip in to one from Pulse." />}
       />
       <Animated.View
@@ -196,33 +209,53 @@ function You({ wallet }) {
   );
 }
 
-/** Balance ("2.41 SOL", ≈ dollars when the price is known) and Rank on Overall ("#14", "of
- *  N"; "–" until the XP rows come; "Not ranked" without a row there). Rank opens Ranks. */
+/** A box's number: one line that shrinks to fit, growing with the text size up to 1.3x. */
+const BoxNum = ({ children }) => (
+  <T numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.3} style={{ fontFamily: F.mono, fontSize: 20 }}>
+    {children}
+  </T>
+);
+
+/** Balance ("2.41 SOL", ≈ dollars when the price is known) and Rank on Overall (rows.js
+ *  rankOf: "#14" over "of N" or "of 500+"; "500+" past the board; "–" until the XP rows and
+ *  yours are here; "Not ranked" with no XP). Rank opens Ranks. */
 function Boxes({ wallet }) {
   const lamports = useStore(store, (s) => s.lamports);
   const solUsd = useStore(store, (s) => s.solUsd);
   const xp = useStore(store, (s) => s.xp);
   const xpLoaded = useStore(store, (s) => s.xpLoaded);
-  const board = useMemo(() => boardOf(xp, "overall", wallet), [xp, wallet]);
-  const mine = board.find((r) => r.mine);
+  const rank = useMemo(() => rankOf(xp, "overall", wallet, xpLoaded), [xp, wallet, xpLoaded]);
   const known = lamports != null;
-  let rank = "–";
-  let of = null;
-  if (xpLoaded) {
-    rank = mine ? `#${mine.rank}` : "Not ranked";
-    of = mine ? `of ${board.length}` : null;
+  const dollars = known && solUsd > 0 ? usd((lamports / 1e9) * solUsd) : null;
+  const balance = known ? `Balance ${solText(lamports)} SOL${dollars ? `, about ${dollars}` : ""}` : "Balance: not read yet";
+  let value;
+  let label;
+  if (rank.kind === "ranked") {
+    value = <BoxNum>{`#${rank.rank}`}</BoxNum>;
+    label = `Rank ${rank.rank} of ${rank.of}`;
+  } else if (rank.kind === "past") {
+    value = <BoxNum>{`${BOARD_TOP}+`}</BoxNum>;
+    label = `Rank: outside the top ${BOARD_TOP}`;
+  } else if (rank.kind === "none") {
+    value = <T v="small" color={C.text1}>Not ranked</T>;
+    label = "Rank: not ranked";
+  } else {
+    value = <BoxNum>–</BoxNum>;
+    label = "Rank: not read yet";
   }
   return (
     <View style={{ flexDirection: "row", gap: 12 }}>
-      <Card style={{ flex: 1, gap: 4 }}>
-        <T v="label">Balance</T>
-        <T style={{ fontFamily: F.mono, fontSize: 20 }}>{known ? `${solText(lamports)} SOL` : "–"}</T>
-        {known && solUsd > 0 ? <T v="small">{`≈ ${usd((lamports / 1e9) * solUsd)}`}</T> : null}
+      <Card style={{ flex: 1 }}>
+        <View accessible accessibilityLabel={balance} style={{ gap: 4 }}>
+          <T v="label">Balance</T>
+          <BoxNum>{known ? `${solText(lamports)} SOL` : "–"}</BoxNum>
+          {dollars ? <T v="small">{`≈ ${dollars}`}</T> : null}
+        </View>
       </Card>
-      <Card style={{ flex: 1, gap: 4 }} onPress={() => router.push("/ranks")} accessibilityLabel={of ? `Rank ${rank} ${of}` : `Rank ${rank}`}>
+      <Card style={{ flex: 1, gap: 4 }} onPress={() => router.push("/ranks")} accessibilityLabel={label}>
         <T v="label">Rank</T>
-        <T style={{ fontFamily: F.mono, fontSize: 20 }}>{rank}</T>
-        {of ? <T v="small">{of}</T> : null}
+        {value}
+        {rank.kind === "ranked" ? <T v="small">{`of ${rank.of}`}</T> : null}
       </Card>
     </View>
   );
@@ -259,6 +292,7 @@ function CopyButton({ text, label }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={copied ? "Copied" : label}
+      accessibilityLiveRegion="polite"
       hitSlop={8}
       onPress={copy}
       style={({ pressed }) => [
