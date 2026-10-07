@@ -7,11 +7,13 @@
 // before the wallet is asked (and again once it signs, and when an unknown is reported), so
 // it comes back after a restart too. Start over shows only once the server's own 404 came
 // more than 5 minutes after the coin was last saved. The launching picture sits on top with
-// the host saying each step's line, and a step bar under it.
+// the host saying each step's line, and a step bar under it; once it scrolls away, a bg0
+// strip fades in under the status bar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, KeyboardAvoidingView, ScrollView, Share, View } from "react-native";
+import { ActivityIndicator, Animated, BackHandler, KeyboardAvoidingView, Share, View } from "react-native";
 import { router, useFocusEffect, useIsFocused } from "expo-router";
 import * as Haptics from "expo-haptics";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
 import { api, store } from "../../src/app";
 import { CommitStep } from "../../src/create/CommitStep";
@@ -36,6 +38,8 @@ import { C, F, S } from "../../src/ui/theme";
 import { useAppActive } from "../../src/ui/useAppActive";
 
 const STEPS = ["picture", "details", "commit", "review"];
+
+const SCENE_PT = 210; // the launching picture, the status bar's room included
 
 /** The step bar's names, one per STEPS entry. */
 const STEP_NAMES = ["Picture", "Details", "Your seat", "Launch"];
@@ -75,11 +79,18 @@ function CreateScene({ step, locked = false, onBack }) {
   return (
     <SceneHeader
       name="launching"
-      height={210}
+      height={SCENE_PT}
       motion="kenBurns"
       title="Create"
       left={at > 0 && !locked ? <Glass label="Back" onPress={onBack}><BackIcon color={C.text0} size={20} /></Glass> : null}
-      right={step ? <GlassPill text={`${at + 1} / ${STEPS.length}`} label={`Step ${at + 1} of ${STEPS.length}`} /> : null}
+      right={
+        step ? (
+          // the step bar says the step to a screen reader
+          <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+            <GlassPill text={`${at + 1} / ${STEPS.length}`} />
+          </View>
+        ) : null
+      }
     >
       {step ? (
         <View style={{ flex: 1, justifyContent: "flex-end", paddingHorizontal: S.gutter, paddingBottom: 10 }}>
@@ -93,12 +104,14 @@ function CreateScene({ step, locked = false, onBack }) {
 }
 
 /** Four 4 pt segments under the picture, Picture · Details · Your seat · Launch: done and
- *  current in green, the current name in white. */
+ *  current in green, the current name in white. A progress bar to a screen reader. */
 function StepBar({ at }) {
   return (
     <View
       accessible
-      accessibilityLabel={`Step ${at + 1} of ${STEPS.length}: ${STEP_NAMES[at]}`}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Steps" // not the step again: a screen reader says the label, then the value
+      accessibilityValue={{ min: 1, max: STEPS.length, now: at + 1, text: `Step ${at + 1} of ${STEPS.length}: ${STEP_NAMES[at]}` }}
       style={{ flexDirection: "row", gap: 6, paddingHorizontal: S.gutter, paddingTop: 4 }}
     >
       {STEP_NAMES.map((name, i) => (
@@ -344,6 +357,21 @@ function Creator({ wallet, saved }) {
     }
   }
 
+  // A bg0 strip under the status bar, solid once the picture's bottom reaches it: the steps
+  // never scroll under a bare status bar.
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef(null);
+  if (!scrollRef.current) scrollRef.current = new Animated.Value(0);
+  const scrollY = scrollRef.current;
+  const onScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const scrim = useMemo(() => {
+    const solidAt = Math.max(1, SCENE_PT - insets.top);
+    return scrollY.interpolate({ inputRange: [Math.max(0, solidAt - 80), solidAt], outputRange: [0, 1], extrapolate: "clamp" });
+  }, [scrollY, insets.top]);
+
   let body;
   if (step === "picture") {
     body = <PictureStep picture={picture} onPicture={setPicture} onNext={() => setStep("details")} />;
@@ -392,15 +420,24 @@ function Creator({ wallet, saved }) {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
       <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 32 }}>
+        <Animated.ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 32 }}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+        >
           <CreateScene step={step} locked={locked} onBack={back} />
           <StepBar at={at} />
           <View style={{ padding: S.gutter, gap: 16 }}>
             {showUnopened ? <Unopened tokens={unopened} onOpen={resume} /> : null}
             {body}
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </KeyboardAvoidingView>
+      <Animated.View
+        pointerEvents="none"
+        style={{ position: "absolute", top: 0, left: 0, right: 0, height: insets.top, backgroundColor: C.bg0, opacity: scrim }}
+      />
     </View>
   );
 }

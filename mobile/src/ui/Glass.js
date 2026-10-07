@@ -81,7 +81,7 @@ export function SceneHeader({ name, height, title, left, right, motion = "still"
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         <View style={{ height: 56, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: S.gutter }}>
           {left ?? null}
-          <T v="title" numberOfLines={1} accessibilityRole="header" style={{ flex: 1 }}>{title}</T>
+          <T v="title" numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header" style={{ flex: 1 }}>{title}</T>
           {right ? <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>{right}</View> : null}
         </View>
         <View style={{ flex: 1 }}>{children}</View>

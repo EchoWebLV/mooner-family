@@ -62,7 +62,7 @@ export function Host({ line, sound = true }) {
         >
           {/* the whole line is laid out from the start, its untyped rest unseen, so the
               bubble keeps its size and no word jumps to the next line as it types */}
-          <T color={C.bg0} style={text}>
+          <T color={C.bg0} maxFontSizeMultiplier={1.3} style={text}>
             {typed}
             <Text style={{ color: "transparent" }}>{full.slice(typed.length)}</Text>
           </T>
