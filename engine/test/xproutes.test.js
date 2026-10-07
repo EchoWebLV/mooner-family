@@ -103,3 +103,11 @@ test("POST /api/genesis: 3 a minute per wallet, 10 per IP", async () => {
   for (let i = 0; i < 10; i++) await r.call("POST", "/api/genesis", { token: r.token(wallet()) }, ip);
   assert.deepEqual(await r.call("POST", "/api/genesis", { token: r.token(wallet()) }, ip), { status: 429, json: { error: "too many Genesis checks, try again later" } });
 });
+
+test("POST /api/genesis: a body that isn't a JSON object is 400", async () => {
+  const r = rig();
+  for (const body of [null, 5, "x"]) {
+    assert.deepEqual(await r.call("POST", "/api/genesis", body), { status: 400, json: { error: "the body must be a JSON object" } });
+  }
+  assert.equal(r.reads(), 0);
+});

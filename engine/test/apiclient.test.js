@@ -144,3 +144,9 @@ test("xp reads a wallet's row with a GET; genesis posts the sign-in", async () =
   assert.equal(f.calls[1].init.method, "POST");
   assert.deepEqual(JSON.parse(f.calls[1].init.body), { token: "T" });
 });
+
+test("xp puts the wallet in the path encoded", async () => {
+  const f = fakeFetch([[200, {}]]);
+  await makeApi("", f).xp("a/b?c#d");
+  assert.equal(f.calls[0].url, "/api/xp/a%2Fb%3Fc%23d");
+});

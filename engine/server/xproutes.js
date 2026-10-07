@@ -29,6 +29,7 @@ export function makeXpRoutes({ ledger, l1, walletOf, onXp = () => {}, limits = X
 
   async function genesis({ body, ip }) {
     limit(L.genesisPerIp, ip, "Genesis checks");
+    if (body === null || typeof body !== "object") throw new HttpError(400, "the body must be a JSON object");
     const wallet = walletOf(body.token);
     limit(L.genesisPerWallet, wallet, "Genesis checks from this wallet");
     const had = ledger.genesisOf(wallet);

@@ -68,7 +68,7 @@ export function makeApi(base = "", fetchFn = (url, init) => fetch(url, init), { 
     profiles: async () => (await call("GET", "/api/profiles")).json.profiles,
     saveProfile: async (token, pfp) => (await call("POST", "/api/profile", { token, pfp })).json,
     // XP and the Seeker Genesis check (server/xproutes.js)
-    xp: async (wallet) => (await call("GET", `/api/xp/${wallet}`)).json,
+    xp: async (wallet) => (await call("GET", `/api/xp/${encodeURIComponent(wallet)}`)).json,
     genesis: async (token) => (await call("POST", "/api/genesis", { token })).json,
   };
 }
