@@ -1,5 +1,6 @@
 // The app's icons, on a 24-unit grid with one stroke: the tabs (22 px, in the tab's tint), and
-// the small ones the screens use (back, chat, share, tick, padlock, send).
+// the small ones the screens use (back, chat, share, tick, padlock, send, trophy, settings,
+// info, copy, crown).
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 
 const STROKE = { strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" };
@@ -88,6 +89,59 @@ export function SendIcon({ color, size = 20 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path d="M12 19 V5 M6 11 L12 5 L18 11" stroke={color} {...STROKE} strokeWidth={2.5} />
+    </Svg>
+  );
+}
+
+/** A cup on a stand: the ranks. */
+export function TrophyIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M8 21 H16 M12 17 V21 M7 4 H17 V9 C17 11.8 14.8 14 12 14 C9.2 14 7 11.8 7 9 Z" stroke={color} {...STROKE} />
+      <Path d="M7 6 H5 C3.9 6 3 6.9 3 8 C3 9.7 4.3 11 6 11 H7.3 M17 6 H19 C20.1 6 21 6.9 21 8 C21 9.7 19.7 11 18 11 H16.7" stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
+/** A gear: settings. */
+export function SettingsIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"
+        stroke={color}
+        {...STROKE}
+      />
+      <Circle cx={12} cy={12} r={3} stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
+/** An i in a circle: how it works. */
+export function InfoIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx={12} cy={12} r={9} stroke={color} {...STROKE} />
+      <Path d="M12 11 V16 M12 8 V8.01" stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
+/** Two sheets, one over the other: copy. */
+export function CopyIcon({ color, size = 18 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Rect x={8} y={8} width={12} height={12} rx={2} stroke={color} {...STROKE} />
+      <Path d="M16 8 V6 C16 4.9 15.1 4 14 4 H6 C4.9 4 4 4.9 4 6 V14 C4 15.1 4.9 16 6 16 H8" stroke={color} {...STROKE} />
+    </Svg>
+  );
+}
+
+/** A crown: first place. Filled, so it reads at a small size. */
+export function CrownIcon({ color, size = 22 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M4 18 L3 7 L8.5 11 L12 5 L15.5 11 L21 7 L20 18 Z" fill={color} stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
     </Svg>
   );
 }
