@@ -130,3 +130,23 @@ test("cosign sends the join's ref beside the tx", async () => {
   await api.cosign("BBBB", { ref: null });
   assert.deepEqual(JSON.parse(f.calls[1].init.body), { tx: "BBBB" });
 });
+
+test("xp reads a wallet's row with a GET; genesis posts the sign-in", async () => {
+  const row = { wallet: "W", total: 250, genesis: { mint: "M", at: 1 } };
+  const f = fakeFetch([[200, row], [200, { wallet: "W", genesis: { mint: "M", at: 1 }, fresh: true, xp: row }]]);
+  const api = makeApi("https://app.mooner.family", f);
+  assert.deepEqual(await api.xp("W"), row);
+  assert.equal(f.calls[0].url, "https://app.mooner.family/api/xp/W");
+  assert.equal(f.calls[0].init.method, "GET");
+  assert.equal(f.calls[0].init.body, undefined);
+  assert.deepEqual(await api.genesis("T"), { wallet: "W", genesis: { mint: "M", at: 1 }, fresh: true, xp: row });
+  assert.equal(f.calls[1].url, "https://app.mooner.family/api/genesis");
+  assert.equal(f.calls[1].init.method, "POST");
+  assert.deepEqual(JSON.parse(f.calls[1].init.body), { token: "T" });
+});
+
+test("xp puts the wallet in the path encoded", async () => {
+  const f = fakeFetch([[200, {}]]);
+  await makeApi("", f).xp("a/b?c#d");
+  assert.equal(f.calls[0].url, "/api/xp/a%2Fb%3Fc%23d");
+});

@@ -30,3 +30,17 @@ test("Referrals: an unconfirmed row gives way, a confirmed one stays; kept besid
   assert.equal(new Referrals(store.db).referralOf(presale, user).referrer, c.toBase58(), "a second open of the same file keeps the rows");
   store.close();
 });
+
+test("Referrals.confirmedIn: a presale's confirmed rows, by joiner", () => {
+  const store = new Store(":memory:");
+  const refs = new Referrals(store.db);
+  const [presale, other, u1, u2, u3, r] = [key(), key(), key(), key(), key(), key()];
+  refs.add(presale, u1, r, "S1", 1, true);
+  refs.add(presale, u2, r, "S2", 2, false);
+  refs.add(presale, u3, u1, "S3", 3, true);
+  refs.add(other, u2, r, "S4", 4, true);
+  const want = [{ user: u1.toBase58(), referrer: r.toBase58() }, { user: u3.toBase58(), referrer: u1.toBase58() }];
+  assert.deepEqual(refs.confirmedIn(presale.toBase58()), want.sort((x, y) => (x.user < y.user ? -1 : 1)), "unconfirmed rows and other presales left out");
+  assert.deepEqual(refs.confirmedIn(key().toBase58()), []);
+  store.close();
+});

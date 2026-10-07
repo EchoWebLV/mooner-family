@@ -308,3 +308,45 @@ test("settled, the snipe tax over: the claims go", async () => {
   assert.deepEqual(f.calls, ["list ER seats", "tax", "list home seats", "claim x2"]);
   assert.deepEqual(r.did, ["claim x2"]);
 });
+
+test("settled, the snipe tax over: the seats go to onSeats before any claim; a hook that throws or rejects holds nothing up", async () => {
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const hooks = [() => {}, () => assert.fail("xp broke"), async () => assert.fail("xp later")];
+    for (const hook of hooks) {
+      const f = fullBot({ state: STATE.SETTLED, settled: 4n });
+      const logs = [];
+      f.bot.log = (m) => logs.push(m);
+      f.bot.snipeTaxLeft = async () => (f.calls.push("tax"), 0);
+      const seats = [0, 1].map(() => ({ settled: true, commit: 1n, user: Keypair.generate().publicKey }));
+      f.bot.homeSeats = async () => (f.calls.push("list home seats"), seats);
+      f.bot.dbcConfig = MOONER_DBC_CONFIG;
+      const got = [];
+      f.bot.onSeats = (...args) => (f.calls.push("onSeats"), got.push(args), hook());
+      const r = await f.bot.atHome(presale, f.p());
+      assert.deepEqual(f.calls, ["list ER seats", "tax", "list home seats", "onSeats", "claim x2"]);
+      assert.deepEqual(r.did, ["claim x2"]);
+      const [[p, decoded, s]] = got;
+      assert.ok(p.equals(presale));
+      assert.equal(decoded.state, STATE.SETTLED);
+      assert.equal(s, seats, "the very seats it claims");
+      if (hook !== hooks[0]) assert.match(logs.join("\n"), /onSeats: xp (broke|later)/);
+    }
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
+test("the keeper hands the bot its onSeats hook", () => {
+  const bot = { scan: async () => [], launch: async () => ({}) };
+  const onSeats = () => {};
+  new Keeper({ bot, store: { unopenedAll: () => [] }, pid, onSeats });
+  assert.equal(bot.onSeats, onSeats);
+  const plain = { scan: async () => [], launch: async () => ({}) };
+  new Keeper({ bot: plain, store: { unopenedAll: () => [] }, pid });
+  assert.equal(plain.onSeats, undefined, "none given, none set");
+});

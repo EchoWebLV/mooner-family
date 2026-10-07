@@ -1666,3 +1666,56 @@ test("migrated: an async listener that rejects is logged, not a crash", async ()
     await s.close();
   }
 });
+
+test("profiles: XP rows after the pictures, the board on sub, then the rows that change", async () => {
+  const board = [{ wallet: "A", total: 100 }];
+  const s = await startLive({ feed: { xpBoard: () => board } });
+  const c = await s.client();
+  try {
+    c.sub("profiles");
+    assert.deepEqual((await c.next(on("profiles", "xp"))).data, board);
+    assert.deepEqual((await c.next(on("profiles", "snapshot"))).data, {}, "the pictures came first, as before");
+    s.feed.xpChanged([{ wallet: "B", total: 25 }]);
+    assert.deepEqual((await c.next(on("profiles", "xp"))).data, [{ wallet: "B", total: 25 }]);
+    s.feed.xpChanged([]);
+    await wait(50);
+    assert.equal(c.got.filter(on("profiles", "xp")).length, 0, "no rows, no message");
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("profiles: a feed with no XP board sends the pictures only", async () => {
+  const s = await startLive();
+  const c = await s.client();
+  try {
+    c.sub("profiles");
+    await c.next(on("profiles", "snapshot"));
+    await wait(50);
+    assert.equal(c.got.filter(on("profiles", "xp")).length, 0);
+  } finally {
+    c.close();
+    await s.close();
+  }
+});
+
+test("isMigrated: what the feed read of each coin's DBC pool at start, then each flip", async () => {
+  let old;
+  let fresh;
+  const s = await startLive({
+    before: ({ l1, store }) => {
+      old = launchedCoin(l1, store, { migrated: true });
+      fresh = launchedCoin(l1, store);
+    },
+  });
+  try {
+    assert.equal(s.feed.isMigrated(old.mint.toBase58()), true, "migrated while the server was down");
+    assert.equal(s.feed.isMigrated(fresh.mint.toBase58()), false);
+    assert.equal(s.feed.isMigrated(Keypair.generate().publicKey.toBase58()), false, "not a coin of ours");
+    s.l1.write(fresh.pool, DBC, dbcPool(true));
+    await until(() => s.feed.isMigrated(fresh.mint.toBase58()));
+  } finally {
+    await s.close();
+  }
+});

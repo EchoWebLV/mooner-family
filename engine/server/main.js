@@ -17,7 +17,11 @@ import { Store } from "./store.js";
 import { NoPin, Pinata } from "./pinata.js";
 import { Keeper } from "./keeper.js";
 import { makeReads, makeRoutes } from "./api.js";
-import { makeSocialRoutes } from "./social.js";
+import { makeSessions, makeSocialRoutes } from "./social.js";
+import { Referrals } from "./referrals.js";
+import { XpLedger } from "./xp.js";
+import { XpRules, holds, keeperHooks, openSeats, readLaunch } from "./xprules.js";
+import { makeXpRoutes } from "./xproutes.js";
 import { appLinksLog, makeAppLinkRoutes } from "./applinks.js";
 import { makeRpcRoutes } from "./rpcproxy.js";
 import { createServer } from "./http.js";
@@ -126,18 +130,37 @@ if (args.check) {
 
 // a migrated coin's price and DAMM v2 pool come from the feed, which watches that pool
 const reads = makeReads({ pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, store: ctx.store, dbcConfig: cfg.dbcConfig, damm: (mint) => feed.dammOf(mint) });
-const feed = new Feed({ reads, l1: ctx.l1, ers: ctx.bot.ers, pid: cfg.pid, dbcConfig: cfg.dbcConfig, store: ctx.store, db: ctx.store.db, log: (m) => log(`live ${m}`) });
+// XP (xp.js, xprules.js): the ledger in the server's db, the board on `profiles`
+const ledger = new XpLedger(ctx.store.db);
+const feed = new Feed({
+  reads, l1: ctx.l1, ers: ctx.bot.ers, pid: cfg.pid, dbcConfig: cfg.dbcConfig, store: ctx.store, db: ctx.store.db,
+  xpBoard: () => ledger.board(500, Date.now()), log: (m) => log(`live ${m}`),
+});
+const xpPush = (wallets) => feed.xpChanged(ledger.rows(wallets, Date.now()));
+const rules = new XpRules({
+  ledger, referrals: new Referrals(ctx.store.db),
+  readLaunch: (presale) => readLaunch(ctx.bot, ctx.l1, presale),
+  openSeats: (presale) => openSeats(ctx.bot, presale),
+  holds: (wallet, mint) => holds(ctx.l1, wallet, mint),
+  launches: () => ctx.store.launches(100_000), isMigrated: (mint) => feed.isMigrated(mint),
+  onChange: xpPush, log: (m) => log(`xp ${m}`),
+});
+feed.on("migrated", (row) => rules.migrated(row.presale).catch((e) => log(`xp: migrated ${row.presale}: ${e?.message ?? e}`)));
+// the rules are there before the keeper's first tick: a launch it claims at start is counted
+// from the seats it read first (onSeats), not left to the catch-up's read below
 const keeper = new Keeper({
   bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`),
-  onScan: (keys) => feed.scanned(keys), onLaunch: (presale) => feed.launched(presale),
+  onScan: (keys) => feed.scanned(keys), ...keeperHooks({ feed, rules, log }),
 }).start();
 const routes = makeRoutes({
   pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, gateKey: ctx.gate, alt: ctx.alt, dbcConfig: cfg.dbcConfig, store: ctx.store,
-  pinner: ctx.pinner, openers: ctx.openers, cluster: cfg.cluster, canary: cfg.canary, keeper, feed, reads,
+  pinner: ctx.pinner, openers: ctx.openers, cluster: cfg.cluster, canary: cfg.canary, keeper, feed, xp: rules, reads,
 }).concat(makeSocialRoutes({
   store: ctx.store, isPresale: (key) => !!ctx.store.tokenOfPresale(new PublicKey(key)),
   onChat: (row) => feed.chat(row), onProfile: (wallet, pfp) => feed.profile(wallet, pfp),
-})).concat(makeAppLinkRoutes({ certs: cfg.androidCerts })).concat(makeRpcRoutes({ url: cfg.appRpc, log }));
+})).concat(makeAppLinkRoutes({ certs: cfg.androidCerts })).concat(makeXpRoutes({
+  ledger, l1: ctx.l1, walletOf: makeSessions(ctx.store.db).walletOf, onXp: xpPush,
+})).concat(makeRpcRoutes({ url: cfg.appRpc, log }));
 if (cfg.appRpc !== cfg.rpc) log(`the apps' RPC (/api/rpc): ${new URL(cfg.appRpc).host}`);
 const web = fs.existsSync(`${cfg.web}/index.html`) ? cfg.web : null;
 log(web ? `web app from ${web}` : `no web app at ${cfg.web} (npm run build in web/): API only`);
@@ -147,6 +170,8 @@ const hub = new Hub(server, {
   onFirst: (t) => feed.first(t), onLast: (t) => feed.last(t), onSub: (t, send) => feed.snapshot(t, send),
 });
 await feed.start(hub);
+// what launched or migrated while the server was down (the feed has read its pools)
+rules.catchUp().catch((e) => log(`xp: catch-up: ${e?.message ?? e}`));
 log("live updates on /api/ws");
 server.listen(cfg.port, cfg.host, () => log(`listening on http://${cfg.host}:${server.address().port}`));
 
