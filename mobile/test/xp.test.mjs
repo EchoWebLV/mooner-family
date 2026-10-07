@@ -1,9 +1,9 @@
 // XP rows as the phone shows them (src/xp/rows.js): merged by wallet, titles on the shared
-// curve, the streak line, and the leaderboard's rows.
+// curve, the leaderboard's rows, and your rank.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DAY_MS, LEVEL_XP, POINTS, TITLES, levelOf } from "../../engine/src/xp.js";
-import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, mainTitleOf, meOf, mergeXp, titlesOf, xpNum, xpText } from "../src/xp/rows.js";
+import { BOARD_TOP, LEVEL_XP, POINTS, TITLES, levelOf } from "../../engine/src/xp.js";
+import { BOARDS, GENESIS_XP, TITLE_NAMES, boardOf, mainTitleOf, mergeXp, rankOf, titlesOf, xpNum, xpText } from "../src/xp/rows.js";
 
 const row = (wallet, titles = {}, more = {}) => {
   const t = { dev: 0, kol: 0, raider: 0, diamond: 0, ...titles };
@@ -51,18 +51,7 @@ test("the main title is the one with the most XP; ties go to the earlier title; 
   assert.equal(mainTitleOf(undefined), null);
 });
 
-test("Me: the total, the four titles, the streak line as of now, and Genesis", () => {
-  const now = Date.parse("2026-10-02T12:00:00Z");
-  const r = row("A", { dev: 100 }, { total: 100 + GENESIS_XP, streak: { days: 3, best: 5, last: "2026-10-01" }, genesis: { mint: "M", at: 1 } });
-  const me = meOf(r, now);
-  assert.equal(me.total, 100 + GENESIS_XP);
-  assert.equal(me.titles.length, 4);
-  assert.equal(me.streak, "3-day streak");
-  assert.deepEqual(me.genesis, { mint: "M", at: 1 });
-  assert.equal(meOf(r, now + 2 * DAY_MS).streak, "Best streak: 5 days");
-  assert.equal(meOf(row("B"), now).streak, "No streak yet");
-  assert.equal(meOf(row("B"), now).genesis, null);
-  assert.equal(meOf(undefined, now), null, "no row yet: nothing to show (a spinner)");
+test("Genesis adds the shared table's points", () => {
   assert.equal(GENESIS_XP, POINTS.genesis.points);
 });
 
@@ -104,4 +93,67 @@ test("a title's board: by that title's XP, ties by wallet, that title and its le
   assert.deepEqual(b.map((r) => [r.wallet, r.xp, r.title, r.level]), [["B", 300, "kol", 3], ["A", 25, "kol", 1], ["D", 25, "kol", 1]]);
   assert.ok(b.every((r) => r.mine === false), "no wallet connected: nothing is yours");
   assert.deepEqual(boardOf({}, "dev", "A"), []);
+});
+
+// `n` wallets "W000"... with `kol` XP n, n - 1, ..., 1: W000 first
+const many = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => {
+  const w = `W${String(i).padStart(3, "0")}`;
+  return [w, row(w, { kol: n - i })];
+}));
+
+test("a board lists the top BOARD_TOP only", () => {
+  const b = boardOf(many(BOARD_TOP + 100), "overall", null);
+  assert.equal(b.length, BOARD_TOP);
+  assert.equal(b[BOARD_TOP - 1].rank, BOARD_TOP);
+  assert.equal(b[BOARD_TOP - 1].wallet, `W${BOARD_TOP - 1}`);
+  assert.equal(boardOf(many(3), "kol", null).length, 3);
+});
+
+test("rank: unknown until the rows are loaded and yours is there", () => {
+  const rows = { A: row("A", { kol: 50 }) };
+  assert.deepEqual(rankOf(rows, "overall", "A", false), { kind: "unknown" }, "no xp message yet");
+  assert.deepEqual(rankOf(rows, "overall", "B", true), { kind: "unknown" }, "your row isn't here (yet)");
+  assert.deepEqual(rankOf(rows, "overall", null, true), { kind: "unknown" }, "no wallet");
+  assert.deepEqual(rankOf({}, "kol", "A", true), { kind: "unknown" });
+});
+
+test("rank: none with no XP on that board", () => {
+  const rows = { A: row("A", { kol: 50 }), B: row("B"), G: row("G", {}, { total: GENESIS_XP }) };
+  assert.deepEqual(rankOf(rows, "overall", "B", true), { kind: "none" });
+  assert.deepEqual(rankOf(rows, "dev", "A", true), { kind: "none" }, "XP, but none on this title");
+  assert.deepEqual(rankOf(rows, "kol", "G", true), { kind: "none" }, "Genesis counts only on Overall");
+  assert.equal(rankOf(rows, "overall", "G", true).kind, "ranked");
+});
+
+test("rank: rows ahead (more XP, ties by wallet) plus one, of everyone on the board; the entry as the board's", () => {
+  const rows = {
+    C: row("C", { kol: 300 }),
+    A: row("A", { dev: 100, kol: 200 }),
+    B: row("B", { raider: 300 }),
+    Z: row("Z"),
+    G: row("G", {}, { total: GENESIS_XP }),
+  };
+  assert.deepEqual(rankOf(rows, "overall", "B", true), { kind: "ranked", rank: 2, of: 4, wallet: "B", xp: 300, title: "raider", level: 3 });
+  assert.deepEqual(rankOf(rows, "overall", "G", true), { kind: "ranked", rank: 4, of: 4, wallet: "G", xp: GENESIS_XP, title: null, level: null });
+  assert.deepEqual(rankOf(rows, "kol", "A", true), { kind: "ranked", rank: 2, of: 2, wallet: "A", xp: 200, title: "kol", level: 2 });
+  for (const board of ["overall", ...TITLES]) {
+    for (const r of boardOf(rows, board, null)) {
+      const { kind, rank, of, ...entry } = rankOf(rows, board, r.wallet, true);
+      assert.equal(kind, "ranked");
+      assert.equal(rank, r.rank, `${board} ${r.wallet}`);
+      assert.deepEqual(entry, { wallet: r.wallet, xp: r.xp, title: r.title, level: r.level });
+    }
+  }
+});
+
+test("rank: from BOARD_TOP rows on the board, `of` is BOARD_TOP+; past it, only that you're outside", () => {
+  const full = many(BOARD_TOP);
+  assert.deepEqual(rankOf(many(BOARD_TOP - 1), "kol", "W010", true).of, BOARD_TOP - 1, "fewer: all of them are here");
+  assert.equal(rankOf(full, "kol", "W010", true).of, `${BOARD_TOP}+`);
+  assert.equal(rankOf(full, "kol", "W010", true).rank, 11);
+  const last = rankOf(full, "overall", `W${BOARD_TOP - 1}`, true);
+  assert.deepEqual([last.kind, last.rank, last.of], ["ranked", BOARD_TOP, `${BOARD_TOP}+`]);
+  // a row the board didn't have (read on connect, or a change pushed later) ranks past it
+  const more = many(BOARD_TOP + 1);
+  assert.deepEqual(rankOf(more, "overall", `W${BOARD_TOP}`, true), { kind: "past", wallet: `W${BOARD_TOP}`, xp: 1, title: "kol", level: 1 });
 });

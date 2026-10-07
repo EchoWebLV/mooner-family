@@ -1026,6 +1026,63 @@ test("xp: a failed read says so for that wallet only; a push still fills the row
   assert.equal(store.getState().xpFailed, false, "an old wallet's failure isn't the new one's");
 });
 
+test("retryXp: after a failed read, Try again clears the failure and reads your row again", async () => {
+  const calls = [];
+  const { store } = rig({ api: { xp: (w) => new Promise((ok, no) => calls.push({ w, ok, no })) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  calls[0].no(apiError(503, "down"));
+  await tick();
+  assert.equal(store.getState().xpFailed, true);
+  store.getState().retryXp();
+  assert.equal(store.getState().xpFailed, false, "a spinner again while it reads");
+  assert.deepEqual(calls.map((c) => c.w), [W, W]);
+  calls[1].ok(xpRow(W, 75));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 75);
+  assert.equal(store.getState().xpFailed, false);
+  store.getState().retryXp();
+  calls[2].no(apiError(503, "down"));
+  await tick();
+  assert.equal(store.getState().xpFailed, true, "a retry that fails says so again");
+});
+
+test("retryXp: no wallet, nothing to read", async () => {
+  const reads = [];
+  const { store } = rig({ api: { xp: async (w) => (reads.push(w), xpRow(w, 1)) } });
+  store.getState().retryXp();
+  await tick();
+  assert.deepEqual(reads, []);
+});
+
+test("xp: a reconnect reads your row again and its answer replaces the old one; the first connect doesn't", async () => {
+  const calls = [];
+  const { store, push, goUp } = rig({ api: { xp: (w) => new Promise((ok, no) => calls.push({ w, ok, no })) } });
+  store.getState().start();
+  await store.getState().setWallet(W);
+  calls[0].ok(xpRow(W, 25));
+  await tick();
+  goUp(true);
+  assert.equal(calls.length, 1, "the first up isn't a reconnect: the read on connect is enough");
+  goUp(false);
+  assert.equal(calls.length, 1);
+  goUp(true);
+  assert.equal(calls.length, 2, "pushes while it was down are lost, and your row may be past the board");
+  calls[1].ok(xpRow(W, 125));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 125, "a read's row replaces one from before it");
+  goUp(false);
+  goUp(true);
+  push("profiles", "xp", [xpRow(W, 400)]); // the board on the new socket came first
+  calls[2].ok(xpRow(W, 125));
+  await tick();
+  assert.equal(store.getState().xp[W].total, 400, "a push that came while it read stays");
+  await store.getState().setWallet(null);
+  goUp(false);
+  goUp(true);
+  assert.equal(calls.length, 3, "no wallet: nothing to read");
+});
+
 test("checkGenesis signs in when the sign-in ran out, posts the token, and the answer's row goes in", async () => {
   const posted = [];
   const row = xpRow(W, 250, { genesis: { mint: "M", at: 7 } });

@@ -1,7 +1,7 @@
 // XP rows (the server's, engine/server/xp.js: pushed on `profiles` as "xp", and GET
 // /api/xp/<wallet>) as the phone shows them. The titles, the level curve, the points and the
 // streak's rule are engine/src/xp.js's; nothing here keeps a copy. Pure, so Node tests it.
-import { POINTS, TITLES, levelOf, streakLine } from "../../../engine/src/xp.js";
+import { BOARD_TOP, POINTS, TITLES, levelOf } from "../../../engine/src/xp.js";
 
 /** What each title is called on screen. */
 export const TITLE_NAMES = { dev: "Dev", kol: "KOL", raider: "Raider", diamond: "Diamond Hands" };
@@ -47,33 +47,57 @@ export function mainTitleOf(row) {
   return best;
 }
 
-/** What Me shows from your row as of `now` (ms), or null while there's no row. */
-export function meOf(row, now) {
-  if (!row) return null;
-  return { total: row.total ?? 0, titles: titlesOf(row), streak: streakLine(row.streak, now), genesis: row.genesis ?? null };
+/** A board's XP of a row: "overall" or a title. */
+const xpGetter = (board) => (board === "overall" ? (r) => r.total ?? 0 : (r) => r.titles?.[board] ?? 0);
+
+/** A row on `board` with its XP there: { wallet, xp, title, level }. On Overall the title is
+ *  the main title (null with no title XP) and its level; on a title's board, that title and
+ *  its level. */
+function entryOf(r, board, xp) {
+  if (board !== "overall") return { wallet: r.wallet, xp, title: board, level: levelOf(xp) };
+  const main = mainTitleOf(r);
+  return { wallet: r.wallet, xp, title: main?.title ?? null, level: main?.level ?? null };
 }
 
-/** One board's rows, most XP first, ties by wallet; a wallet with no XP on it isn't listed.
- *  `board`: "overall" or a title. `me`: the connected wallet, or null.
- *  Each: { wallet, rank, xp, title, level, mine }. On Overall the title is the main title
- *  (null with no title XP) and its level; on a title's board, that title and its level. */
+/** One board's top BOARD_TOP rows, most XP first, ties by wallet; a wallet with no XP on it
+ *  isn't listed. `board`: "overall" or a title. `me`: the connected wallet, or null.
+ *  Each: { wallet, rank, xp, title, level, mine } (entryOf). */
 export function boardOf(rows, board, me) {
-  const xpOf = board === "overall" ? (r) => r.total ?? 0 : (r) => r.titles?.[board] ?? 0;
+  const xpOf = xpGetter(board);
   return Object.values(rows)
     .filter((r) => xpOf(r) > 0)
     .sort((a, b) => xpOf(b) - xpOf(a) || (a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0))
-    .map((r, i) => {
-      const xp = xpOf(r);
-      let title;
-      let level;
-      if (board === "overall") {
-        const main = mainTitleOf(r);
-        title = main?.title ?? null;
-        level = main?.level ?? null;
-      } else {
-        title = board;
-        level = levelOf(xp);
-      }
-      return { wallet: r.wallet, rank: i + 1, xp, title, level, mine: r.wallet === me };
-    });
+    .slice(0, BOARD_TOP)
+    .map((r, i) => ({ ...entryOf(r, board, xpOf(r)), rank: i + 1, mine: r.wallet === me }));
+}
+
+/** Where `wallet` stands on `board` in `rows` (the store's `xp`), once `loaded` (its first
+ *  "xp" message). Points only grow, so a wallet missing from `rows` has no more total than
+ *  the server's board's last: on Overall a rank up to BOARD_TOP is exact (but for a tie at
+ *  the cut), one past it is only a floor, and fewer than BOARD_TOP rows with XP are all there
+ *  are. A title's board comes from the same rows (top by total), so once more than BOARD_TOP
+ *  wallets have XP it can miss some (spec: Ranks). The rank is the rows ahead (more XP, ties
+ *  by wallet) plus one, counted without a sort.
+ *   { kind: "unknown" }                    not loaded, no wallet, or no row of yours yet
+ *   { kind: "none" }                       no XP on this board
+ *   { kind: "past", ...entry }             behind the top BOARD_TOP
+ *   { kind: "ranked", rank, of, ...entry } `of`: how many are on the board, or "500+"
+ *  `entry`: entryOf's { wallet, xp, title, level }. */
+export function rankOf(rows, board, wallet, loaded) {
+  const mine = wallet ? rows[wallet] : undefined;
+  if (!loaded || !mine) return { kind: "unknown" };
+  const xpOf = xpGetter(board);
+  const xp = xpOf(mine);
+  if (xp <= 0) return { kind: "none" };
+  let ahead = 0;
+  let on = 0;
+  for (const r of Object.values(rows)) {
+    const x = xpOf(r);
+    if (x <= 0) continue;
+    on++;
+    if (x > xp || (x === xp && r.wallet < wallet)) ahead++;
+  }
+  const entry = entryOf(mine, board, xp);
+  if (ahead >= BOARD_TOP) return { kind: "past", ...entry };
+  return { kind: "ranked", rank: ahead + 1, of: on < BOARD_TOP ? on : `${BOARD_TOP}+`, ...entry };
 }

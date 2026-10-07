@@ -85,7 +85,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     // `profiles`; the connected wallet's own row, read once; a Genesis answer's row
     xp: {},
     xpLoaded: false, // true from the first "xp" message: {} before that is "not here yet"
-    xpFailed: false, // the read of the connected wallet's own row failed (a push of it still fills it)
+    xpFailed: false, // the read of the connected wallet's own row failed (a push of it still fills it; retryXp reads again)
     profilesLoaded: false, // true from the profiles topic's first snapshot (Ranks: before it, a spinner)
     solUsd: 0,
     wallet: null, // base58
@@ -194,12 +194,17 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
    *  has stopped, and the socket then reads as down. Each stop counts once. */
   function start() {
     if (!running) {
+      let upBefore = false; // the socket was up before in this run: the next up is a reconnect
       running = {
         users: 0,
         offs: [
           live.onStatus((up) => {
             set({ socketUp: up });
             if (up && !get().info) loadInfo();
+            // the rows pushed while it was down are lost, and the board it sends again has
+            // the top 500 only: your own row is read again
+            if (up && upBefore) retryXp();
+            if (up) upBefore = true;
           }),
           live.subscribe("presales", onPresales),
           live.subscribe("launched", onLaunched),
@@ -656,18 +661,28 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
   // ---- XP ----
 
   let xpReads = 0; // readXp's calls, so an older one can't say failed over a newer one
-  /** The connected wallet's own XP row, read once when the wallet comes: the board on
-   *  `profiles` holds the top 500 only. Pushes keep it after that; nothing reads it again. A
-   *  row a push brought while this read was on its way stays. Only the newest read may say it
-   *  failed. */
+  /** The connected wallet's own XP row, read when the wallet comes (the board on `profiles`
+   *  holds the top 500 only), on retryXp and on a reconnect; pushes keep it in between. The
+   *  answer replaces the row that was there when the read began; a row a push brought while
+   *  it was on its way stays. Only the newest read may say it failed. */
   async function readXp(wallet) {
     const n = ++xpReads;
+    const had = get().xp[wallet];
     try {
       const row = await api.xp(wallet);
-      patch("xp", (x) => mergeXp(x, [row], true));
+      patch("xp", (x) => mergeXp(x, [row], x[wallet] !== had));
     } catch {
       if (get().wallet === wallet && n === xpReads) set({ xpFailed: true });
     }
+  }
+
+  /** Reads the connected wallet's row again (Try again after a failed read, and a
+   *  reconnect): no longer failed while it reads. No wallet: nothing. */
+  function retryXp() {
+    const wallet = get().wallet;
+    if (!wallet) return;
+    set({ xpFailed: false });
+    readXp(wallet);
   }
 
   /** The Seeker Genesis check for the signer's wallet, signing in first if needed (as
@@ -691,7 +706,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening, checkGenesis });
+  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening, checkGenesis, retryXp });
   return store;
 }
 
