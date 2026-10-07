@@ -2,7 +2,7 @@
 // coin is known. Showing Everyone clears Pulse's unread dot. `chat` plays for a new line, at
 // most one every 400 ms, while this screen is in front.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, View } from "react-native";
+import { View } from "react-native";
 import { router, useIsFocused } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
@@ -13,6 +13,7 @@ import { ChatPane, useComposer } from "../src/room/ChatPane";
 import { useNewLines } from "../src/room/useNewLines";
 import { ChipRow } from "../src/ui/ChipRow";
 import { BackGlass, SceneHeader } from "../src/ui/Glass";
+import { useKeyboardPad } from "../src/ui/keyboard";
 import { play } from "../src/ui/sound";
 import { C, S } from "../src/ui/theme";
 import { useAppActive } from "../src/ui/useAppActive";
@@ -28,6 +29,7 @@ export default function Chat() {
   const key = useStore(store, roomsKey);
   const signer = useSigner();
   const insets = useSafeAreaInsets();
+  const kb = useKeyboardPad(); // with it up, the composer sits on the keyboard, not the inset
   const rooms = useMemo(() => JSON.parse(key), [key]);
   const chips = useMemo(() => rooms.map((r) => ({ key: r.channel, label: r.label, image: r.image })), [rooms]);
 
@@ -68,11 +70,13 @@ export default function Chat() {
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
       <SceneHeader name="room" height={150} title="Chat" left={<BackGlass />} />
       <ChipRow items={chips} value={channel} onPick={setPicked} />
-      <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
-        <View style={{ flex: 1, paddingHorizontal: S.gutter, paddingBottom: insets.bottom + 12 }}>
-          <ChatPane channel={channel} wallet={wallet} composer={composer} onConnect={connect} faceSize={32} tags />
-        </View>
-      </KeyboardAvoidingView>
+      <View
+        ref={kb.ref}
+        onLayout={kb.onLayout}
+        style={{ flex: 1, paddingHorizontal: S.gutter, paddingBottom: (kb.open ? kb.pad : insets.bottom) + 12 }}
+      >
+        <ChatPane channel={channel} wallet={wallet} composer={composer} onConnect={connect} faceSize={32} tags />
+      </View>
     </View>
   );
 }

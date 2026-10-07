@@ -10,7 +10,7 @@
 // the host saying each step's line, and a step bar under it; once it scrolls away, a bg0
 // strip fades in under the status bar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Animated, BackHandler, KeyboardAvoidingView, Share, View } from "react-native";
+import { ActivityIndicator, Animated, BackHandler, Share, View } from "react-native";
 import { router, useFocusEffect, useIsFocused } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +31,7 @@ import { useAccount, useSigner } from "../../src/wallet";
 import { Glass, GlassPill, SceneHeader } from "../../src/ui/Glass";
 import { Host } from "../../src/ui/Host";
 import { BackIcon } from "../../src/ui/icons";
+import { useKeyboardPad } from "../../src/ui/keyboard";
 import { Logo } from "../../src/ui/Logo";
 import { Button, T } from "../../src/ui/kit";
 import { isArmed } from "../../src/ui/sound";
@@ -360,6 +361,7 @@ function Creator({ wallet, saved }) {
   // A bg0 strip under the status bar, solid once the picture's bottom reaches it: the steps
   // never scroll under a bare status bar.
   const insets = useSafeAreaInsets();
+  const kb = useKeyboardPad(); // the steps end at the keyboard's top, so a field can scroll above it
   const scrollRef = useRef(null);
   if (!scrollRef.current) scrollRef.current = new Animated.Value(0);
   const scrollY = scrollRef.current;
@@ -419,7 +421,7 @@ function Creator({ wallet, saved }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
-      <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
+      <View ref={kb.ref} onLayout={kb.onLayout} style={{ flex: 1, paddingBottom: kb.pad }}>
         <Animated.ScrollView
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 32 }}
@@ -433,7 +435,7 @@ function Creator({ wallet, saved }) {
             {body}
           </View>
         </Animated.ScrollView>
-      </KeyboardAvoidingView>
+      </View>
       <Animated.View
         pointerEvents="none"
         style={{ position: "absolute", top: 0, left: 0, right: 0, height: insets.top, backgroundColor: C.bg0, opacity: scrim }}
