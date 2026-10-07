@@ -58,3 +58,20 @@ export function streakOf(days, today) {
   if (prev === null) return { days: 0, best: 0, last: null };
   return { days: prev >= today - 1 ? run : 0, best, last: dayName(prev) };
 }
+
+/** The run as of `now` (ms) from a row's `streak` ({ days, best, last }): its days while
+ *  `last` is today or yesterday (UTC), else 0. A row the server sent before midnight can be
+ *  a day behind, so screens work this out when they draw, not from `days` alone. */
+export function streakDays(streak, now) {
+  if (!streak?.last || !streak.days) return 0;
+  return utcDay(now) - utcDay(Date.parse(`${streak.last}T00:00:00Z`)) <= 1 ? streak.days : 0;
+}
+
+/** "3-day streak"; "Best streak: 5 days"; "No streak yet". */
+export function streakLine(streak, now) {
+  const days = streakDays(streak, now);
+  if (days > 0) return `${days}-day streak`;
+  const best = streak?.best ?? 0;
+  if (best > 0) return `Best streak: ${best} ${best === 1 ? "day" : "days"}`;
+  return "No streak yet";
+}
