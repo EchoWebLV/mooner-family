@@ -1,7 +1,7 @@
 // XP (spec "XP ledger"): the shared rules (src/xp.js) and the server's ledger (server/xp.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DAY_MS, LEVEL_XP, POINTS, TITLES, levelOf, streakOf, utcDay } from "../src/xp.js";
+import { BOARD_TOP, DAY_MS, LEVEL_XP, POINTS, TITLES, levelOf, streakOf, utcDay } from "../src/xp.js";
 
 test("xp rules: four titles, the web's curve, one points table", () => {
   assert.deepEqual(TITLES, ["dev", "kol", "raider", "diamond"]);
@@ -11,6 +11,10 @@ test("xp rules: four titles, the web's curve, one points table", () => {
     assert.ok(p.title === null ? reason === "genesis" : TITLES.includes(p.title), `${reason} counts for a title`);
   }
   assert.deepEqual(Object.keys(POINTS), ["devLaunch", "devMigrate", "kolLaunch", "kolMigrate", "raiderJoin", "diamondMigrate", "genesis"]);
+});
+
+test("xp rules: the board on `profiles` is the top 500", () => {
+  assert.equal(BOARD_TOP, 500);
 });
 
 test("xp rules: levelOf follows the curve, 1 to 5", () => {

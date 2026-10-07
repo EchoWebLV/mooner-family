@@ -12,6 +12,7 @@ import { decodeConfig } from "../src/layout.js";
 import { configPda } from "../src/pdas.js";
 import { connect } from "../src/tx.js";
 import { Bot, launchAltKeys } from "../src/bot.js";
+import { BOARD_TOP } from "../src/xp.js";
 import { loadConfig, loadEnv, loadKey, openersFrom, openersFromList } from "./config.js";
 import { Store } from "./store.js";
 import { NoPin, Pinata } from "./pinata.js";
@@ -134,7 +135,7 @@ const reads = makeReads({ pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, store: ctx.sto
 const ledger = new XpLedger(ctx.store.db);
 const feed = new Feed({
   reads, l1: ctx.l1, ers: ctx.bot.ers, pid: cfg.pid, dbcConfig: cfg.dbcConfig, store: ctx.store, db: ctx.store.db,
-  xpBoard: () => ledger.board(500, Date.now()), log: (m) => log(`live ${m}`),
+  xpBoard: () => ledger.board(BOARD_TOP, Date.now()), log: (m) => log(`live ${m}`),
 });
 const xpPush = (wallets) => feed.xpChanged(ledger.rows(wallets, Date.now()));
 const rules = new XpRules({

@@ -27,6 +27,9 @@ export const POINTS = {
   genesis: { title: null, points: 250 },
 };
 
+/** How many wallets the board on `profiles` holds: the top ones by total, ties by wallet. */
+export const BOARD_TOP = 500;
+
 /** The level `xp` reaches on LEVEL_XP: 1 to 5. */
 export function levelOf(xp) {
   let level = 1;
