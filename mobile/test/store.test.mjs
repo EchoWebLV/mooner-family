@@ -72,7 +72,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 test("start: listens to the public topics, loads info, follows the socket", async () => {
   const { store, listening, goUp } = rig();
   const stop = store.getState().start();
-  for (const t of ["presales", "launched", "profiles", "sol"]) assert.ok(listening(t), t);
+  for (const t of ["presales", "launched", "profiles", "sol", "chat:global"]) assert.ok(listening(t), t);
   await tick();
   assert.ok(store.getState().info);
   goUp(true);
@@ -448,7 +448,7 @@ test("start twice shares nothing: the first stop leaves the second running, the 
   stopA(); // a stop called twice counts once
   assert.ok(listening("presales"), "still running for the second start");
   stopB();
-  for (const t of ["presales", "launched", "profiles", "sol"]) assert.equal(listening(t), false, t);
+  for (const t of ["presales", "launched", "profiles", "sol", "chat:global"]) assert.equal(listening(t), false, t);
   assert.equal(status.size, 0);
   // and it can start again
   const stopC = store.getState().start();
@@ -900,4 +900,37 @@ test("noteRef: a wallet that arrives while the saved refs are read counts as you
   assert.equal(disk.has("mooner:refs"), false, "your own link changed nothing");
   await store.getState().join(KEY, 100_000_000n, me);
   assert.equal(calls.find((c) => c[0] === "join")[1].ref, SHARER, "the friend's ref goes with the join");
+});
+
+test("global chat: kept for the app's run; seeChat marks its newest line seen", () => {
+  const { store, push } = rig();
+  const stop = store.getState().start();
+  push("chat:global", "snapshot", [{ id: 4, text: "gm" }]);
+  push("chat:global", "message", { id: 9, text: "wagmi" });
+  assert.deepEqual(store.getState().chats.global.map((r) => r.id), [4, 9]);
+  assert.equal(store.getState().chatSeen, 0);
+  store.getState().seeChat();
+  assert.equal(store.getState().chatSeen, 9);
+  push("chat:global", "message", { id: 12, text: "lfg" });
+  assert.equal(store.getState().chatSeen, 9, "only seeChat moves it");
+  store.getState().seeChat();
+  store.getState().seeChat();
+  assert.equal(store.getState().chatSeen, 12);
+  stop();
+});
+
+test("watchChat: a presale room's chat while Chat shows it; global needs none", () => {
+  const { store, push, listening } = rig();
+  const off = store.getState().watchChat("K");
+  assert.ok(listening("chat:K"));
+  push("chat:K", "message", { id: 1, text: "hi" });
+  assert.deepEqual(store.getState().chats.K.map((r) => r.id), [1]);
+  const room = store.getState().watch("K"); // the room open too: each lets go of its own
+  off();
+  assert.ok(listening("chat:K"), "the room still listens");
+  room();
+  assert.equal(listening("chat:K"), false);
+  const none = store.getState().watchChat("global");
+  assert.equal(listening("chat:global"), false, "start() owns global");
+  none();
 });

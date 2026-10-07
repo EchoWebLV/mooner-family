@@ -90,6 +90,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     // save (openCoin); null: none; undefined: not read yet
     opening: undefined,
     chats: {}, // channel -> rows, oldest first
+    chatSeen: 0, // the newest global chat line's id when Chat last showed Everyone (the unread dot)
     coins: {}, // mint -> the coin's stats (chart, volume, liquidity, holders): pushed while a screen watches it; the last ones stay after
     coinMissing: {}, // mint -> true: the server has no such coin
     coinError: {}, // mint -> the server's words when it couldn't read the stats; the next snapshot clears it
@@ -176,9 +177,9 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  /** The public topics, for the whole app. Returns stop(). A second start() while one is on
-   *  subscribes nothing more: the topics are let go when every start has stopped, and the
-   *  socket then reads as down. Each stop counts once. */
+  /** The public topics (and the global chat), for the whole app. Returns stop(). A second
+   *  start() while one is on subscribes nothing more: the topics are let go when every start
+   *  has stopped, and the socket then reads as down. Each stop counts once. */
   function start() {
     if (!running) {
       running = {
@@ -192,6 +193,8 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
           live.subscribe("launched", onLaunched),
           live.subscribe("profiles", onProfiles),
           live.subscribe("sol", onSol),
+          // the global chat, for the whole run: Chat's Everyone room and Pulse's unread dot
+          live.subscribe("chat:global", onChat("global")),
         ],
       };
       loadInfo();
@@ -214,6 +217,20 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     patch("viewError", (x) => without(x, key));
     const offs = [live.subscribe(`presale:${key}`, onPresale(key)), live.subscribe(`chat:${key}`, onChat(key))];
     return () => offs.forEach((off) => off());
+  }
+
+  /** A chat room while Chat shows it: a presale key's chat. `global` is start()'s for the
+   *  whole run, so it needs nothing here. Returns off(). */
+  function watchChat(channel) {
+    if (channel === "global") return () => {};
+    return live.subscribe(`chat:${channel}`, onChat(channel));
+  }
+
+  /** Chat shows Everyone: every global line so far is seen. */
+  function seeChat() {
+    const rows = get().chats.global;
+    const last = rows?.length ? rows[rows.length - 1].id : 0;
+    if (last > get().chatSeen) set({ chatSeen: last });
   }
 
   /** One launched coin's stats and the wallet's balance of it while a screen shows it.
@@ -620,7 +637,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  set({ start, watch, watchCoin, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening });
+  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening });
   return store;
 }
 
