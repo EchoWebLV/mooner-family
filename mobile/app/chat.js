@@ -18,30 +18,42 @@ import { C, S } from "../src/ui/theme";
 import { useAppActive } from "../src/ui/useAppActive";
 import { useSigner } from "../src/wallet";
 
+/** The rooms as a string: the screen re-renders when the list changes, not for every
+ *  presale, launch or view update under it. */
+const roomsKey = (s) =>
+  JSON.stringify(roomsOf({ wallet: s.wallet, presales: s.presales, views: s.views, launched: s.launched, mine: s.mine }));
+
 export default function Chat() {
   const wallet = useStore(store, (s) => s.wallet);
-  const presales = useStore(store, (s) => s.presales);
-  const views = useStore(store, (s) => s.views);
-  const launched = useStore(store, (s) => s.launched);
-  const mine = useStore(store, (s) => s.mine);
-  const globalRows = useStore(store, (s) => s.chats.global);
+  const key = useStore(store, roomsKey);
   const signer = useSigner();
   const insets = useSafeAreaInsets();
-  const rooms = useMemo(() => roomsOf({ wallet, presales, views, launched, mine }), [wallet, presales, views, launched, mine]);
+  const rooms = useMemo(() => JSON.parse(key), [key]);
   const chips = useMemo(() => rooms.map((r) => ({ key: r.channel, label: r.label, image: r.image })), [rooms]);
 
-  // a room that leaves the list (another wallet, a presale gone) falls back to Everyone
+  // a room that leaves the list (another wallet, a presale gone) falls back to Everyone, and
+  // the pick goes with it: the room coming back doesn't open with no tap
   const [picked, setPicked] = useState("global");
-  const channel = rooms.some((r) => r.channel === picked) ? picked : "global";
+  const listed = rooms.some((r) => r.channel === picked);
+  const channel = listed ? picked : "global";
+  useEffect(() => {
+    if (!listed) setPicked("global");
+  }, [listed]);
   useEffect(() => store.getState().watchChat(channel), [channel]);
 
   const focused = useIsFocused();
   const active = useAppActive();
   const heard = focused && active;
-  // Everyone in front: every line in it is seen
+  // Everyone in front: every line in it is seen, those there now and each one as it comes
+  // (watched here, so a line doesn't re-render the screen for it)
   useEffect(() => {
-    if (channel === "global" && heard) store.getState().seeChat();
-  }, [channel, heard, globalRows]);
+    if (channel !== "global" || !heard) return;
+    const { seeChat } = store.getState();
+    seeChat();
+    return store.subscribe((s, prev) => {
+      if (s.chats.global !== prev.chats.global) seeChat();
+    });
+  }, [channel, heard]);
 
   const [chatSound] = useState(() => chatGate());
   const onLine = useCallback(() => {
