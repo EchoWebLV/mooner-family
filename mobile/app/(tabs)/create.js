@@ -6,10 +6,11 @@
 // only be retried, never become a second coin. The store saves that coin for the wallet
 // before the wallet is asked (and again once it signs, and when an unknown is reported), so
 // it comes back after a restart too. Start over shows only once the server's own 404 came
-// more than 5 minutes after the coin was last saved.
+// more than 5 minutes after the coin was last saved. The launching picture sits on top with
+// the host saying each step's line, and a step bar under it.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Pressable, ScrollView, Share, View } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { ActivityIndicator, BackHandler, KeyboardAvoidingView, ScrollView, Share, View } from "react-native";
+import { router, useFocusEffect, useIsFocused } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useStore } from "zustand";
 import { api, store } from "../../src/app";
@@ -25,13 +26,27 @@ import {
 import { newPresaleShare } from "../../src/create/share";
 import { useConnect } from "../../src/useConnect";
 import { useAccount, useSigner } from "../../src/wallet";
+import { Glass, GlassPill, SceneHeader } from "../../src/ui/Glass";
+import { Host } from "../../src/ui/Host";
 import { BackIcon } from "../../src/ui/icons";
 import { Logo } from "../../src/ui/Logo";
-import { Button, Screen, T } from "../../src/ui/kit";
-import { C, S } from "../../src/ui/theme";
+import { Button, T } from "../../src/ui/kit";
+import { isArmed } from "../../src/ui/sound";
+import { C, F, S } from "../../src/ui/theme";
+import { useAppActive } from "../../src/ui/useAppActive";
 
 const STEPS = ["picture", "details", "commit", "review"];
-const TITLES = { picture: "Picture", details: "Name and links", commit: "Your commit", review: "Open the presale" };
+
+/** The step bar's names, one per STEPS entry. */
+const STEP_NAMES = ["Picture", "Details", "Your seat", "Launch"];
+
+/** What the host says on each step. */
+const HOST_LINES = {
+  picture: "Start with a picture. Square works best.",
+  details: "Name it, and give it a ticker.",
+  commit: "Pick your seat. You're the first one in.",
+  review: "Last look. Then open the pool.",
+};
 
 // The presales whose landing has buzzed and pushed the room, for the app's run: an open that
 // outlives its Creator (sign-out, then a reconnect) and the new Creator's watch both see it.
@@ -43,33 +58,55 @@ export default function Create() {
   const account = useAccount();
   if (wallet && opening !== undefined) return <Creator key={wallet} wallet={wallet} saved={opening} />;
   return (
-    <Screen padded={false}>
-      <Header />
+    <View style={{ flex: 1, backgroundColor: C.bg0 }}>
+      <CreateScene />
       {account === undefined || wallet ? <Loading /> : <SignedOut />}
-    </Screen>
+    </View>
   );
 }
 
-/** "Create", with Back (not while `locked`) and the step on a step past the first. */
-function Header({ at = 0, locked = false, onBack }) {
+/** The launching picture with "Create": Back (not while `locked`) past the first step, the
+ *  step as "n / 4", and the host saying the step's line. Without `step` (signed out, loading):
+ *  the picture and the title only. */
+function CreateScene({ step, locked = false, onBack }) {
+  const at = step ? STEPS.indexOf(step) : -1;
+  const focused = useIsFocused();
+  const active = useAppActive();
   return (
-    <View style={{ paddingHorizontal: S.gutter, paddingTop: 12, minHeight: 56, flexDirection: "row", alignItems: "center", gap: 8 }}>
-      {at > 0 && !locked ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          hitSlop={8}
-          onPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            onBack();
-          }}
-          style={({ pressed }) => [{ width: 32, height: 44, justifyContent: "center" }, pressed && { opacity: 0.6 }]}
-        >
-          <BackIcon color={C.text0} />
-        </Pressable>
+    <SceneHeader
+      name="launching"
+      height={210}
+      motion="kenBurns"
+      title="Create"
+      left={at > 0 && !locked ? <Glass label="Back" onPress={onBack}><BackIcon color={C.text0} size={20} /></Glass> : null}
+      right={step ? <GlassPill text={`${at + 1} / ${STEPS.length}`} label={`Step ${at + 1} of ${STEPS.length}`} /> : null}
+    >
+      {step ? (
+        <View style={{ flex: 1, justifyContent: "flex-end", paddingHorizontal: S.gutter, paddingBottom: 10 }}>
+          <View style={{ maxWidth: 300 }}>
+            <Host line={HOST_LINES[step]} sound={focused && active && isArmed()} />
+          </View>
+        </View>
       ) : null}
-      <T v="title" style={{ flex: 1 }}>Create</T>
-      {onBack ? <T v="small" color={C.text2}>{`Step ${at + 1} of ${STEPS.length}`}</T> : null}
+    </SceneHeader>
+  );
+}
+
+/** Four 4 pt segments under the picture, Picture · Details · Your seat · Launch: done and
+ *  current in green, the current name in white. */
+function StepBar({ at }) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`Step ${at + 1} of ${STEPS.length}: ${STEP_NAMES[at]}`}
+      style={{ flexDirection: "row", gap: 6, paddingHorizontal: S.gutter, paddingTop: 4 }}
+    >
+      {STEP_NAMES.map((name, i) => (
+        <View key={name} style={{ flex: 1, gap: 6 }}>
+          <View style={{ height: 4, borderRadius: 2, backgroundColor: i <= at ? C.up : C.bg3 }} />
+          <T numberOfLines={1} style={{ fontFamily: F.medium, fontSize: 11, color: i === at ? C.text0 : C.text2 }}>{name}</T>
+        </View>
+      ))}
     </View>
   );
 }
@@ -353,15 +390,17 @@ function Creator({ wallet, saved }) {
   }
 
   return (
-    <Screen padded={false}>
+    <View style={{ flex: 1, backgroundColor: C.bg0 }}>
       <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
-        <Header at={at} locked={locked} onBack={back} />
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.gutter, paddingBottom: 32, gap: 16 }}>
-          {showUnopened ? <Unopened tokens={unopened} onOpen={resume} /> : null}
-          <T v="h2">{TITLES[step]}</T>
-          {body}
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 32 }}>
+          <CreateScene step={step} locked={locked} onBack={back} />
+          <StepBar at={at} />
+          <View style={{ padding: S.gutter, gap: 16 }}>
+            {showUnopened ? <Unopened tokens={unopened} onOpen={resume} /> : null}
+            {body}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </Screen>
+    </View>
   );
 }
