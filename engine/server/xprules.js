@@ -11,9 +11,11 @@
 //              delivered, nothing sold)
 //   co-sign    a confirmed join or open (api.js): that UTC day, for the streak
 //
-// Seats are read right at launch: a claim closes its seat (finish.rs), and claims start once
-// the snipe tax is over, so each seat's share is kept then for the check at migration.
-// Keys are base58 strings throughout.
+// Seats are counted before any claim: a claim closes its seat (finish.rs), so the keeper hands
+// over the seats it reads right before its claims (keeperHooks onSeats -> seatsRead), and the
+// read the launch starts (onLaunch -> launched) stays as the fallback. Whichever comes first
+// counts the launch and keeps each seat's share for the check at migration; the other adds
+// nothing. Keys are base58 strings throughout.
 
 import { PublicKey } from "@solana/web3.js";
 import { decodePresale, tokenAmount } from "../src/layout.js";
@@ -21,14 +23,9 @@ import { tokenShare } from "../src/math.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** `presale` as its launch left it: { creator, mint, total, raised, seats: [{ wallet,
- *  commit }] } (bigints), or null when the presale account is gone. `bot`: the keeper's Bot
- *  (homeSeats); `l1`: a Connection. */
-export async function readLaunch(bot, l1, presale) {
-  const key = new PublicKey(presale);
-  const [seats, acc] = await Promise.all([bot.homeSeats(key), l1.getAccountInfo(key)]);
-  if (!acc) return null;
-  const p = decodePresale(acc.data);
+/** A launch as the rules count it, { creator, mint, total, raised, seats: [{ wallet, commit
+ *  }] } (bigints), from a decoded presale `p` and its seats as Bot.homeSeats reads them. */
+export function launchOf(p, seats) {
   return {
     creator: p.creator.toBase58(),
     mint: p.mint.toBase58(),
@@ -36,6 +33,15 @@ export async function readLaunch(bot, l1, presale) {
     raised: p.raised,
     seats: seats.map((s) => ({ wallet: s.user.toBase58(), commit: s.commit })),
   };
+}
+
+/** `presale` as its launch left it (launchOf), or null when the presale account is gone.
+ *  `bot`: the keeper's Bot (homeSeats); `l1`: a Connection. */
+export async function readLaunch(bot, l1, presale) {
+  const key = new PublicKey(presale);
+  const [seats, acc] = await Promise.all([bot.homeSeats(key), l1.getAccountInfo(key)]);
+  if (!acc) return null;
+  return launchOf(decodePresale(acc.data), seats);
 }
 
 /** The wallets whose seat in `presale` is still open (not claimed: no tokens delivered). */
@@ -65,35 +71,57 @@ export class XpRules {
     if (this.ledger.active(wallet, at)) this.onChange([wallet]);
   }
 
-  /** `presale` just launched (or launched while nobody counted it). */
-  async launched(presale) {
-    if (this.ledger.done(presale, "launch")) return;
-    let l;
+  /** `read()`, tried `tries` times `retryMs` apart: { value }, or null once the last try
+   *  failed (`failed(e)` is told). */
+  async retried(read, failed) {
     for (let i = 1; ; i++) {
       try {
-        l = await this.readLaunch(presale);
-        break;
+        return { value: await read() };
       } catch (e) {
-        if (i >= this.tries) return this.log(`xp: couldn't read ${presale} at launch: ${e?.message ?? e}`);
+        if (i >= this.tries) {
+          failed(e);
+          return null;
+        }
         await sleep(this.retryMs);
       }
     }
+  }
+
+  /** `presale` just launched (or launched while nobody counted it): its seats are read, and
+   *  the launch counted from them (count). */
+  async launched(presale) {
+    if (this.ledger.done(presale, "launch")) return;
+    const got = await this.retried(() => this.readLaunch(presale), (e) => this.log(`xp: couldn't read ${presale} at launch: ${e?.message ?? e}`));
+    if (!got) return;
+    if (got.value) return this.count(presale, got.value);
+    this.log(`xp: presale ${presale} is gone, nothing to count at launch`);
+    this.ledger.markDone(presale, "launch", this.now());
+  }
+
+  /** The keeper read `presale`'s seats right before it claims them (`l`: launchOf): the
+   *  launch counts from them, unless it already counted. */
+  seatsRead(presale, l) {
+    this.count(presale, l);
+  }
+
+  /** Counts `presale`'s launch from `l` (launchOf) in one write: Dev, KOL, Raider, each seat's
+   *  share kept, and the launch marked done. Nothing when it's done already. */
+  count(presale, l) {
+    if (this.ledger.done(presale, "launch")) return;
     const at = this.now();
-    if (!l) {
-      this.log(`xp: presale ${presale} is gone, nothing to count at launch`);
-      return this.ledger.markDone(presale, "launch", at);
-    }
     const changed = new Set();
     const give = (wallet, reason, ref) => this.ledger.award(wallet, reason, ref, at) && changed.add(wallet);
-    const paid = l.seats.filter((s) => s.commit > 0n);
-    give(l.creator, "devLaunch", presale);
-    for (const s of paid) if (s.wallet !== l.creator) give(s.wallet, "kolLaunch", presale);
-    const seated = new Set(paid.map((s) => s.wallet));
-    for (const r of this.referrals.confirmedIn(presale)) {
-      if (seated.has(r.user) && r.referrer !== r.user) give(r.referrer, "raiderJoin", `${presale}:${r.user}`);
-    }
-    this.ledger.keepSeats(presale, l.mint, paid.map((s) => ({ wallet: s.wallet, tokens: tokenShare(l.total, 0n, s.commit, l.raised, false) })));
-    this.ledger.markDone(presale, "launch", at);
+    this.ledger.atomic(() => {
+      const paid = l.seats.filter((s) => s.commit > 0n);
+      give(l.creator, "devLaunch", presale);
+      for (const s of paid) if (s.wallet !== l.creator) give(s.wallet, "kolLaunch", presale);
+      const seated = new Set(paid.map((s) => s.wallet));
+      for (const r of this.referrals.confirmedIn(presale)) {
+        if (seated.has(r.user) && r.referrer !== r.user) give(r.referrer, "raiderJoin", `${presale}:${r.user}`);
+      }
+      this.ledger.keepSeats(presale, l.mint, paid.map((s) => ({ wallet: s.wallet, tokens: tokenShare(l.total, 0n, s.commit, l.raised, false) })));
+      this.ledger.markDone(presale, "launch", at);
+    });
     if (changed.size) this.onChange([...changed]);
   }
 
@@ -102,21 +130,24 @@ export class XpRules {
     if (this.ledger.done(presale, "migrate")) return;
     await this.launched(presale);
     if (!this.ledger.done(presale, "launch")) return; // its seats are still unread: the next start
+    const seats = this.ledger.seatsOf(presale).filter((s) => s.tokens > 0n);
+    const diamonds = async () => {
+      const open = new Set(seats.length ? await this.openSeats(presale) : []);
+      const out = [];
+      for (const s of seats) if (open.has(s.wallet) || (await this.holds(s.wallet, s.mint)) >= s.tokens) out.push(s.wallet);
+      return out;
+    };
+    const got = await this.retried(diamonds, (e) => this.log(`xp: couldn't read holdings for ${presale} at migration: ${e?.message ?? e}`));
     const at = this.now();
     const changed = new Set();
     const give = (wallet, reason) => this.ledger.award(wallet, reason, presale, at) && changed.add(wallet);
-    for (const w of this.ledger.walletsWith("devLaunch", presale)) give(w, "devMigrate");
-    for (const w of this.ledger.walletsWith("kolLaunch", presale)) give(w, "kolMigrate");
-    const seats = this.ledger.seatsOf(presale).filter((s) => s.tokens > 0n);
-    try {
-      const open = new Set(seats.length ? await this.openSeats(presale) : []);
-      for (const s of seats) {
-        if (open.has(s.wallet) || (await this.holds(s.wallet, s.mint)) >= s.tokens) give(s.wallet, "diamondMigrate");
-      }
+    this.ledger.atomic(() => {
+      for (const w of this.ledger.walletsWith("devLaunch", presale)) give(w, "devMigrate");
+      for (const w of this.ledger.walletsWith("kolLaunch", presale)) give(w, "kolMigrate");
+      if (!got) return; // Diamond Hands waits for the next start
+      for (const w of got.value) give(w, "diamondMigrate");
       this.ledger.markDone(presale, "migrate", at);
-    } catch (e) {
-      this.log(`xp: couldn't read holdings for ${presale} at migration: ${e?.message ?? e}`);
-    }
+    });
     if (changed.size) this.onChange([...changed]);
   }
 
@@ -131,4 +162,34 @@ export class XpRules {
       }
     }
   }
+}
+
+/** The keeper's hooks on a server that counts XP (main.js). `onLaunch(presale)`: the feed and
+ *  the rules each hear it on their own, so neither can stop the other, and nothing either
+ *  throws reaches the keeper. `onSeats(presale, p, seats)`: the seats the keeper read right
+ *  before its claims count the launch (XpRules.seatsRead). Problems are logged. */
+export function keeperHooks({ feed, rules, log }) {
+  const msg = (e) => e?.message ?? e;
+  return {
+    onLaunch(presale) {
+      const k = presale.toBase58();
+      try {
+        feed.launched(presale);
+      } catch (e) {
+        log(`live: launched ${k}: ${msg(e)}`);
+      }
+      try {
+        Promise.resolve(rules.launched(k)).catch((e) => log(`xp: launched ${k}: ${msg(e)}`));
+      } catch (e) {
+        log(`xp: launched ${k}: ${msg(e)}`);
+      }
+    },
+    onSeats(presale, p, seats) {
+      try {
+        rules.seatsRead(presale.toBase58(), launchOf(p, seats));
+      } catch (e) {
+        log(`xp: seats of ${presale.toBase58()}: ${msg(e)}`);
+      }
+    },
+  };
 }

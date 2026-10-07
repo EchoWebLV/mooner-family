@@ -5,14 +5,15 @@
 // doesn't wait for a scan. A presale whose tick fails waits longer each time (up to a
 // minute) while the others go on. Every launch the bot sends is recorded in the store.
 // `onScan(keys)` hears each scan's presales and `onLaunch(presale)` each recorded launch
-// (the live feed pushes them).
+// (the live feed pushes them); `onSeats(presale, p, seats)` goes to the bot (Bot onSeats).
 
 import { PublicKey } from "@solana/web3.js";
 import { presalePda } from "../src/pdas.js";
 
 export class Keeper {
-  constructor({ bot, store, pid, pollMs = 3_000, busyMs = 1_500, scanMs = 10_000, slowMs = 10_000, maxBackoffMs = 60_000, log = console.log, onScan = () => {}, onLaunch = () => {} }) {
+  constructor({ bot, store, pid, pollMs = 3_000, busyMs = 1_500, scanMs = 10_000, slowMs = 10_000, maxBackoffMs = 60_000, log = console.log, onScan = () => {}, onLaunch = () => {}, onSeats = null }) {
     Object.assign(this, { bot, store, pid, pollMs, busyMs, scanMs, slowMs, maxBackoffMs, log, onScan, onLaunch });
+    if (onSeats) bot.onSeats = onSeats;
     this.info = new Map(); // presale -> { state, did, wait, fails, error, nextAt, at }
     this.known = new Map(); // presale -> PublicKey
     this.running = false;

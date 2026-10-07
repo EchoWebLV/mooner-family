@@ -96,6 +96,9 @@ export class Bot {
    * @param o.tokenMeta  async (mint) => { name, symbol, uri }
    * @param o.alts       AddressLookupTableAccount[] for the launch tx (see launchAltKeys)
    * @param o.priorityMicroLamports  launch priority price, capped by LAUNCH_TX_FEE
+   * @param o.onSeats    (presale, p, seats) => void, optional: a settled presale's seats as
+   *                     read right before they're claimed (a claim closes its seat). Nothing
+   *                     it throws or rejects holds up a claim (seatsRead).
    */
   constructor(o) {
     Object.assign(this, { ers: {}, alts: [], priorityMicroLamports: 0, log: console.log, batch: BATCH }, o);
@@ -346,6 +349,7 @@ export class Bot {
         const left = await this.snipeTaxLeft(p.mint);
         if (left > 0) return { state, did, wait: left };
         const seats = await this.homeSeats(presale);
+        this.seatsRead(presale, p, seats);
         const claimable = seats.filter((s) => s.settled && s.commit > 0n);
         const empty = seats.filter((s) => s.commit === 0n);
         for (const b of chunks(claimable, this.batch.claim)) {
@@ -368,6 +372,18 @@ export class Bot {
       }
       default:
         return { state, did };
+    }
+  }
+
+  /** Hands `seats` to `onSeats`, if there is one; what it throws or rejects is logged and
+   *  goes no further. */
+  seatsRead(presale, p, seats) {
+    if (!this.onSeats) return;
+    const failed = (e) => this.say(presale, `onSeats: ${e?.message ?? e}`);
+    try {
+      this.onSeats(presale, p, seats)?.catch?.(failed);
+    } catch (e) {
+      failed(e);
     }
   }
 

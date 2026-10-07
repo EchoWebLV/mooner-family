@@ -3,6 +3,7 @@
 // keeps an event from counting twice (a restart, a catch-up, a repeat), so callers just
 // award and let the table say whether it was new. What each event is worth is POINTS
 // (src/xp.js); the rules that award them are xprules.js. Nothing here reads the chain.
+// A wallet's points are read by that UNIQUE index (wallet is its first column).
 
 import { POINTS, TITLES, streakOf, utcDay } from "../src/xp.js";
 
@@ -16,7 +17,6 @@ CREATE TABLE IF NOT EXISTS xp (
   at     INTEGER NOT NULL,
   UNIQUE (wallet, reason, ref)
 );
-CREATE INDEX IF NOT EXISTS xp_wallet ON xp (wallet);
 CREATE TABLE IF NOT EXISTS activity (
   wallet TEXT NOT NULL,
   day    INTEGER NOT NULL,
@@ -45,10 +45,41 @@ CREATE TABLE IF NOT EXISTS xp_events (
 const COUNTED = Object.keys(POINTS).filter((r) => POINTS[r].title !== null);
 
 export class XpLedger {
-  /** `db`: the server's node:sqlite database (store.db). */
-  constructor(db) {
+  /** `db`: the server's node:sqlite database (store.db). `boardMs`: how long a board read is
+   *  kept (board). */
+  constructor(db, { boardMs = 5_000 } = {}) {
     this.db = db;
+    this.boardMs = boardMs;
+    this.kept = null; // the last board read: { limit, day, at, rows }
+    this.inTx = false;
     db.exec(SCHEMA);
+  }
+
+  /** `fn()` (synchronous) as one write: all of it lands, or a throw rolls all of it back. One
+   *  inside another is part of the outer one. */
+  atomic(fn) {
+    if (this.inTx) return fn();
+    this.db.exec("BEGIN");
+    this.inTx = true;
+    try {
+      const out = fn();
+      this.db.exec("COMMIT");
+      return out;
+    } catch (e) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // nothing left open to roll back
+      }
+      throw e;
+    } finally {
+      this.inTx = false;
+    }
+  }
+
+  /** A row changed: the board is read again at its next ask. */
+  forgetBoard() {
+    this.kept = null;
   }
 
   /** `reason` (a POINTS key) for `wallet` (base58), once per `ref` (a presale, or a
@@ -57,7 +88,9 @@ export class XpLedger {
     const p = POINTS[reason];
     if (!p) throw new Error(`no points for ${reason}`);
     const sql = "INSERT INTO xp (wallet, title, points, reason, ref, at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (wallet, reason, ref) DO NOTHING";
-    return Number(this.db.prepare(sql).run(wallet, p.title, p.points, reason, ref, at).changes) === 1;
+    const fresh = Number(this.db.prepare(sql).run(wallet, p.title, p.points, reason, ref, at).changes) === 1;
+    if (fresh) this.forgetBoard();
+    return fresh;
   }
 
   /** The wallets that got `reason` for `ref`, by wallet. */
@@ -69,7 +102,9 @@ export class XpLedger {
    *  True when the day is new for this wallet. */
   active(wallet, at) {
     const sql = "INSERT INTO activity (wallet, day) VALUES (?, ?) ON CONFLICT (wallet, day) DO NOTHING";
-    return Number(this.db.prepare(sql).run(wallet, utcDay(at)).changes) === 1;
+    const fresh = Number(this.db.prepare(sql).run(wallet, utcDay(at)).changes) === 1;
+    if (fresh) this.forgetBoard();
+    return fresh;
   }
 
   /** The seats of `presale` (base58) at launch, with the coin `mint`: [{ wallet, tokens
@@ -102,15 +137,19 @@ export class XpLedger {
 
   /** `wallet` holds the Genesis mint `mint`. The perk goes once per wallet and once per
    *  mint: { mint, at, fresh } (the wallet's claim; fresh when this call made it), or
-   *  { taken: <the wallet that has this mint's claim> }. */
+   *  { taken: <the wallet that has this mint's claim> }. The claim and its points are one
+   *  write. */
   claimGenesis(mint, wallet, at) {
-    const mine = this.genesisOf(wallet);
-    if (mine) return { ...mine, fresh: false };
-    const owner = this.db.prepare("SELECT wallet FROM genesis WHERE mint = ?").get(mint);
-    if (owner) return { taken: owner.wallet };
-    this.db.prepare("INSERT INTO genesis (mint, wallet, at) VALUES (?, ?, ?)").run(mint, wallet, at);
-    this.award(wallet, "genesis", mint, at);
-    return { mint, at, fresh: true };
+    return this.atomic(() => {
+      const mine = this.genesisOf(wallet);
+      if (mine) return { ...mine, fresh: false };
+      const owner = this.db.prepare("SELECT wallet FROM genesis WHERE mint = ?").get(mint);
+      if (owner) return { taken: owner.wallet };
+      this.db.prepare("INSERT INTO genesis (mint, wallet, at) VALUES (?, ?, ?)").run(mint, wallet, at);
+      this.forgetBoard();
+      this.award(wallet, "genesis", mint, at);
+      return { mint, at, fresh: true };
+    });
   }
 
   /** The wallet's XP row (see the plan's "Server data shapes") as of `now` (ms). */
@@ -134,10 +173,15 @@ export class XpLedger {
   }
 
   /** The top `limit` wallets by total (ties by wallet), wallets with only streak days
-   *  included at 0: their rows. */
+   *  included at 0: their rows. Each `profiles` subscription asks for it, so a read is kept
+   *  until a write changes a row, the UTC day turns (the streaks move) or `boardMs` passed. */
   board(limit, now) {
+    const k = this.kept;
+    if (k && k.limit === limit && k.day === utcDay(now) && now - k.at < this.boardMs) return k.rows;
     const sql = `SELECT wallet, SUM(points) AS total FROM (SELECT wallet, points FROM xp UNION ALL SELECT wallet, 0 FROM activity)
       GROUP BY wallet ORDER BY total DESC, wallet ASC LIMIT ?`;
-    return this.db.prepare(sql).all(limit).map((r) => this.row(r.wallet, now));
+    const rows = this.db.prepare(sql).all(limit).map((r) => this.row(r.wallet, now));
+    this.kept = { limit, day: utcDay(now), at: now, rows };
+    return rows;
   }
 }

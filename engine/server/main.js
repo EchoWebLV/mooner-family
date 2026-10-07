@@ -20,7 +20,7 @@ import { makeReads, makeRoutes } from "./api.js";
 import { makeSessions, makeSocialRoutes } from "./social.js";
 import { Referrals } from "./referrals.js";
 import { XpLedger } from "./xp.js";
-import { XpRules, holds, openSeats, readLaunch } from "./xprules.js";
+import { XpRules, holds, keeperHooks, openSeats, readLaunch } from "./xprules.js";
 import { makeXpRoutes } from "./xproutes.js";
 import { appLinksLog, makeAppLinkRoutes } from "./applinks.js";
 import { makeRpcRoutes } from "./rpcproxy.js";
@@ -146,12 +146,11 @@ const rules = new XpRules({
   onChange: xpPush, log: (m) => log(`xp ${m}`),
 });
 feed.on("migrated", (row) => rules.migrated(row.presale).catch((e) => log(`xp: migrated ${row.presale}: ${e?.message ?? e}`)));
+// the rules are there before the keeper's first tick: a launch it claims at start is counted
+// from the seats it read first (onSeats), not left to the catch-up's read below
 const keeper = new Keeper({
   bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`),
-  onScan: (keys) => feed.scanned(keys), onLaunch: (presale) => {
-    feed.launched(presale);
-    rules.launched(presale.toBase58()).catch((e) => log(`xp: launched ${presale.toBase58()}: ${e?.message ?? e}`));
-  },
+  onScan: (keys) => feed.scanned(keys), ...keeperHooks({ feed, rules, log }),
 }).start();
 const routes = makeRoutes({
   pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, gateKey: ctx.gate, alt: ctx.alt, dbcConfig: cfg.dbcConfig, store: ctx.store,

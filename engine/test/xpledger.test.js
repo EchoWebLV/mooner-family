@@ -97,3 +97,60 @@ test("XpLedger: the board, by total then wallet, streak-only wallets included", 
   assert.deepEqual(xp.board(2, T).map((r) => r.wallet), [b, lo]);
   assert.deepEqual(xp.rows([d, b, d], T), [xp.row(d, T), xp.row(b, T)], "rows: each wallet once, in the order asked");
 });
+
+test("XpLedger: the board is read once and kept until a write changes something, the UTC day turns or 5 s pass", () => {
+  const xp = new XpLedger(new Store(":memory:").db);
+  const [a, b, c, p] = [wallet(), wallet(), wallet(), wallet()];
+  xp.award(a, "kolLaunch", p, T);
+  xp.active(a, T - DAY_MS);
+  let reads = 0;
+  const row = xp.row.bind(xp);
+  xp.row = (...args) => (reads++, row(...args));
+  const first = xp.board(500, T);
+  assert.deepEqual(xp.board(500, T + 4_999), first);
+  assert.equal(reads, 1, "two subscriptions in a row: the rows are read once");
+  xp.award(a, "kolLaunch", p, T);
+  xp.active(a, T - DAY_MS);
+  xp.board(500, T);
+  assert.equal(reads, 1, "an event or a day it already had changes nothing");
+  xp.award(b, "devLaunch", p, T);
+  assert.deepEqual(xp.board(500, T).map((r) => r.wallet), [b, a], "a new award is on the board at once");
+  assert.equal(reads, 3);
+  xp.active(c, T);
+  assert.equal(xp.board(500, T).length, 3, "a new streak day too");
+  assert.equal(reads, 6);
+  xp.claimGenesis(wallet(), c, T);
+  assert.equal(xp.board(500, T)[0].wallet, c, "and a Genesis claim");
+  assert.equal(reads, 9);
+  xp.board(2, T);
+  assert.equal(reads, 11, "another limit is another board");
+  xp.board(500, T);
+  xp.board(500, T + 5_000);
+  assert.equal(reads, 17, "5 s on, it's read again");
+  const late = Date.UTC(2026, 9, 1, 23, 59, 59);
+  xp.board(500, late);
+  assert.equal(reads, 20);
+  assert.equal(xp.board(500, late + 2_000).find((r) => r.wallet === c).streak.days, 1, "a new UTC day is read again: the streaks moved");
+  assert.equal(reads, 23);
+});
+
+test("XpLedger: a Genesis claim and its points are one write: a failure between them leaves neither", () => {
+  const xp = new XpLedger(new Store(":memory:").db);
+  const [a, m] = [wallet(), wallet()];
+  xp.award = () => {
+    throw new Error("disk full");
+  };
+  assert.throws(() => xp.claimGenesis(m, a, T), /disk full/);
+  assert.equal(xp.genesisOf(a), null, "no claim without its points");
+  delete xp.award;
+  assert.deepEqual(xp.claimGenesis(m, a, T + 1), { mint: m, at: T + 1, fresh: true }, "the next try makes it");
+  assert.equal(xp.row(a, T).total, POINTS.genesis.points);
+});
+
+test("XpLedger: a wallet's points are read by the UNIQUE (wallet, reason, ref) index, the only one on xp", () => {
+  const db = new Store(":memory:").db;
+  new XpLedger(db);
+  assert.deepEqual(db.prepare("PRAGMA index_list(xp)").all().map((r) => r.origin), ["u"], "UNIQUE's own index; no other");
+  const plan = db.prepare("EXPLAIN QUERY PLAN SELECT reason, title, SUM(points) AS points, COUNT(*) AS n FROM xp WHERE wallet = ? GROUP BY reason, title").all().map((r) => r.detail);
+  assert.match(plan.join(" | "), /SEARCH xp USING INDEX sqlite_autoindex_xp_1 \(wallet=\?\)/);
+});
