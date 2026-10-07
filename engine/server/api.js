@@ -283,8 +283,9 @@ export function makeReads({ pid, l1, bot, store, dbcConfig, damm = () => null, n
  * and seat listings. `openers()` returns the current Set of wallets that may open (null:
  * any wallet).
  * `feed` (feed.js) hears about each entry the server sends, before the chain says so.
+ * `xp` (xprules.js XpRules) hears of each confirmed join or open: `xp.active(wallet, at)`.
  */
-export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, feed = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, simMs = 15_000, now = Date.now, reads = makeReads({ pid, l1, bot, store, dbcConfig, now }) }) {
+export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinner, openers, cluster, canary, keeper = null, feed = null, xp = null, limits = DEFAULT_LIMITS, sendTimeoutMs = 45_000, simMs = 15_000, now = Date.now, reads = makeReads({ pid, l1, bot, store, dbcConfig, now }) }) {
   const N = numbers(canary);
   const L = Object.fromEntries(Object.entries({ ...DEFAULT_LIMITS, ...limits }).map(([k, [max, ms]]) => [k, new Limiter(max, ms, now)]));
   const usedSigs = new Map(); // signature -> when, for the replay window
@@ -416,6 +417,14 @@ export function makeRoutes({ pid, l1, bot, gateKey, alt, dbcConfig, store, pinne
       keeper?.watch(out.presale); // before its next scan
     }
     if (confirmed) feed?.touch(out.presale);
+    // a confirmed join or open: that UTC day counts for the wallet's streak (xprules.js)
+    if (confirmed && (out.kind === "join" || out.kind === "open")) {
+      try {
+        xp?.active(out.user.toBase58(), now());
+      } catch (e) {
+        console.error(`streak ${sig}: ${e.message}`); // the entry was sent; the reply says so
+      }
+    }
     // a join from a shared link: who shared it. A 202 from this send (sent, not confirmed in
     // time) is noted unconfirmed and gives way to the seat's next join; a confirmed one stays
     // (referrals.js). A repeat of a tx that already went out returned above, with no row.

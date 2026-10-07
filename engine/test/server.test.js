@@ -94,7 +94,7 @@ function presaleData(mint, state = STATE.OPEN) {
   return d;
 }
 
-async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, simMs, pinUri, pinError, web = null } = {}) {
+async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, simMs, pinUri, pinError, web = null, xp = null } = {}) {
   const l1 = fakeChain();
   const store = new Store(":memory:");
   const pinned = [];
@@ -114,6 +114,7 @@ async function startServer({ openers = [], limits, sendTimeoutMs = 2_000, simMs,
     now: () => Date.now() + skew,
     ...(limits && { limits }),
     ...(simMs && { simMs }),
+    ...(xp && { xp }),
   });
   const server = createServer(routes, { log: () => {}, web });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -1073,5 +1074,47 @@ test("refOf: a wallet that isn't the joiner's, else null", () => {
   assert.equal(refOf(user.toBase58(), user), null);
   for (const v of [undefined, null, 5, "", "nope", "0".repeat(44), "1".repeat(45), "z".repeat(44), { ref: other.toBase58() }]) {
     assert.equal(refOf(v, user), null, String(v));
+  }
+});
+
+test("cosign: each confirmed join or open is a streak day for its wallet; a 202 is none", async () => {
+  const creator = Keypair.generate();
+  const days = [];
+  const s = await startServer({ openers: [creator], sendTimeoutMs: 300, xp: { active: (wallet, at) => days.push({ wallet, at }) } });
+  try {
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const presale = presalePda(pid, mint);
+    const t0 = Date.now();
+    assert.equal((await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)) })).status, 200);
+    assert.deepEqual(days.map((d) => d.wallet), [creator.publicKey.toBase58()], "an open");
+    assert.ok(days[0].at >= t0 && days[0].at <= Date.now(), "at the server's clock");
+
+    const user = Keypair.generate();
+    const join = () => s.call("POST", "/api/cosign", { tx: entryTx(user, joinIxs(user.publicKey, presale)) });
+    s.l1.confirm = false;
+    assert.equal((await join()).status, 202);
+    assert.equal(days.length, 1, "sent, not confirmed in time: no day");
+    s.l1.confirm = true;
+    assert.equal((await join()).status, 200);
+    assert.deepEqual(days.map((d) => d.wallet), [creator.publicKey.toBase58(), user.publicKey.toBase58()], "a join");
+  } finally {
+    await s.close();
+  }
+});
+
+test("cosign: a streak write that throws is logged once and never changes the reply", async () => {
+  const creator = Keypair.generate();
+  const s = await startServer({ openers: [creator], xp: { active: () => { throw new Error("disk full"); } } });
+  const error = console.error;
+  const logged = [];
+  console.error = (...a) => logged.push(a.join(" "));
+  try {
+    const mint = new PublicKey((await s.call("POST", "/api/mint", mintBody(creator))).json.mint);
+    const open = await s.call("POST", "/api/cosign", { tx: entryTx(creator, openIxs(creator.publicKey, mint)) });
+    assert.deepEqual([open.status, open.json.kind, open.json.confirmed], [200, "open", true]);
+    assert.deepEqual(logged.filter((l) => l.startsWith("streak ")), [`streak ${open.json.sig}: disk full`]);
+  } finally {
+    console.error = error;
+    await s.close();
   }
 });
