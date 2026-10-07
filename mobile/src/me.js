@@ -33,3 +33,10 @@ export const tokenOf = ({ key, presales, views, launched }) =>
 
 /** Me's rows, [{ key, token, status }]: one per presale the wallet is in or was in. */
 export const rowsOf = (s) => myPresales(s).map((key) => ({ key, token: tokenOf({ ...s, key }), status: statusOf({ ...s, key }) }));
+
+/** The Me tab: your face and SOL ("2.41 SOL", mono) once the wallet and its balance are both
+ *  known; else the Me icon and "Me". */
+export function meTab(wallet, lamports) {
+  if (!wallet || lamports == null) return { face: null, label: "Me", mono: false };
+  return { face: wallet, label: `${solText(lamports)} SOL`, mono: true };
+}

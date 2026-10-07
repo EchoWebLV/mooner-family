@@ -2,7 +2,7 @@
 // from the server's shapes (lamports as strings).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rowsOf, statusOf, tokenOf } from "../src/me.js";
+import { meTab, rowsOf, statusOf, tokenOf } from "../src/me.js";
 
 const ME = "HgZ9KPJhH9aQ7NG7k7xrxzTJkP7LkBZygRTnBGZQ5u8D";
 const OTHER = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
@@ -156,4 +156,11 @@ test("rowsOf: every presale the wallet is in or was in, with its coin and status
 
 test("rowsOf: nothing without a wallet", () => {
   assert.deepEqual(rowsOf(state({ wallet: null, mine: { [KEY]: { deposit: "1", at: 1 } } })), []);
+});
+
+test("meTab: your face and SOL once both are known, else the Me icon and Me", () => {
+  assert.deepEqual(meTab(ME, 2410000000), { face: ME, label: "2.41 SOL", mono: true });
+  assert.deepEqual(meTab(ME, 0), { face: ME, label: "0 SOL", mono: true });
+  assert.deepEqual(meTab(ME, null), { face: null, label: "Me", mono: false }, "balance not in yet");
+  assert.deepEqual(meTab(null, 5), { face: null, label: "Me", mono: false }, "no wallet");
 });
