@@ -4,7 +4,8 @@
 #   sh deploy/railway.sh site   the landing page + waitlist  service "web"  mooner.family
 #   add --dry (sh deploy/railway.sh app --dry) to stage everything and list the files instead of uploading
 # app ships HEAD: engine/{src,server} and a web/dist built in a temp folder from the committed web/, so an
-# edit in progress in this checkout never goes out. site ships site/ as it is here (it isn't committed).
+# edit in progress in this checkout never goes out. site ships site/ as it is here (it isn't committed),
+# with its join bundle built first.
 # Only the files listed here are uploaded: keys, .env files and databases stay on this machine.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -54,8 +55,10 @@ case "${1:-}" in
     fi
     ;;
   site)
+    # the join bundle (site/assets/join/) is build output: made fresh, then shipped with assets/
+    node "$ROOT/site/tools/build-join.mjs"
     mkdir -p "$STAGE/site"
-    cp "$ROOT/site/index.html" "$ROOT/site/styles.css" "$ROOT/site/main.js" "$ROOT/site/mooji.js" "$ROOT/site/server.mjs" "$STAGE/site/"
+    cp "$ROOT/site/index.html" "$ROOT/site/styles.css" "$ROOT/site/main.js" "$ROOT/site/mooji.js" "$ROOT/site/server.mjs" "$ROOT/site/privy.mjs" "$ROOT/site/disposable-domains.txt" "$STAGE/site/"
     cp -R "$ROOT/site/assets" "$STAGE/site/"
     FROM=$ROOT
     HEALTH=/

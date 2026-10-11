@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>mooner — launch together, moon together</title>
+  <meta name="description" content="Mooner, the fairest launchpad on chain: everyone buys in before the token exists, at the same price as the creator. Join the waitlist." />
+  <meta name="theme-color" content="#030303" />
+  <meta property="og:title" content="mooner — launch together, moon together" />
+  <meta property="og:description" content="No snipers. No insiders. One price for everyone. Join the waitlist." />
+  <meta property="og:image" content="assets/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png" />
+  <link rel="apple-touch-icon" href="assets/icon-180.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Geist:wght@400;500;600&family=Silkscreen&display=swap" rel="stylesheet" />
+  <link rel="preload" as="image" href="assets/mooner-float.webp" imagesrcset="assets/mooner-float-640.webp 640w, assets/mooner-float.webp 1100w" imagesizes="(max-width: 700px) 64vw, 420px" />
+  <link rel="stylesheet" href="styles.css" />
+  <script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+  <canvas id="stars" aria-hidden="true"></canvas>
+
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="mooner home">
+      <span class="brand-mark"><img src="assets/mooner.svg" alt="" width="34" height="34" /></span>
+      <span class="brand-word">mooner</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">how it works</a>
+      <a href="#why">why mooner</a>
+    </nav>
+    <a class="btn btn-sm" href="#join">join waitlist</a>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow reveal">Fairest Launchpad on Chain</p>
+        <h1 id="hero-title" class="wordmark reveal" style="--d:.05s">mooner</h1>
+        <p class="tagline reveal" style="--d:.12s">launch together. moon together.</p>
+        <p class="sub reveal" style="--d:.18s" hidden>Everyone buys in before the token exists, at the same price as the creator.</p>
+        <form class="waitlist reveal" style="--d:.24s" data-endpoint="" novalidate>
+          <label class="sr-only" for="wl-hero">Email</label>
+          <svg class="wl-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" /></svg>
+          <input id="wl-hero" aria-describedby="wl-hero-msg" name="contact" type="text" inputmode="email" autocomplete="email" placeholder="your email" required />
+          <button class="btn" type="submit"><span>join<span class="wl-long"> waitlist</span></span><svg class="wl-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg><svg class="wl-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></button>
+          <p id="wl-hero-msg" class="wl-msg" role="status" aria-live="polite">free Mooner NFT for joining. already on the list? you get 2</p>
+        </form>
+      </div>
+
+      <div class="hero-stage" aria-hidden="true">
+        <div class="mooner-float">
+          <img class="mooner" src="assets/mooner-float.webp" srcset="assets/mooner-float-640.webp 640w, assets/mooner-float.webp 1100w" sizes="(max-width: 700px) 64vw, 420px" alt="" width="1100" height="1067" />
+        </div>
+        <span class="bubble b1"><i></i>+$1.2k</span>
+        <span class="bubble b2"><i></i>+$3.7k</span>
+        <span class="bubble b3"><i></i>+$500</span>
+      </div>
+
+      <div class="moon-wrap" aria-hidden="true">
+        <canvas id="moon"></canvas>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="how" id="how" aria-labelledby="how-title">
+      <div class="how-copy">
+        <p class="label reveal">how it works</p>
+        <h2 id="how-title" class="h2 reveal" style="--d:.05s">one price.<br />no head starts.</h2>
+        <p class="lead reveal" style="--d:.1s">Everyone chips in first. The coin only goes live once the pot is full, and the whole pot buys in at once, so nobody gets in cheaper or earlier.</p>
+        <ol class="steps">
+          <li class="reveal" style="--d:.12s"><span class="step-n">01</span><div><h3>chip in</h3><p>Put 0.1 to 1&nbsp;SOL into a presale. Change it or back out for free while it fills.</p></div></li>
+          <li class="reveal" style="--d:.18s"><span class="step-n">02</span><div><h3>the pot fills up</h3><p>The moment it's full, the coin goes live and the whole pot is the very first buy.</p></div></li>
+          <li class="reveal" style="--d:.24s"><span class="step-n">03</span><div><h3>everyone gets the same deal</h3><p>Your share depends on what you put in, not who you are. No secret stash for the team.</p></div></li>
+        </ol>
+      </div>
+
+      <div class="presale reveal" style="--d:.1s" aria-hidden="true">
+        <div class="ps-head">
+          <div class="ps-token">
+            <span class="ps-icon"><img src="assets/mooner.svg" alt="" width="40" height="40" /></span>
+            <div><b>$ORBIT</b><small class="ps-phase">presale · filling up</small></div>
+          </div>
+          <div class="ps-timer"><small>fills in</small><b class="ps-clock">60:00</b></div>
+        </div>
+        <div class="ps-seats"></div>
+        <div class="ps-bar"><i></i></div>
+        <div class="ps-meta"><span class="ps-pool">0.00 / 10 SOL</span><span class="ps-count">0 in</span></div>
+        <ul class="ps-feed"></ul>
+        <div class="ps-live">
+          <svg viewBox="0 0 300 70" preserveAspectRatio="none"><path class="ps-line" d="M0 62 L22 58 L40 60 L58 49 L76 52 L96 38 L116 42 L134 30 L152 34 L172 22 L192 26 L212 15 L232 19 L252 9 L274 12 L300 4" /></svg>
+          <p><span class="dot"></span>live · <b class="ps-holders">0</b> holders · one price</p>
+        </div>
+      </div>
+      <p class="sr-only">Animated example of a presale: people chip in 0.1 to 1 SOL each until the pot reaches 10 SOL, then the coin goes live and everyone gets the same price.</p>
+    </section>
+
+    <!-- WHY -->
+    <section class="why" id="why" aria-labelledby="why-title">
+      <p class="label reveal">why mooner</p>
+      <h2 id="why-title" class="h2 reveal" style="--d:.05s">fair for everyone.</h2>
+      <div class="grid">
+        <article class="card reveal" style="--d:.04s">
+          <p class="label">no bots</p>
+          <h3>bots can't cut the line</h3>
+          <p>The coin doesn't exist until the pot is full, so there's nothing for a bot to buy first.</p>
+          <div class="viz viz-scope" aria-hidden="true">
+            <div class="scope"><span></span></div>
+            <code>coin: not yet</code>
+          </div>
+        </article>
+        <article class="card reveal" style="--d:.1s">
+          <p class="label">one price</p>
+          <h3>same price as the creator</h3>
+          <p>Everyone buys at the same price, creator included. No cheap coins for insiders.</p>
+          <div class="viz viz-price" aria-hidden="true">
+            <div><i class="av av1"></i><small>creator</small></div>
+            <b>=</b>
+            <div><i class="av av2"></i><small>you</small></div>
+            <b>=</b>
+            <div><i class="av av3"></i><small>anyone</small></div>
+          </div>
+        </article>
+        <article class="card reveal" style="--d:.16s">
+          <p class="label">free to change</p>
+          <h3>change your mind for free</h3>
+          <p>Put in more, take some out or leave while the pot fills. No fees for changing.</p>
+          <div class="viz viz-slider" aria-hidden="true">
+            <div class="track"><i class="fill"></i><i class="knob"></i></div>
+            <div class="slider-meta"><span>0.1</span><em>fee 0 SOL</em><span>1 SOL</span></div>
+          </div>
+        </article>
+        <article class="card reveal" style="--d:.04s">
+          <p class="label">one hour</p>
+          <h3>full in an hour, or money back</h3>
+          <p>Every presale gets one hour to fill up. If it doesn't, everyone gets refunded.</p>
+          <div class="viz viz-clock" aria-hidden="true">
+            <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" class="ring-bg" /><circle cx="60" cy="60" r="50" class="ring-fg" /></svg>
+            <span>60:00</span>
+          </div>
+        </article>
+        <article class="card reveal" style="--d:.1s">
+          <p class="label">titles</p>
+          <h3>earn titles, get paid</h3>
+          <p>Four titles, five levels each. Your titles earn you a cut of the trading fees.</p>
+          <div class="viz viz-titles" aria-hidden="true">
+            <div><img src="assets/badges/kol-4.svg" alt="" width="56" height="56" loading="lazy" /><p><b>KOL</b><small>followers, calls that hit</small></p></div>
+            <div><img src="assets/badges/diamond-5.svg" alt="" width="56" height="56" loading="lazy" /><p><b>diamond hands</b><small>holds, never dumps</small></p></div>
+            <div><img src="assets/badges/shiller-2.svg" alt="" width="56" height="56" loading="lazy" /><p><b>shiller</b><small>writes the posts</small></p></div>
+            <div><img src="assets/badges/raider-3.svg" alt="" width="56" height="56" loading="lazy" /><p><b>raider</b><small>boosts others' posts</small></p></div>
+          </div>
+        </article>
+        <article class="card reveal" style="--d:.16s">
+          <p class="label">leaderboard</p>
+          <h3>see who's in every coin</h3>
+          <p>Everyone in a presale shows up with their titles and rank. No secret buyers.</p>
+          <div class="viz viz-board" aria-hidden="true">
+            <p class="lb-head"><span>who's in $ORBIT</span><span>rank</span></p>
+            <div class="lb-row"><i class="lb-pfp" style="--x:6;--y:0"></i><p><b>@diamond_dee</b><small><img src="assets/badges/diamond-5-s.svg" alt="" width="16" height="16" loading="lazy" />diamond hands V</small></p><em>#3</em></div>
+            <div class="lb-row"><i class="lb-pfp" style="--x:1;--y:1"></i><p><b>@lambo_larry</b><small><img src="assets/badges/kol-4-s.svg" alt="" width="16" height="16" loading="lazy" />KOL IV</small></p><em>#12</em></div>
+            <div class="lb-row"><i class="lb-pfp" style="--x:3;--y:3"></i><p><b>@raid_ronnie</b><small><img src="assets/badges/raider-3-s.svg" alt="" width="16" height="16" loading="lazy" />raider III</small></p><em>#41</em></div>
+            <div class="lb-row lb-anon"><i class="lb-pfp"></i><p><b>7xKp…9fQa</b><small>fresh wallet · no titles yet</small></p><em>—</em></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta" id="join" aria-labelledby="join-title">
+      <div class="orbits" aria-hidden="true">
+        <div class="orbit o1"><i></i><i></i><i></i></div>
+        <div class="orbit o2"><i></i><i></i><i></i><i></i></div>
+        <div class="orbit o3"><i></i><i></i></div>
+        <div class="cta-float"><img src="assets/mooner-head-640.webp" alt="" width="640" height="791" loading="lazy" /></div>
+      </div>
+      <h2 id="join-title" class="h2 reveal">get on the list<br />before liftoff.</h2>
+      <p class="lead reveal" style="--d:.06s">The first presales are invite-only. The waitlist gets the invites.</p>
+      <form class="waitlist reveal" style="--d:.12s" data-endpoint="" novalidate>
+        <label class="sr-only" for="wl-cta">Email</label>
+        <svg class="wl-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" /></svg>
+        <input id="wl-cta" aria-describedby="wl-cta-msg" name="contact" type="text" inputmode="email" autocomplete="email" placeholder="your email" required />
+        <button class="btn" type="submit"><span>join<span class="wl-long"> waitlist</span></span><svg class="wl-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg><svg class="wl-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></button>
+        <p id="wl-cta-msg" class="wl-msg" role="status" aria-live="polite">free Mooner NFT for joining. already on the list? you get 2</p>
+      </form>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <a class="brand" href="#top" aria-label="Back to top">
+      <span class="brand-mark"><img src="assets/mooner.svg" alt="" width="28" height="28" /></span>
+      <span class="brand-word">mooner</span>
+    </a>
+    <p>built on Solana · Meteora · MagicBlock</p>
+    <p>© 2026 Mooner</p>
+  </footer>
+
+  <script src="mooji.js" defer></script>
+  <script src="main.js" defer></script>
+</body>
+</html>

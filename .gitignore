@@ -19,8 +19,20 @@ engine/.canary/
 engine/.mainnet/
 engine/.rehearsal/
 
-# waitlist signups (site/server.mjs): emails and X handles
+# waitlist signups (site/server.mjs): emails, X accounts, wallets
 site/.data/
+# the waitlist's join bundle, built by site/tools/build-join.mjs (deploy/railway.sh site runs it)
+site/assets/join/
 
 # visual brainstorming companion
 .superpowers/
+
+# bubble test (engine/scripts/bubbletest.js): session keys and run state
+engine/.bubble/
+
+# local Claude Code state: preview config, screenshots, worktrees
+.claude/
+
+# rendered video and audio: too big for GitHub (several files over 100 MB)
+docs/superpowers/**/*.mp4
+docs/superpowers/**/*.mp3
