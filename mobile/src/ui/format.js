@@ -14,7 +14,7 @@ export function compact(n) {
 }
 
 /** "1234.50" as "1,234.50": thousands separators by hand (Hermes' Intl may be missing). */
-const grouped = (fixed) => {
+export const grouped = (fixed) => {
   const [int, frac] = fixed.split(".");
   return int.replace(/\B(?=(\d{3})+$)/g, ",") + (frac ? `.${frac}` : "");
 };

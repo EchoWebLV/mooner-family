@@ -6,7 +6,7 @@ import { memo, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
-import { BOARD_TOP, LEVEL_XP, POINTS } from "../../engine/src/xp.js";
+import { BOARD_TOP, LEVEL_XP, POINTS, RAIDER_HIT } from "../../engine/src/xp.js";
 import { store } from "../src/app";
 import { ChipRow } from "../src/ui/ChipRow";
 import { Face } from "../src/ui/Face";
@@ -242,7 +242,10 @@ function MyRow({ wallet, board }) {
 const EARN = [
   { title: "dev", text: `Open a launch: +${xpText(POINTS.devLaunch.points)} when it launches, +${xpText(POINTS.devMigrate.points)} more when it moons` },
   { title: "kol", text: `Chip in to someone else's launch: +${xpText(POINTS.kolLaunch.points)}, +${xpText(POINTS.kolMigrate.points)} more when it moons` },
-  { title: "raider", text: `+${xpText(POINTS.raiderJoin.points)} for each friend your link brings who chips in, once it launches` },
+  {
+    title: "raider",
+    text: `Link your X on Me, then post about a coin: +${xpText(POINTS.raiderPost.points)} (once a day per coin), +${xpText(POINTS.raiderHit.points)} once a post reaches ${RAIDER_HIT} likes, reposts and replies. Repost its top posts: +${xpText(POINTS.raiderRepost.points)} a day`,
+  },
   { title: "diamond", text: `Still holding when it moons: +${xpText(POINTS.diamondMigrate.points)}` },
 ];
 

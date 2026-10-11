@@ -68,7 +68,7 @@ export default function Chat() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg0 }}>
-      <SceneHeader name="room" height={150} title="Chat" left={<BackGlass />} />
+      <SceneHeader name="room" height={150} focus={0.18} title="Chat" left={<BackGlass />} />
       <ChipRow items={chips} value={channel} onPick={setPicked} />
       <View
         ref={kb.ref}

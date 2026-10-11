@@ -24,6 +24,7 @@ import {
   shortOfOpen,
 } from "./create/rules.js";
 import { mergeXp } from "./xp/rows.js";
+import { xBackOf } from "./xp/xlink.js";
 
 const CHAT_KEEP = 200;
 /** What a trade says when its fresh price no longer reaches the minimum the sheet showed. */
@@ -87,6 +88,10 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     xpLoaded: false, // true from the first "xp" message: {} before that is "not here yet"
     xpFailed: false, // the read of the connected wallet's own row failed (a push of it still fills it; retryXp reads again)
     profilesLoaded: false, // true from the profiles topic's first snapshot (Ranks: before it, a spinner)
+    // wallet -> its X account { handle, name, avatar, ok } (ok: Raider XP counts its posts) or
+    // null (none): the connected wallet's, read when it comes and after Link X or Unlink; no
+    // key: not read yet (a failed read is tried again on the next reconnect)
+    xLinks: {},
     solUsd: 0,
     wallet: null, // base58
     lamports: null,
@@ -203,7 +208,11 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
             if (up && !get().info) loadInfo();
             // the rows pushed while it was down are lost, and the board it sends again has
             // the top 500 only: your own row is read again
-            if (up && upBefore) retryXp();
+            if (up && upBefore) {
+              retryXp();
+              const w = get().wallet;
+              if (w && !(w in get().xLinks)) readXLink(w);
+            }
             if (up) upBefore = true;
           }),
           live.subscribe("presales", onPresales),
@@ -294,6 +303,7 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     set({ wallet, lamports: null, session: null, mine: {}, holdings: {}, opening: undefined, xpFailed: false });
     if (!wallet) return;
     readXp(wallet);
+    readXLink(wallet);
     walletOff = live.subscribe(`wallet:${wallet}`, (m) => {
       if (m.type !== "snapshot" || m.data?.lamports == null) return;
       const was = get().lamports;
@@ -714,7 +724,85 @@ export function createMoonerStore({ live, api, flows, saved, market, now = () =>
     }
   }
 
-  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening, checkGenesis, retryXp });
+  // ---- X (Raider XP) ----
+
+  /** The signer's sign-in, signing in first if there's none or it ran out (a sign-in kept for
+   *  another wallet isn't used). { ok: true, session } or { ok: false, error }. */
+  async function signedIn(signer, opts) {
+    const session = get().wallet === signer.publicKey.toBase58() ? get().session : null;
+    if (session && session.exp > now()) return { ok: true, session };
+    return signIn(signer, opts);
+  }
+
+  let xLinkReads = 0; // only the newest read goes in
+  /** The wallet's X account, into `xLinks`. Resolves to it, or undefined when it couldn't be
+   *  read (or a newer read came): `xLinks` is left as it was. */
+  async function readXLink(wallet) {
+    const n = ++xLinkReads;
+    try {
+      const x = await api.xLink(wallet);
+      if (n !== xLinkReads) return undefined;
+      patch("xLinks", (l) => ({ ...l, [wallet]: x }));
+      return x;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Link X: links the signer's wallet to an X account, signing in first if needed. The server
+   *  gives X's sign-in page; `openAuth(url)` shows it and resolves to the link X sent back
+   *  (xlink.js X_BACK, with ?handle= or ?error=) or null when it was closed. The X account is
+   *  read again either way: a browser can say closed after the link went through. Returns
+   *  { ok: true, x }, { ok: false, error } with the server's words, or { ok: false } when it
+   *  was closed with no link made. `opts.signIn` is for tests. */
+  async function linkX(signer, openAuth, opts) {
+    const wallet = signer.publicKey.toBase58();
+    const s = await signedIn(signer, opts);
+    if (!s.ok) return s;
+    let url;
+    try {
+      url = await api.xStart(s.session.token);
+    } catch (e) {
+      if (e.status === 401) await forgetSignIn(wallet);
+      return { ok: false, error: explain(e) };
+    }
+    const before = get().xLinks[wallet];
+    let said;
+    try {
+      said = xBackOf(await openAuth(url));
+    } catch (e) {
+      return { ok: false, error: explain(e) };
+    }
+    if (said?.error) return { ok: false, error: said.error };
+    const x = await readXLink(wallet);
+    if (x && (said?.handle || x.handle !== before?.handle)) return { ok: true, x };
+    if (said?.handle) {
+      // linked, but the read after failed: show the handle X sent until the next read
+      const shown = { handle: said.handle, name: said.handle, avatar: null, ok: null };
+      if (get().wallet === wallet) patch("xLinks", (l) => ({ ...l, [wallet]: shown }));
+      return { ok: true, x: shown };
+    }
+    return { ok: false };
+  }
+
+  /** Unlink X, signing in first if needed: Raider XP stops counting that account's posts (the
+   *  XP it earned stays). { ok: true } or { ok: false, error }. */
+  async function unlinkX(signer, opts) {
+    const wallet = signer.publicKey.toBase58();
+    const s = await signedIn(signer, opts);
+    if (!s.ok) return s;
+    try {
+      await api.xUnlink(s.session.token);
+    } catch (e) {
+      if (e.status === 401) await forgetSignIn(wallet);
+      return { ok: false, error: explain(e) };
+    }
+    xLinkReads++; // a read still on its way is older than this
+    if (get().wallet === wallet) patch("xLinks", (l) => ({ ...l, [wallet]: null }));
+    return { ok: true };
+  }
+
+  set({ start, loadInfo, watch, watchCoin, watchChat, seeChat, setWallet, signIn, signOut, join, getBack, joinCost, sendChat, noteRef, preview, trade, openCost, mintCoin, openCoin, forgetOpening, checkGenesis, retryXp, linkX, unlinkX });
   return store;
 }
 

@@ -1240,3 +1240,103 @@ test("sendChat: a sign-in kept for another wallet isn't used; the signer signs i
   assert.equal(r.ok, true);
   assert.deepEqual(calls.filter((c) => c[0] === "chat").map((c) => c[1]), ["mine"]);
 });
+
+// ---- X (Raider XP) ----
+
+const X = { handle: "moonboi", name: "Moon Boi", avatar: null, ok: true };
+
+test("xLinks: the wallet's X account is read when it comes; a failed read is tried again on a reconnect", async () => {
+  let fail = true;
+  const reads = [];
+  const { store, goUp } = rig({ api: { xLink: async (w) => (reads.push(w), fail ? Promise.reject(apiError(503, "down")) : X) } });
+  store.getState().start();
+  goUp(true);
+  await store.getState().setWallet(W);
+  await tick();
+  assert.deepEqual(reads, [W]);
+  assert.equal(W in store.getState().xLinks, false, "not read yet");
+  fail = false;
+  goUp(false);
+  goUp(true);
+  await tick();
+  assert.deepEqual(store.getState().xLinks[W], X);
+  goUp(false);
+  goUp(true);
+  await tick();
+  assert.equal(reads.length, 2, "read once it's in");
+});
+
+test("linkX signs in, opens X's page, and reads the X account after; the handle X sent back counts", async () => {
+  const started = [];
+  let linked = null;
+  const { store } = rig({
+    now: 1_790_000_000_000,
+    api: { xLink: async () => linked, xStart: async (t) => (started.push(t), "https://x.com/i/oauth2/authorize?s=1") },
+  });
+  await store.getState().setWallet(W);
+  await tick();
+  assert.equal(store.getState().xLinks[W], null);
+  const opened = [];
+  const r = await store.getState().linkX(signer, async (url) => (opened.push(url), (linked = X), "mooner://x-link?handle=moonboi"), {
+    signIn: async () => ({ token: "fresh", exp: 1_790_000_100_000 }),
+  });
+  assert.deepEqual(r, { ok: true, x: X });
+  assert.deepEqual(started, ["fresh"]);
+  assert.deepEqual(opened, ["https://x.com/i/oauth2/authorize?s=1"]);
+  assert.deepEqual(store.getState().xLinks[W], X);
+});
+
+test("linkX: closed with no link is no error; a link that went through while the browser said closed still counts", async () => {
+  let linked = null;
+  const { store } = rig({ api: { xLink: async () => linked, xStart: async () => "u" } });
+  await store.getState().setWallet(W);
+  await store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  assert.deepEqual(await store.getState().linkX(signer, async () => null), { ok: false });
+  const r = await store.getState().linkX(signer, async () => ((linked = X), null));
+  assert.deepEqual(r, { ok: true, x: X });
+  assert.deepEqual(await store.getState().linkX(signer, async () => null), { ok: false }, "already linked and closed again: nothing new");
+});
+
+test("linkX: X's no and the server's words come back as they are; a 401 forgets the sign-in", async () => {
+  const { store } = rig({ api: { xLink: async () => null, xStart: async () => "u" } });
+  await store.getState().setWallet(W);
+  await store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  const no = await store.getState().linkX(signer, async () => "mooner://x-link?error=You%20didn't%20allow%20it%20on%20X.");
+  assert.deepEqual(no, { ok: false, error: "You didn't allow it on X." });
+
+  const off = rig({ api: { xLink: async () => null, xStart: async () => { throw apiError(503, "X sign-in isn't set up on this server yet"); } } });
+  await off.store.getState().setWallet(W);
+  await off.store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  assert.deepEqual(await off.store.getState().linkX(signer, async () => assert.fail("nothing to open")), { ok: false, error: "X sign-in isn't set up on this server yet" });
+
+  const old = rig({ api: { xLink: async () => null, xStart: async () => { throw apiError(401, "your sign-in ran out, sign in again"); } } });
+  await old.store.getState().setWallet(W);
+  await old.store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  assert.equal((await old.store.getState().linkX(signer, async () => null)).ok, false);
+  assert.equal(old.store.getState().session, null);
+  assert.equal(old.disk.has(`mooner:login:${W}`), false);
+});
+
+test("linkX: linked but the read after fails: the handle X sent shows until the next read", async () => {
+  let reads = 0;
+  const { store } = rig({ api: { xLink: async () => (++reads > 1 ? Promise.reject(apiError(503, "down")) : null), xStart: async () => "u" } });
+  await store.getState().setWallet(W);
+  await tick();
+  await store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  const r = await store.getState().linkX(signer, async () => "mooner://x-link?handle=moonboi");
+  assert.deepEqual(r, { ok: true, x: { handle: "moonboi", name: "moonboi", avatar: null, ok: null } });
+  assert.equal(store.getState().xLinks[W].handle, "moonboi");
+});
+
+test("unlinkX posts the sign-in and the X account goes; a read on its way can't bring it back", async () => {
+  const posted = [];
+  let answer;
+  const { store } = rig({ api: { xLink: () => new Promise((ok) => (answer = ok)), xUnlink: async (t) => (posted.push(t), { x: null }) } });
+  await store.getState().setWallet(W);
+  await store.getState().signIn(signer, { signIn: async () => ({ token: "t", exp: 1_000_000 + 60_000 }) });
+  assert.deepEqual(await store.getState().unlinkX(signer), { ok: true });
+  assert.deepEqual(posted, ["t"]);
+  answer(X); // the read from when the wallet came lands after
+  await tick();
+  assert.equal(store.getState().xLinks[W], null);
+});

@@ -1,9 +1,11 @@
 // The root: fonts, the dark system background, the wallet, the store's live topics, the
-// hidden page that draws Mooner pictures and the "Reconnecting…" strip above every screen.
+// hidden page that draws Mooner pictures, the "Reconnecting…" strip above every screen and
+// the loading screen over all of it on cold start.
 import { useEffect, useRef, useState } from "react";
 import { AppState, View } from "react-native";
 import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import * as SystemUI from "expo-system-ui";
 import { useFonts } from "expo-font";
 import { Geist_400Regular } from "@expo-google-fonts/geist/400Regular";
@@ -16,9 +18,14 @@ import { useStore } from "zustand";
 import { live, store } from "../src/app";
 import { WalletProvider } from "../src/wallet";
 import { PfpRenderer } from "../src/pfp/PfpRenderer";
+import { BootLog } from "../src/ui/BootLog";
 import { Banner } from "../src/ui/kit";
 import { arm, loadSounds, screenChange } from "../src/ui/sound";
 import { C } from "../src/ui/theme";
+
+// The native splash stays until the loading screen has drawn the same logo in the same place
+// (ui/BootLog.js hides it), so the hand-over shows no gap.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /** Away this long or more, the socket is opened afresh on return: Android may have cut it
  *  without a close event. A trip to the wallet (Seed Vault opens on top and Android calls
@@ -29,6 +36,8 @@ const BANNER_AFTER_MS = 2_000;
 
 export default function Root() {
   // the names theme.js F uses
+  // the loading screen, on cold start only (this root mounts once per run)
+  const [booting, setBooting] = useState(true);
   const [fontsLoaded, fontError] = useFonts({ Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, GeistMono_500Medium });
 
   useEffect(() => {
@@ -66,6 +75,7 @@ export default function Root() {
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg0 }, animation: "slide_from_right" }} />
           <ScreenSounds />
         </View>
+        {booting ? <BootLog onDone={() => setBooting(false)} /> : null}
       </WalletProvider>
     </SafeAreaProvider>
   );

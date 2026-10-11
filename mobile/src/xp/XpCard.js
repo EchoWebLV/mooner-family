@@ -1,10 +1,12 @@
 // Me's XP card from your row (the store's `xp`): your top title and level, the streak, the bar
-// to the next level, the four title tags, and the Seeker Genesis row (Check, or the mark).
+// to the next level, the four title tags, the Seeker Genesis row (Check, or the mark) and the
+// X row (Link X, or your handle).
 import { useRef, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import * as Haptics from "expo-haptics";
+import * as WebBrowser from "expo-web-browser";
 import { useStore } from "zustand";
-import { streakDays } from "../../../engine/src/xp.js";
+import { RAIDER_FLOOR, streakDays } from "../../../engine/src/xp.js";
 import { store } from "../app";
 import { CheckIcon } from "../ui/icons";
 import { Button, Card, PillButton, Sheet, T } from "../ui/kit";
@@ -13,12 +15,17 @@ import { C, F } from "../ui/theme";
 import { useSigner } from "../wallet";
 import { TITLE_COLORS, nextLevelOf, tagText } from "./look";
 import { GENESIS_XP, mainTitleOf, tagWords, titlesOf, xpNum, xpText } from "./rows";
+import { X_BACK, isXBack } from "./xlink";
 
 /** `wallet`: the connected one. A spinner until its row is here (the read on connect, or a
  *  push); a failed read says so with Try again. The server's rows are the only numbers shown. */
 export function XpCard({ wallet }) {
   const row = useStore(store, (s) => s.xp[wallet]);
   const failed = useStore(store, (s) => s.xpFailed);
+  const x = useStore(store, (s) => s.xLinks[wallet]); // undefined: not read yet
+  const signer = useSigner();
+  const signedIn = useStore(store, (s) => s.session != null && s.session.exp > Date.now() && s.wallet === signer?.publicKey.toBase58());
+  const genesisShown = !!(row || failed);
   const [passed, setPassed] = useState(false);
   let body;
   if (row) body = <Progress row={row} />;
@@ -28,7 +35,12 @@ export function XpCard({ wallet }) {
     <>
       <Card style={{ gap: 12 }}>
         {body}
-        {row || failed ? <GenesisRow has={!!row?.genesis} onPassed={() => setPassed(true)} /> : null}
+        {genesisShown ? <GenesisRow has={!!row?.genesis} onPassed={() => setPassed(true)} /> : null}
+        {x !== undefined ? <XRow x={x} /> : null}
+        {/* once for both rows: either button signs in first */}
+        {!signedIn && ((genesisShown && !row?.genesis) || x === null) ? (
+          <T v="small" color={C.text2}>Your wallet signs you in to Mooner first. No SOL moves.</T>
+        ) : null}
       </Card>
       {/* outside the card, so it stays up when the new row redraws the card */}
       <Sheet open={passed} onClose={() => setPassed(false)} title="Seeker Genesis">
@@ -121,7 +133,6 @@ function Tags({ row }) {
  *  while it works, so a screen reader's focus stays on it. */
 function GenesisRow({ has, onPassed }) {
   const signer = useSigner();
-  const signedIn = useStore(store, (s) => s.session != null && s.session.exp > Date.now() && s.wallet === signer?.publicKey.toBase58());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const pressing = useRef(false); // set at once, so a second tap before the re-render does nothing
@@ -169,8 +180,77 @@ function GenesisRow({ has, onPassed }) {
           <PillButton title="Check" busy={busy} onPress={check} accessibilityLabel="Check this wallet for a Seeker Genesis Token" />
         )}
       </View>
-      {!has && !signedIn ? <T v="small" color={C.text2}>Your wallet signs you in to Mooner first. No SOL moves.</T> : null}
       {error && !has ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
+    </View>
+  );
+}
+
+/** X's sign-in page in the browser (a Custom Tab on Android), closed by itself on the way back:
+ *  the link X sent back, or null when it was closed first. */
+async function openAuth(url) {
+  if (isXBack(url)) return url; // linked already (the demo server): no page to show
+  const r = await WebBrowser.openAuthSessionAsync(url, X_BACK);
+  return r.type === "success" ? r.url : null;
+}
+
+const FLOOR_TEXT = `Raider XP counts X accounts with ${RAIDER_FLOOR.followers}+ followers, made ${RAIDER_FLOOR.days}+ days ago.`;
+
+/** "X": Link X (signs in first if needed, then X's own page asks you to allow it), or your
+ *  handle once linked: posts and reposts about a coin earn Raider XP (engine/server/raiders.js).
+ *  An account under RAIDER_FLOOR says so, and can be swapped for another. Unlink is in
+ *  Settings. `x`: the store's xLinks row, null for none. */
+function XRow({ x }) {
+  const signer = useSigner();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const pressing = useRef(false); // set at once, so a second tap before the re-render does nothing
+  const low = x?.ok === false;
+
+  async function link() {
+    if (pressing.current || !signer) return;
+    pressing.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await store.getState().linkX(signer, openAuth);
+      if (r.ok) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      else if (r.error) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        setError(r.error);
+      }
+    } finally {
+      pressing.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={{ borderTopWidth: 1, borderColor: C.line, paddingTop: 12, gap: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <T style={{ fontFamily: F.semi, fontSize: 15 }} numberOfLines={1}>{x ? `@${x.handle}` : "X"}</T>
+          <T v="small" color={low ? C.text2 : undefined}>
+            {!x ? "Link your X. Posts and reposts about a coin earn Raider XP." : low ? FLOOR_TEXT : "Your posts and reposts about a coin earn Raider XP."}
+          </T>
+        </View>
+        {x && !low ? (
+          <View
+            accessible
+            accessibilityLabel={`X linked as ${x.handle}`}
+            style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: `${C.up}21`, alignItems: "center", justifyContent: "center" }}
+          >
+            <CheckIcon color={C.up} size={16} />
+          </View>
+        ) : (
+          <PillButton
+            title={low ? "Change" : "Link X"}
+            busy={busy}
+            onPress={link}
+            accessibilityLabel={low ? "Link another X account" : "Link your X account"}
+          />
+        )}
+      </View>
+      {error ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
     </View>
   );
 }

@@ -71,7 +71,16 @@
           }
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "backgroundColor": "#07080b"
+        }
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": false

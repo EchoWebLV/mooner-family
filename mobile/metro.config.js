@@ -26,4 +26,28 @@ config.resolver.resolveRequest = (context, name, platform) => {
   return ctx.resolveRequest(ctx, name, platform);
 };
 
+// `expo start --web` only: the server's /api/rpc has no CORS (rpcproxy.js), so the app in a
+// browser calls this dev server's /api/rpc (config.js) and it's forwarded here, as web/'s
+// vite proxy does. Phone builds call the server directly and never pass through this.
+const SERVER = process.env.EXPO_PUBLIC_MOONER_SERVER || "https://app.mooner.family";
+const enhance = config.server.enhanceMiddleware;
+config.server.enhanceMiddleware = (middleware, server) => {
+  const next = enhance ? enhance(middleware, server) : middleware;
+  return (req, res, fallthrough) => {
+    if (req.url !== "/api/rpc" || req.method !== "POST") return next(req, res, fallthrough);
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", async () => {
+      try {
+        const r = await fetch(`${SERVER}/api/rpc`, { method: "POST", headers: { "content-type": "application/json" }, body: Buffer.concat(chunks) });
+        res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "application/json" });
+        res.end(Buffer.from(await r.arrayBuffer()));
+      } catch (e) {
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `dev proxy: ${e.message}` }));
+      }
+    });
+  };
+};
+
 module.exports = config;

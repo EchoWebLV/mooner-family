@@ -19,7 +19,7 @@ function headline(stage, coin, who) {
 
 /** { title, message } for sharing presale `view` (a list or a detail view). `launched`: its
  *  launched row or undefined. `wallet`: the connected wallet (base58) or null; the link then
- *  carries `?ref=<wallet>`. `N`: info.N. `base`: config.js BASE. `now`: ms. null while the
+ *  carries `?ref=<wallet>`. `N`: info.N. `base`: config.js LINKS. `now`: ms. null while the
  *  presale is OPEN past its deadline: no one can join it, and it hasn't launched or closed
  *  yet, so there is nothing true to say; the room shows no Share button then. */
 export function shareOf({ view, launched, wallet, N, base, now }) {

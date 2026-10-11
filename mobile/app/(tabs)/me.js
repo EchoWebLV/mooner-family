@@ -1,5 +1,5 @@
-// Me: the live picture with Settings (Sounds, Disconnect) on glass; your face, wallet and Copy;
-// your balance and rank; your XP and the Seeker Genesis check; and your launches. With no
+// Me: the live picture with Settings (Sounds, Unlink X, Disconnect) on glass; your face, wallet and Copy;
+// your balance and rank; your XP, the Seeker Genesis check and Link X; and your launches. With no
 // wallet, the same Connect Seed Vault as the Connect screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Pressable, Switch, View } from "react-native";
@@ -12,7 +12,7 @@ import { BOARD_TOP } from "../../../engine/src/xp.js";
 import { store } from "../../src/app";
 import { rowsOf } from "../../src/me";
 import { useConnect } from "../../src/useConnect";
-import { useAccount, useWalletActions } from "../../src/wallet";
+import { useAccount, useSigner, useWalletActions } from "../../src/wallet";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face } from "../../src/ui/Face";
 import { Glass, SceneHeader } from "../../src/ui/Glass";
@@ -30,6 +30,8 @@ const COPIED_MS = 2_000;
 
 /** The picture's height, the status bar's room included. */
 const SCENE_PT = 150;
+/** The crew under the dusk sky, as the wireframe (the rocket is the Ranks header). */
+const ME_FOCUS = 0.42;
 
 /** Your face's size; half of it hangs over the picture's bottom edge. */
 const FACE_PT = 92;
@@ -74,13 +76,14 @@ export default function Me() {
         <Wallet key={wallet} wallet={wallet} onSettings={openSettings} />
       ) : (
         <>
-          <SceneHeader name="live" height={SCENE_PT} motion="lift" title="Me" />
+          <SceneHeader name="live" height={SCENE_PT} motion="lift" focus={ME_FOCUS} title="Me" />
           {account === undefined || leaving ? <Loading /> : <SignedOut />}
         </>
       )}
       <Sheet open={settings && !!wallet} onClose={() => setSettings(false)} title="Settings">
         <View style={{ gap: 16 }}>
           <SoundsRow />
+          {wallet ? <UnlinkX wallet={wallet} /> : null}
           <Button title="Disconnect" kind="quiet" busy={leaving} onPress={signOut} />
         </View>
       </Sheet>
@@ -89,6 +92,38 @@ export default function Me() {
 }
 
 const Gap = () => <View style={{ height: 12 }} />;
+
+/** Unlink X, while this wallet has an X account linked (Link X is on the XP card): Raider XP
+ *  stops counting its posts, and what it earned stays. Signs in first if needed. */
+function UnlinkX({ wallet }) {
+  const x = useStore(store, (s) => s.xLinks[wallet]);
+  const signer = useSigner();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const pressing = useRef(false); // set at once, so a second tap before the re-render does nothing
+  if (!x) return null;
+
+  async function unlink() {
+    if (pressing.current || !signer) return;
+    pressing.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await store.getState().unlinkX(signer);
+      if (!r.ok) setError(r.error);
+    } finally {
+      pressing.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={{ gap: 6 }}>
+      <Button title={`Unlink X (@${x.handle})`} kind="quiet" busy={busy} onPress={unlink} />
+      {error ? <T v="small" color={C.down} accessibilityLiveRegion="polite">{error}</T> : null}
+    </View>
+  );
+}
 
 const Loading = () => (
   <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
@@ -156,6 +191,7 @@ function Wallet({ wallet, onSettings }) {
           name="live"
           height={SCENE_PT}
           motion="lift"
+          focus={ME_FOCUS}
           title="Me"
           right={
             <Glass label="Settings" onPress={onSettings}>

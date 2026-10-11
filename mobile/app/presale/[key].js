@@ -22,7 +22,7 @@ import { GetBack, Line, SeatCard } from "../../src/room/YourSeat";
 import { useNewLines } from "../../src/room/useNewLines";
 import { bottomOf, claimedOf, heroOf, isKey, joinedSince, lockedCommit, poolLine, refToNote, walletsIn, whoKnown } from "../../src/room/room";
 import { shareOf } from "../../src/room/share";
-import { BASE } from "../../src/config";
+import { LINKS } from "../../src/config";
 import { Cells } from "../../src/ui/Cells";
 import { CoinImage } from "../../src/ui/CoinImage";
 import { Face } from "../../src/ui/Face";
@@ -180,7 +180,7 @@ export default function Room() {
   // A join going on with its sheet closed (by a tap outside it, or back): its steps show here.
   const joinBusy = busy?.kind === "join" && busy.key === key && !joinOpen && bottom.kind !== "seat";
   // null while the presale is OPEN past its deadline: no Share or Invite then (src/room/share.js)
-  const shareText = shareOf({ view, launched, wallet, N: info.N, base: BASE, now });
+  const shareText = shareOf({ view, launched, wallet, N: info.N, base: LINKS, now });
   const onShare = () => {
     if (shareText) Share.share(shareText, { dialogTitle: "Share this presale" }).catch(() => {});
   };
