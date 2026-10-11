@@ -6,7 +6,7 @@ import '@/globals.css'
 import { PrivyProvider, usePrivy, type PrivyClientConfig } from '@privy-io/react-auth'
 import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana'
 import { createSolanaRpc, createSolanaRpcSubscriptions } from '@solana/kit'
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { BadgesScreen } from '@/components/badges/BadgesScreen'
@@ -23,6 +23,7 @@ import { TokenScreen } from '@/components/token/TokenScreen'
 import { NotFound } from '@/components/ui/NotFound'
 import { useApp, WorldProvider } from '@/components/world/WorldProvider'
 import { BOARDS, type Board } from '@/lib/leaderboard'
+import { loadSounds, pageCue, play } from '@/lib/sound'
 import { PUBLIC_RPC, SOLANA_RPC } from '@/real/chain.js'
 import { noteRef } from '@/real/refs.js'
 
@@ -73,10 +74,16 @@ const TITLES: Record<string, string> = {
 
 function Title() {
   const { pathname } = useLocation()
+  const prev = useRef<string | null>(null)
+  useEffect(() => loadSounds(), [])
   useEffect(() => {
     const name = TITLES[pathname]
     document.title = name ? `${name} · Mooner` : 'Mooner'
     window.scrollTo(0, 0)
+    // a page change plays its cue (lib/sound.ts), as the phone's screen changes do
+    const cue = pageCue(prev.current, pathname)
+    prev.current = pathname
+    if (cue) play(cue)
   }, [pathname])
   return null
 }

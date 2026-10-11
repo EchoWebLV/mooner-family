@@ -3,7 +3,7 @@
 // The same screen serves New Pairs and Find Match; a launched token hands over to its token page.
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { ChatDock } from '@/components/chat/ChatDock'
 import { Icon } from '@/components/ui/Icon'
 import { NotFound } from '@/components/ui/NotFound'
@@ -12,6 +12,7 @@ import { useApp, useWatch } from '@/components/world/WorldProvider'
 import { LIVE_FLASH_MS, PRESALE_TARGET } from '@/lib/constants'
 import { fmtClock, fmtSol, fmtSolRound } from '@/lib/format'
 import { participantOf, poolLamports } from '@/lib/presale'
+import { play, playChat } from '@/lib/sound'
 import type { Token, World } from '@/lib/types'
 import { CommitPanel } from './CommitPanel'
 import { LaunchSequence } from './LaunchSequence'
@@ -52,6 +53,7 @@ const GLOBAL = { id: 'global', label: 'Global' }
 function PresaleView({ t, world, invite }: { t: Token; world: World; invite?: string }) {
   const channels = useMemo(() => [{ id: t.id, label: '$' + t.ticker }, GLOBAL], [t.id, t.ticker])
   const settling = t.stage !== 'presale' && t.stage !== 'expired'
+  usePresaleSounds(t)
   return (
     <div className={`page ${styles.screen}`}>
       {world.match?.tokenId === t.id && <MatchBanner t={t} world={world} />}
@@ -70,6 +72,28 @@ function PresaleView({ t, world, invite }: { t: Token; world: World; invite?: st
       {settling && <LaunchSequence t={t} now={world.now} />}
     </div>
   )
+}
+
+const NO_LINES: readonly { id: string }[] = []
+
+/** `join` when a wallet takes a seat while the pool fills, `chat` when a line lands in its
+ *  chat, as the phone's room (the first look at either is quiet). */
+function usePresaleSounds(t: Token) {
+  const seen = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const ids = t.presale.participants.map((p) => p.userId)
+    const before = seen.current
+    seen.current = new Set(ids)
+    if (before && t.stage === 'presale' && ids.some((id) => !before.has(id))) play('join')
+  }, [t.presale.participants, t.stage])
+
+  const lines = useApp((s) => s.world.chat[t.id] ?? NO_LINES)
+  const last = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const id = lines.at(-1)?.id ?? null
+    if (last.current !== undefined && id !== last.current && id != null) playChat()
+    last.current = id
+  }, [lines])
 }
 
 /** Find Match put you here: the queue clock runs until it launches, expires or you withdraw. */

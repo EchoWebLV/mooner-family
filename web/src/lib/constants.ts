@@ -3,17 +3,19 @@
 export const LAMPORTS_PER_SOL = 1_000_000_000
 
 // Presale (spec §3.2) — all in lamports
-// 0.5 SOL for testing since 2026-09-30; was 10 SOL (PRESALE_TARGET) and 1 SOL (MAX_COMMIT)
-export const PRESALE_TARGET = 500_000_000
+// 0.5 SOL for testing since 2026-09-30; was 10 SOL (PRESALE_TARGET) and 1 SOL (MAX_COMMIT).
+// VITE_FULL_POOL=1 shows the 10 SOL pool (for recordings against engine/scripts/demo-server.js).
+const FULL_POOL = import.meta.env.VITE_FULL_POOL === '1'
+export const PRESALE_TARGET = FULL_POOL ? 10_000_000_000 : 500_000_000
 export const MIN_COMMIT = 100_000_000
-export const MAX_COMMIT = 500_000_000
+export const MAX_COMMIT = FULL_POOL ? 1_000_000_000 : 500_000_000
 /**
  * The most a creator opens with. The program only locks a pool full when a commit brings it
  * to the target, so a creator opening at the target would sit at 100% until it expires.
  */
 export const MAX_CREATOR_COMMIT = Math.min(MAX_COMMIT, PRESALE_TARGET - MIN_COMMIT)
 /** Amount shortcuts, in SOL, beside each commit's Max button (which is MAX_COMMIT while the pool has room). */
-export const COMMIT_PRESETS = [0.1, 0.25, 0.5] as const
+export const COMMIT_PRESETS = FULL_POOL ? ([0.1, 0.5, 1] as const) : ([0.1, 0.25, 0.5] as const)
 export const COMMIT_STEP = 10_000_000
 export const LAUNCH_SETTLE_MS = 4_000
 /** Every presale runs one hour (the program's DURATION). */

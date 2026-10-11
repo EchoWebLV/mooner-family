@@ -1,6 +1,8 @@
+import { useEffect, useRef } from 'react'
 import { TokenArt } from '@/components/art/TokenArt'
 import { Icon } from '@/components/ui/Icon'
 import { launchPhase } from '@/lib/presale'
+import { play } from '@/lib/sound'
 import type { Token } from '@/lib/types'
 import styles from './LaunchSequence.module.css'
 
@@ -13,6 +15,7 @@ const HEADLINES = ['Pool full', 'Settling to Solana', 'Token created', 'Live'] a
  */
 export function LaunchSequence({ t, now }: { t: Token; now: number }) {
   const phase = t.stage === 'launching' ? launchPhase(now - (t.presale.launchStartedAt ?? now)) : 3
+  usePhaseSounds(phase)
   return (
     <div className={`${styles.overlay} ${phase === 3 ? styles.live : ''}`}>
       <div className={styles.card}>
@@ -42,4 +45,26 @@ export function LaunchSequence({ t, now }: { t: Token; now: number }) {
       </div>
     </div>
   )
+}
+
+/** The phone's launch sounds (mobile/src/room/Moment*.js): stamp + poolfull as it opens, a
+ *  step for each step done, liftoff when it's live, then the stamp and the coins. Each plays
+ *  once, the LIVE ones even after the token page takes over. */
+function usePhaseSounds(phase: number) {
+  const heard = useRef(-1)
+  useEffect(() => {
+    if (phase <= heard.current) return
+    const first = heard.current < 0
+    heard.current = phase
+    if (first) {
+      play('stamp')
+      play('poolfull')
+    }
+    if (phase === 1 || phase === 2) play('step')
+    if (phase === 3) {
+      play('liftoff')
+      window.setTimeout(() => play('stamp'), 700)
+      window.setTimeout(() => play('coins'), 1_300)
+    }
+  }, [phase])
 }

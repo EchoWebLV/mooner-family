@@ -885,6 +885,8 @@ export function createAppStore(): AppStore {
           },
         }
         watched.set(tokenId, w)
+        // its pool already known (the launched list came before this page): read the market now
+        if (launched.get(tokenId)?.pool && !markets.has(tokenId)) w.market.ask()
         const offs = [
           live.subscribe(`presale:${tokenId}`, (m: Push) => {
             if (m.type === 'snapshot') {
