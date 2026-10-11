@@ -1,0 +1,12 @@
+# The words in the 15 s NFT promo (.superpowers/trailer/trailer/nft.py). One spot per line: <spot> | line / line
+# Every claim checked against .superpowers/nft/mooners-1969.json and the waitlist: 1969 Mooners, all trait sets unique,
+# gold skin and laser eyes are on 8 Mooners each, 1 free Mooner per person, 2 for people already on the old list.
+reels | 1969 / MOONERS
+gold  | LEGENDARY / GOLD SKIN · 1 OF 8
+grid  | EVERY ONE / UNIQUE
+laser | LASER EYES / 1 OF 8
+free  | 1 FREE / MOONER
+crown | JOIN WITH / EMAIL + X
+lava  | ALREADY ON THE LIST? / GET 2
+end   | 1969 MOONERS · FREE
+link  | mooner.family

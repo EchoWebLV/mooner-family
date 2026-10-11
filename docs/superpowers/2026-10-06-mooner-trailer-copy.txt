@@ -1,0 +1,21 @@
+# Mooner trailer: the words on screen.
+# Change the text after the "|", save, and ask for a re-render.
+#   "/" splits it onto two lines.
+#   "[OLD > NEW]" shows OLD, then its letters flip into NEW while the shot plays (on the 0:03 hit for "bots").
+#   Leave it empty and nothing shows there.
+#   Big captions always show in capitals. Long lines are shrunk to fit their spot.
+#   Colours stay with the spot: "bots" is red; line 2 of "meteora" and "trade" is green; line 2 of "tokens" and "chart" is gold.
+
+0:00  open     | WANT TO BE / THE FIRST BUY?
+0:02  bots     | SICK OF / [BUNDLES > SNIPERS]?
+0:04  mascot   |
+0:08  logo     | THE CO-OP LAUNCHPAD
+0:10  pulse    | PICK A / LAUNCH.
+0:12  lobby    | CHIP IN SOL.
+0:20  rocket   | POOL FILLS. / IT LAUNCHES.
+0:24  meteora  | THE POOL IS / THE FIRST BUY.
+0:26  tokens   | SAME ENTRY / FOR EVERYONE.
+0:30  chart    | YOU WERE / THE FIRST BUY.
+0:32  trade    | TRADE IT / RIGHT THERE.
+0:40  end      | BE THE FIRST BUY.
+0:40  link     | mooner.family

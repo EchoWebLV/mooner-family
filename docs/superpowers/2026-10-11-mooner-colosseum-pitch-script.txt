@@ -1,0 +1,13 @@
+# Mooner pitch, Colosseum Crypto World's Fair (max 3 min). One line per voice part: id | words.
+# A startup pitch, not a demo (Colosseum's advice). Best read by the founder on camera; [YOU: …] = fill in, then delete the brackets.
+# 292 words + your line (keep it to ~15 words) ≈ 2:50 at the Clock In pitch's pace (302 words = 2:48). Reading it yourself is usually faster.
+hook     | Pump.fun sees tens of thousands of coin launches a day. On our first test launch on mainnet, a bot bought in the same block. By the time you tap buy, you're the bots' exit.
+team     | [YOU: your name, and why you: you and new coins, solo or team.] I'm from Bulgaria, and before Mooner I built MagicPad, a launchpad on MagicBlock.
+insight  | Our insight: don't race the bots. Be in before the coin exists. On Meteora, the first swap in a pool's creation transaction can pay the lowest fee. Make the whole community that swap, and nobody gets ahead.
+how      | A creator opens a pool, people chip in, and it fills instantly on a MagicBlock rollup. When it's full, our program creates the coin and buys for everyone in one transaction, at one price. Bots that buy right after pay a snipe tax from ninety-nine percent.
+proof    | On mainnet, three wallets chipped in equally and got exactly the same tokens. A bot in the same block, with as much SOL as the whole pool, paid a ninety-nine percent fee and got a hundred times fewer.
+platform | Mooner runs on the web and as a native Android app, with Seed Vault on the Seeker. Every coin gets Jupiter trading, a chat, and XP titles: Dev, KOL, Raider, Diamond Hands.
+market   | Pump.fun has earned over one point two billion dollars, and still makes over forty million a month, on launches where bots go first.
+business | We earn from trading fees: after Meteora's cut, half goes to Mooner, and half to the coin's Dev, KOLs, Raiders and Diamond Hands.
+traction | Our program has been live on mainnet since September twenty-fifth. Both apps are built, with over eight hundred tests, and over a hundred people are on the waitlist.
+close    | Launches shouldn't be a race against bots. On Mooner, a coin launches together. Chip in, and moon together.

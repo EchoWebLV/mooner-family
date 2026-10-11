@@ -1,0 +1,24 @@
+# Mix video 1 (app + NFTs, 30 s, breakcore, glitch look): the words on screen. Built by .superpowers/trailer/trailer/mix.py 1.
+# Change the text after the "|", save, and ask for a re-render. "/" splits it onto two lines.
+# "[OLD > NEW]" shows OLD, then glitches into NEW. Leave it empty and nothing shows there.
+# App lines are the checked ones from the 2026-10-07 flow v2 copy. NFT lines checked 2026-10-10 against
+# .superpowers/nft/mooners-1969.json (1969 Mooners, no two alike, 84 traits in 9 slots, 8 legendary traits) and the live
+# site ("email + X for early access, plus a free Mooner NFT. already on the list? ... 2 NFTs at mint").
+# The video has AI motion clips in it, so it makes no "no AI" claim.
+hook   | SICK OF / [BUNDLES > SNIPERS]?
+coop   | THE CO-OP LAUNCHPAD
+pick   | PICK A / LAUNCH.
+chip   | CHIP IN / SOL.
+fills  | POOL / FILLS.
+launch | IT / LAUNCHES.
+first  | THE POOL IS / THE FIRST BUY.
+void   | early access: email + X / bonus: 1 free mooner nft / mooners: 1969
+horns  | 1969 / MOONERS
+legend | LEGENDARY
+tunnel | NO TWO / ALIKE
+mutate | 84 TRAITS / 9 SLOTS
+free   | 1 FREE / MOONER
+list   | ALREADY ON THE LIST? / GET 2
+end    | BE THE FIRST BUY.
+offer  | EARLY ACCESS + 1 FREE MOONER
+link   | mooner.family

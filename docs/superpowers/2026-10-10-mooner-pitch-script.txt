@@ -1,0 +1,13 @@
+# Mooner pitch, Clock In (~3 min). One line per voice part: id | words the voice says.
+# Edit the words after "|", then re-render: cd .superpowers/pitch && ../trailer/venv/bin/python pitch.py all
+hook    | Every coin launch on Solana starts the same way. A bot buys in the very first block. Then the bundlers. By the time you tap buy, you're somebody's exit.
+meet    | Mooner fixes that. It's a launchpad for Seeker where a coin launches together. You don't race the bots. You join the pool before the coin even exists.
+how1    | A creator opens a pool. People chip in, from a tenth of a SOL up to one. Joining runs on a MagicBlock rollup, so it's instant.
+how2    | When the pool fills, our contract creates the Meteora pool and makes one single buy, at the lowest fee, in the same transaction.
+how3    | Everyone gets the same price, and tokens in proportion to what they put in. Anyone who tries to snipe right after the launch pays a heavy snipe tax.
+proof   | We tested it on mainnet. Three wallets got exactly the same amount, down to the decimal. A sniper bot hit the same block with the same SOL. It paid a ninety-nine percent fee, and got a hundred times fewer tokens.
+seeker1 | And it's built for the phone, not a website in a wrapper. A native app. Sign in with Seed Vault through Mobile Wallet Adapter, or with X or email.
+seeker2 | Every coin has a live chart, trades routed by Jupiter into its Meteora pool, holders, and its own chat.
+habit   | And there's a reason to come back every day. Everything you do earns XP. Launch coins, and you're a Dev. Back other people's launches, you're a KOL. Bring people in with your link, you're a Raider. Hold through migration, and you're Diamond Hands. Seeker Genesis holders start with a bonus.
+live    | Mooner is live on Solana mainnet today. Real pools, real launches, on Meteora.
+close   | No snipers. No bundles. One price for everyone. Clock in, chip in, and moon together. This is Mooner.

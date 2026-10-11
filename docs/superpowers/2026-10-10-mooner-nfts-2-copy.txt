@@ -1,0 +1,18 @@
+# The words in the 25 s NFT promo #2 (.superpowers/trailer/trailer/nft2.py). One spot per line: <spot> | line / line
+# Checked 2026-10-10 against .superpowers/nft/mooners-1969.json and web/src/lib/pfp/traits.ts: 1969 Mooners, no two alike,
+# 84 traits in 9 slots, 8 legendary traits on 8 Mooners each, chrome skin (epic) on 15. 1 free Mooner per person, 2 for
+# people already on the old list (as in the 2026-10-09 copy). Mooner #N is render N-1 (.superpowers/nft/meta.py).
+# The video has AI motion clips in it, so it makes no "no AI" claim.
+boot   | 1969 / MOONERS
+laser  | LASER EYES / LEGENDARY · 1 OF 8
+mutate | 84 TRAITS / 9 SLOTS
+ring   | PLANET RING / LEGENDARY · 1 OF 8
+tunnel | NO TWO / ALIKE
+chrome | CHROME SKIN / EPIC · 1 OF 15
+void   | mooners: 1969 / duplicates: 0 / legendary: 1 of 8
+halo   | HALO / LEGENDARY · 1 OF 8
+legend | LEGENDARY
+free   | 1 FREE / MOONER
+list   | ALREADY ON THE LIST? / GET 2
+end    | 1969 MOONERS · FREE
+link   | mooner.family

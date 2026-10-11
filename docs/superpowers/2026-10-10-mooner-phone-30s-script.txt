@@ -1,0 +1,12 @@
+# Mooner, how it works on a phone (~40 s, vertical). One line per part: id | words the voice says.
+# The voice reads all lines in one take. Edit the words after "|", then re-render:
+#   cd .superpowers/phone30 && vault run -- ../trailer/venv/bin/python tts.py && ../trailer/venv/bin/python tighten.py && node render.mjs all
+# (a changed length also wants new music: vault run -- ../trailer/venv/bin/python music.py)
+hook   | Every launch, bots and bundles buy before you. Mooner fixes that.
+pick   | Pick a coin that's still filling, and chip in. A tenth of a SOL, up to one.
+full   | When the pool fills, the whole pot buys at once. Same price for everyone, even the dev.
+tokens | Your tokens land in your wallet. Nothing to sign.
+trade  | Then trade it, and chat with the holders.
+fees   | And the best part: forty percent of the trading fees go back to the community.
+titles | Open a launch, you're the Dev. Call it on GMGN, Axiom or pump.fun, you're a KOL. Post about it on X, like and repost it, you're a Raider. Hold till it moons, you're Diamond Hands. Each title shares a ten percent cut.
+close  | No snipers. No bundles. One price for everyone.

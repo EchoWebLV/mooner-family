@@ -1,0 +1,20 @@
+# Mooner desktop video: the words on screen.
+# Change the text after the "|", save, and ask for a re-render.
+#   "/" splits it onto two lines.
+#   "[OLD > NEW]" shows OLD, then the line rolls up into NEW while the shot plays (on the 0:04 beat for "bots").
+#   Leave it empty and nothing shows there.
+#   Big captions always show in capitals. Long lines are shrunk to fit their spot.
+#   Colours stay with the spot: "bots" is red; line 2 of "first" and "trade" is green; line 2 of "tokens" is gold.
+
+0:00  open     | WANT TO BE / THE FIRST BUY?
+0:03  bots     | SICK OF / [BUNDLES > SNIPERS]?
+0:06  desk     |
+0:11  logo     | THE CO-OP LAUNCHPAD
+0:13  pulse    | PICK A / LAUNCH.
+0:15  lobby    | CHIP IN SOL.
+0:26  rocket   | IT LAUNCHES / ON METEORA.
+0:28  first    | THE POOL IS / THE FIRST BUY.
+0:33  tokens   | SAME ENTRY / FOR EVERYONE.
+0:35  trade    | TRADE IT / RIGHT THERE.
+0:41  end      | BE THE FIRST BUY.
+0:41  link     | mooner.family

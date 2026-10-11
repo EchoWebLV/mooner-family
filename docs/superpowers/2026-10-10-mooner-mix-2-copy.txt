@@ -1,0 +1,20 @@
+# Mix video 2 (app + NFTs, 30 s, drift phonk, space look): the words on screen. Built by .superpowers/trailer/trailer/mix.py 2.
+# Change the text after the "|", save, and ask for a re-render. "/" splits it onto two lines. Leave it empty and nothing shows.
+# App lines are the checked ones from the 2026-10-07 flow v2 and desktop copy ("IT LAUNCHES ON METEORA"). NFT lines checked
+# 2026-10-10 against .superpowers/nft/mooners-1969.json (chrome skin is epic, on 15 Mooners) and the live site (email + X for
+# early access plus a free Mooner NFT; already on the list: 2 at mint). The video has AI motion clips, so no "no AI" claim.
+hook   | LAUNCH / TOGETHER.
+coop   | THE CO-OP LAUNCHPAD
+pick   | PICK A / LAUNCH.
+chip   | CHIP IN / SOL.
+launch | IT LAUNCHES / ON METEORA.
+first  | THE POOL IS / THE FIRST BUY.
+xp     | EARN XP. / RANK UP.
+trade  | TRADE IT / RIGHT THERE.
+orbit  | JOIN EARLY. / GET A FREE MOONER.
+chrome | CHROME SKIN / EPIC · 1 OF 15
+legend | LEGENDARY
+list   | ALREADY ON THE LIST? / GET 2
+end    | LAUNCH TOGETHER.
+offer  | EARLY ACCESS + 1 FREE MOONER
+link   | mooner.family

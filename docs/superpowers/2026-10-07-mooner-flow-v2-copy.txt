@@ -1,0 +1,21 @@
+# Mooner flow video v2 (web + phone, the fast cut): the words on screen.
+# Change the text after the "|", save, and ask for a re-render.
+#   "/" splits it onto two lines.
+#   "[OLD > NEW]" shows OLD, then glitches into NEW.
+#   Leave it empty and nothing shows there.
+#   Big captions always show in capitals. Long lines are shrunk to fit their spot.
+#   Colours stay with the spot: line 2 of "bots" is red; line 2 of "pick", "chip", "fills", "launch", "first" and "trade"
+#   is green; line 2 of "same" and "xp" is gold.
+
+0:00  bots     | SICK OF / [BUNDLES > SNIPERS]?
+0:02  coop     | THE CO-OP LAUNCHPAD
+0:03  pick     | PICK A / LAUNCH.
+0:05  chip     | CHIP IN / SOL.
+0:10  fills    | POOL / FILLS.
+0:16  launch   | IT / LAUNCHES.
+0:18  first    | THE POOL IS / THE FIRST BUY.
+0:21  same     | SAME ENTRY / FOR EVERYONE.
+0:23  xp       | EARN XP. / RANK UP.
+0:24  trade    | TRADE IT / RIGHT THERE.
+0:30  end      | BE THE FIRST BUY.
+0:30  link     | mooner.family

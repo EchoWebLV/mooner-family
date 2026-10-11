@@ -42,9 +42,12 @@ Pulse, Create and Me read as plain black screens. The lane names (New Pairs, Fin
 
 ## Ranks (pushed, `app/ranks.js`)
 
-- **Data:** the server's XP rows (piece 6's `xp` messages on the `profiles` topic: the top 500, then changed rows), kept by the store.
+- **Data:** the server's XP rows (piece 6's `xp` messages on the `profiles` topic: the top 500 by total (`BOARD_TOP`), then changed rows), kept by the store, plus your own row read on connect (again on Try again and on a reconnect).
   - Until the `profiles` topic's first snapshot there's a spinner.
   - After it, with no `xp` message yet or no rows, it shows "No ranks yet" / "XP comes from launches: open one, chip in, bring friends, hold." (A server without XP never sends one.)
+  - A title's board with nobody on it shows "No KOL XP yet" (that title's name) and what earns it; the podium stays up, empty.
+  - Each board lists its top 500.
+  - **Known limit:** points only grow, so a wallet missing from the rows has no more total than the 500th. Overall is exact up to 500 (but for an exact tie at the cut). The title boards come from the same rows, so once more than 500 wallets have XP they are not a true per-title top 500: a wallet outside the overall top 500 can be missing from a title's board.
 - **Scene:** `live`, 300 pt, with back, "Ranks", and an info glass button. Info opens a sheet listing the four titles and what earns each, read from `POINTS`.
 - **Podium** over the scene's bottom, for the top 3 of the board:
   - #1 in the middle: a 76 pt face, gold ring and glow, a crown icon above.
@@ -52,9 +55,12 @@ Pulse, Create and Me read as plain black screens. The lane names (New Pairs, Fin
   - Each shows its place badge, short wallet and XP (mono, `up`).
 - **Board chips:** Overall · Dev · KOL · Raider · Diamond Hands. Overall sorts by `total` and each title by its own XP. Ties break by wallet. Rows with 0 on that board are left out.
 - **Rows #4 and down:** rank (mono, `text2`), a 34 pt face, short wallet, a title tag, XP (mono). On Overall the tag is the wallet's top title and its level; on a title's board, that title and its level there. A tap does nothing for now: there's no phone profile page.
-- **Your row** is pinned at the bottom with an accent rim: "#14", your face, "you", your top title tag, your XP on this board.
-  - If you aren't on this board, it shows "Not ranked yet: chip in to a launch".
+- **Your row** is pinned at the bottom with an accent rim: "#14", your face, "you", the board's tag (your top title on Overall, that title on a title's board), your XP on this board.
+  - Past the top 500 it shows "500+" for the rank.
+  - With no XP on this board: on Overall, "Not ranked yet: chip in to a launch"; on a title's board, "No <title> XP yet" and what earns that title (the How XP works line).
+  - While your own row isn't here yet, "–" for the rank. If its read failed, "Couldn't read your rank" with Try again.
   - With no wallet, there is no pinned row.
+- **Screen readers:** the podium is one element listing the places in order ("1st, Abcd…wxyz, 1,240 XP; 2nd, …"); each row and your row is one element (rank, wallet or "you", title and level, XP).
 
 ## Create (tab)
 
@@ -86,13 +92,17 @@ Pulse, Create and Me read as plain black screens. The lane names (New Pairs, Fin
 - **You:**
   - Your face at 92 pt, overlapping the scene's bottom edge, with a gold ring.
   - Beside it, your short wallet with the copy icon (the existing Copy behaviour).
-- **Two boxes:** Balance ("2.41 SOL", with "≈ $x" under it when the price is known) and Rank ("#14 of N" from the Overall board; "–" until XP rows arrive; "Not ranked" if you have no row).
+- **Two boxes:** Balance ("2.41 SOL", with "≈ $x" under it when the price is known) and Rank on Overall:
+  - "#14" with "of N" under it, or "of 500+" once 500 or more wallets are on the board.
+  - "500+" (no "of") past the top 500.
+  - "–" until the XP rows and your own row arrive; "Not ranked" (small text) if you have no XP.
 - **XP card:**
   - Your top title and level ("KOL II") on the left. Your streak on the right when `streak.days > 0`: the fire emoji and "N days".
   - A bar to your top title's next level, with "1,240 / 2,000 XP" and "760 to KOL III". At level V it reads "Max level".
   - The four title tags.
   - The Seeker Genesis check (piece 6 Task 16's flow) as a row in the card: "Seeker Genesis" with Check, or the Genesis mark once claimed.
-  - No row yet: "No XP yet. Chip in to a launch to start."
+  - No XP yet: "No XP yet. Chip in to a launch to start."
+  - Your row's read failed: "Couldn't read your XP right now." with Try again.
 - **Your launches:** today's presale rows (`rowsOf`), as list rows with coin, $TICKER and the status pill.
 - **Signed out:** the scene without the gear, then as today (logo, Connect Seed Vault, Sounds).
 
