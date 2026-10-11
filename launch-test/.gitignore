@@ -1,0 +1,10 @@
+# secrets: wallets and pre-generated keypairs never leave this machine
+.env
+.env.*
+*.env
+*keypair*.json
+state.json
+__pycache__/
+presale-program/target/
+er-speed/target/
+er-speed/node_modules/

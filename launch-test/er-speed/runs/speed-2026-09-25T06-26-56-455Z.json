@@ -1,0 +1,50 @@
+{
+  "started": "2026-09-25T06:26:56.455Z",
+  "base": "https://api.devnet.solana.com",
+  "program": "DwUdqmmLPbmNGzeovUAmfojqjPjzH9ZZuSsyk2Trk4gj",
+  "regions": {
+    "eu": {
+      "rounds": [
+        {
+          "delegate_solana_ms": 427,
+          "enter_er_ms": 2729,
+          "enter_er_tries": 1,
+          "join_ms": [
+            1476,
+            1496
+          ],
+          "exit_er_tx_ms": 1324,
+          "back_on_solana_ms": 1463,
+          "launch_ready_ms": 1892,
+          "commit_on_solana_ms": 2144,
+          "base_commit_sig": "3B9JDKkwNKYtcDvu3ztTJ1BwHt99NijwAuK9R6HcCPzxKBiFQcHuXPUjyhWaUxmpt3Hx3nYN44Nj2wbG8eFPWdaG",
+          "exit_sig": "5qj48qCmp6vUf5Pwa8PrYSuyFZe8jG1eSFW2pP1pMVrVTM3MpXi8HKg77XSbgvDm49jBQNcMYugYASe9ADqsFrBE",
+          "launch_sig": "c4CrrzJTPTrNtQmUHeBUfuM9EdLF8wX4MybjZjuNHZUc5HDG5kpiz8eSNRL2ERRmtjpAs8QeEbKWiEPbQCGYQFw",
+          "pool_lamports": 15690880
+        }
+      ],
+      "summary": {
+        "enter_er_ms": {
+          "min": 2729,
+          "median": 2729,
+          "max": 2729
+        },
+        "join_ms": {
+          "min": 1476,
+          "median": 1496,
+          "max": 1496
+        },
+        "back_on_solana_ms": {
+          "min": 1463,
+          "median": 1463,
+          "max": 1463
+        },
+        "launch_ready_ms": {
+          "min": 1892,
+          "median": 1892,
+          "max": 1892
+        }
+      }
+    }
+  }
+}

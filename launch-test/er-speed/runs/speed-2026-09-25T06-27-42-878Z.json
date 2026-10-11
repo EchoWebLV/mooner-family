@@ -1,0 +1,78 @@
+{
+  "started": "2026-09-25T06:27:42.878Z",
+  "base": "https://api.devnet.solana.com",
+  "program": "DwUdqmmLPbmNGzeovUAmfojqjPjzH9ZZuSsyk2Trk4gj",
+  "regions": {
+    "eu": {
+      "ping_ms": 196,
+      "rounds": [
+        {
+          "delegate_solana_ms": 651,
+          "enter_er_ms": 1254,
+          "enter_er_tries": 1,
+          "join_ms": [
+            396,
+            401
+          ],
+          "exit_er_tx_ms": 394,
+          "back_on_solana_ms": 927,
+          "launch_tx_ms": 574,
+          "launch_ready_ms": 1546,
+          "solana_txs": [
+            {
+              "sig": "3fL5cPRT5XTrurApiEMH89JjjtyNJ7Tam3bRRAKthkors6bbBLK2JV2oNxkTpXHjnsHedsdVaZJzze8KPFanhEP2",
+              "slot": 503857340,
+              "err": null
+            },
+            {
+              "sig": "4EJX2THnQmjUR9GBqumVu1UXz6TMChEXQLVNzgeGGDmSvrutXpWMDZvSY3HcFaQ89rZ8sBuQ54puJkiq8Faz27pj",
+              "slot": 503857322,
+              "err": null
+            },
+            {
+              "sig": "c4CrrzJTPTrNtQmUHeBUfuM9EdLF8wX4MybjZjuNHZUc5HDG5kpiz8eSNRL2ERRmtjpAs8QeEbKWiEPbQCGYQFw",
+              "slot": 503857083,
+              "err": null
+            },
+            {
+              "sig": "3B9JDKkwNKYtcDvu3ztTJ1BwHt99NijwAuK9R6HcCPzxKBiFQcHuXPUjyhWaUxmpt3Hx3nYN44Nj2wbG8eFPWdaG",
+              "slot": 503857077,
+              "err": null
+            }
+          ],
+          "launch_slot": 503857344,
+          "exit_sig": "48gafj6QaDnuUPEypa4oWxMGFgTsk6YvUMaaLEcngJQNX6YrahCkZiciajDJwr5BnVbVp9EXHeN9w2kDLbaECruv",
+          "launch_sig": "2TBcaJ1od5f6nVprppCBBtk2BaUz2BXbwRd2L2QXAJ8R4ndx2i3M412CEei8m69YTNzU8dYweVYUCAHLi6w3x3RV",
+          "pool_lamports": 30690880
+        }
+      ],
+      "summary": {
+        "enter_er_ms": {
+          "min": 1254,
+          "median": 1254,
+          "max": 1254
+        },
+        "join_ms": {
+          "min": 396,
+          "median": 401,
+          "max": 401
+        },
+        "exit_er_tx_ms": {
+          "min": 394,
+          "median": 394,
+          "max": 394
+        },
+        "back_on_solana_ms": {
+          "min": 927,
+          "median": 927,
+          "max": 927
+        },
+        "launch_ready_ms": {
+          "min": 1546,
+          "median": 1546,
+          "max": 1546
+        }
+      }
+    }
+  }
+}

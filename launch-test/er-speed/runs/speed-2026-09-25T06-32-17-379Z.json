@@ -1,0 +1,346 @@
+{
+  "started": "2026-09-25T06:32:17.379Z",
+  "base": "https://api.devnet.solana.com",
+  "program": "DwUdqmmLPbmNGzeovUAmfojqjPjzH9ZZuSsyk2Trk4gj",
+  "regions": {
+    "as": {
+      "ping_ms": 31,
+      "rounds": [
+        {
+          "delegate_solana_ms": 807,
+          "enter_er_ms": 990,
+          "enter_er_tries": 1,
+          "join_ms": [
+            64,
+            65
+          ],
+          "exit_er_tx_ms": 66,
+          "back_on_solana_ms": 1103,
+          "launch_tx_ms": 735,
+          "launch_ready_ms": 1874,
+          "solana_txs": [
+            {
+              "sig": "gbMEueA81v5cXg6jPzJMo3tN9dPJBkVr6u5oN3mDqt7GjKnLXkjNr1cHursq6eeaFmPvg6Gq7rdrmPiZ4Z2ahwq",
+              "slot": 503858985,
+              "err": null
+            },
+            {
+              "sig": "3t1YySv495u9sxduvvzinnQYmonVt6K42jh3eVMbRK9qHoMZuJWMmLVYriftyX4Wx6CdcykhAQWoLw8ZMhsSZ1dK",
+              "slot": 503858976,
+              "err": null
+            },
+            {
+              "sig": "4GzoWVFWU3sSEph9XUdzbNJp4t4LFBzehU4JCggrennXX7r1GMdMYcikP3N7vJGbxhkrUyeCU4gTtZxbT6daHpcf",
+              "slot": 503858963,
+              "err": null
+            }
+          ],
+          "launch_slot": 503858990,
+          "exit_sig": "5qpdqzBS3GDmNrgsyfusGBB7kzGewarSHqRiLcKGaMcqdxaK8e3FoEEMmR4syAoYXCpZmbki1ptwbf7jEgKQ9tfH",
+          "launch_sig": "4YoUzmHzEjnWXdCGR8J5rQFNevMam3fKZGjvkdi42BBphsVLVbpGX9Zk4evMnC6m9faAzNHF3SaavJM5ykdNQ9ff",
+          "pool_lamports": 6690880
+        },
+        {
+          "delegate_solana_ms": 11248,
+          "enter_er_ms": 11535,
+          "enter_er_tries": 1,
+          "join_ms": [
+            80,
+            79
+          ],
+          "exit_er_tx_ms": 77,
+          "back_on_solana_ms": 1194,
+          "launch_tx_ms": 747,
+          "launch_ready_ms": 1980,
+          "solana_txs": [
+            {
+              "sig": "51zmidZnmyZNLM9D3hcCBmHByW8cW46pXyac6s1FNy3Yt1CceVueWwTXdHu4Sav1dVQrBAqkQrCoquQbr5JUp33h",
+              "slot": 503859072,
+              "err": null
+            },
+            {
+              "sig": "m4jFw6A8BLfLUkGd6rfpAtp4a2DXSArb67qV5beZQx2yMxDw1oZzUPyaWrNZu5oFfYbMoBQ8LwfuNqGicYW1kCA",
+              "slot": 503858998,
+              "err": null
+            },
+            {
+              "sig": "4YoUzmHzEjnWXdCGR8J5rQFNevMam3fKZGjvkdi42BBphsVLVbpGX9Zk4evMnC6m9faAzNHF3SaavJM5ykdNQ9ff",
+              "slot": 503858990,
+              "err": null
+            },
+            {
+              "sig": "gbMEueA81v5cXg6jPzJMo3tN9dPJBkVr6u5oN3mDqt7GjKnLXkjNr1cHursq6eeaFmPvg6Gq7rdrmPiZ4Z2ahwq",
+              "slot": 503858985,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859078,
+          "exit_sig": "JuPN6aHt1pAnRH8zJB4cxbzejquZnyr5gPSPyyxkdpFGkYcXoD6KkWBA4QcZtsbpeynu8AAnwcuJ5ZZgqQ42t3r",
+          "launch_sig": "1eoNX3J827zEuauTieegmXCcWnnD5CmwdxidfKmRt37QY1tgYm5rjZxTGr3bxsvrWdr1csS4hJawpHtThThTzd5",
+          "pool_lamports": 12690880
+        },
+        {
+          "delegate_solana_ms": 831,
+          "enter_er_ms": 2821,
+          "enter_er_tries": 6,
+          "join_ms": [
+            77,
+            83
+          ],
+          "exit_er_tx_ms": 79,
+          "back_on_solana_ms": 796,
+          "launch_tx_ms": 755,
+          "launch_ready_ms": 1593,
+          "solana_txs": [
+            {
+              "sig": "9CCsS9nd4Gfy4vasUDt553W7zN81hoMMczhEDjurs8Vu5JTKZVnavbEZHQ1nbGT4SM4XhdnixGZZmRAQVLkHhpw",
+              "slot": 503859106,
+              "err": null
+            },
+            {
+              "sig": "2jiM2c6FGLyn9uL4MnvYNhLpTaHo2eQQBtSpkWH994bHtWXWp2yTBqqLpzdmsQgpFSNWgbERJrfhUUVQZP1hNsb8",
+              "slot": 503859088,
+              "err": null
+            },
+            {
+              "sig": "1eoNX3J827zEuauTieegmXCcWnnD5CmwdxidfKmRt37QY1tgYm5rjZxTGr3bxsvrWdr1csS4hJawpHtThThTzd5",
+              "slot": 503859078,
+              "err": null
+            },
+            {
+              "sig": "51zmidZnmyZNLM9D3hcCBmHByW8cW46pXyac6s1FNy3Yt1CceVueWwTXdHu4Sav1dVQrBAqkQrCoquQbr5JUp33h",
+              "slot": 503859072,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859110,
+          "exit_sig": "swjaomB5G5vQb4sKSU5nXJEgi91akkKHDqFZLoKJGfLzvs3PAZ1C7q5zzTDxFimrsxGJkAvamuNT6kFKD6m3noK",
+          "launch_sig": "3Ht2rXfiDuvfykkbfonHyGabGb2iEseg7fhvRFx4FXgafYLYaa6HqrKFbs9SSGqwc4hMtpaxXi6SRaaAR2VsUZww",
+          "pool_lamports": 18690880
+        },
+        {
+          "delegate_solana_ms": 9873,
+          "enter_er_ms": 10229,
+          "enter_er_tries": 1,
+          "join_ms": [
+            80,
+            83
+          ],
+          "exit_er_tx_ms": 82,
+          "back_on_solana_ms": 804,
+          "launch_tx_ms": 797,
+          "launch_ready_ms": 1652,
+          "solana_txs": [
+            {
+              "sig": "2PA7rXLkxiCJTA1KFMnhP8fs7jt8w1j8YFeQru89VzY3JAJyeD19S1LtA59D1SLKGNa5WWchc4AJrX9WwfW1fWsC",
+              "slot": 503859180,
+              "err": null
+            },
+            {
+              "sig": "61XaTEx8iqzELRWR3gGGNk8nxLTYijCFv95gWKX4JWtGkW4QWfXpesg1ZTcLgKRBaJwQxE2HCxysVrcqfbu12zJ5",
+              "slot": 503859115,
+              "err": null
+            },
+            {
+              "sig": "3Ht2rXfiDuvfykkbfonHyGabGb2iEseg7fhvRFx4FXgafYLYaa6HqrKFbs9SSGqwc4hMtpaxXi6SRaaAR2VsUZww",
+              "slot": 503859110,
+              "err": null
+            },
+            {
+              "sig": "9CCsS9nd4Gfy4vasUDt553W7zN81hoMMczhEDjurs8Vu5JTKZVnavbEZHQ1nbGT4SM4XhdnixGZZmRAQVLkHhpw",
+              "slot": 503859106,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859184,
+          "exit_sig": "3JGcdT8CV1fPXkey6fmK1j6sXvoEBhG3MbJkN3UNm4is7ukv2S7Ef74rUmupVbGu8ZFzReE1TPQUkBtDuRTTUMU8",
+          "launch_sig": "Wm6Dv8hJoVBd9VJDBgfUzZ1i2AJbteRhGHn8gRNiYCWJA7XzvdxvdeF5XjNo7Miun4bx3Z8QVitYQgYhVmvRSNv",
+          "pool_lamports": 24690880
+        },
+        {
+          "delegate_solana_ms": 8654,
+          "enter_er_ms": 9025,
+          "enter_er_tries": 1,
+          "join_ms": [
+            101,
+            89
+          ],
+          "exit_er_tx_ms": 106,
+          "back_on_solana_ms": 914,
+          "launch_tx_ms": 844,
+          "launch_ready_ms": 1811,
+          "solana_txs": [
+            {
+              "sig": "Bn7FYJRk84vqP8ZfyqR7BZhZ2TxTZrsxMW6icCEm5Pa9eLcyyg2Kbv39XyMbVM3Ekq1c4kz9c9SKo1KYPS854q5",
+              "slot": 503859246,
+              "err": null
+            },
+            {
+              "sig": "4U4beNrKwLwWB3bw6LeipDLpoudXZsQLujMwvyegmtvxukFPqAgPwPPgMV4U84LUqpjrYZ4AYmfTg6dhrzTM9C9s",
+              "slot": 503859189,
+              "err": null
+            },
+            {
+              "sig": "Wm6Dv8hJoVBd9VJDBgfUzZ1i2AJbteRhGHn8gRNiYCWJA7XzvdxvdeF5XjNo7Miun4bx3Z8QVitYQgYhVmvRSNv",
+              "slot": 503859184,
+              "err": null
+            },
+            {
+              "sig": "2PA7rXLkxiCJTA1KFMnhP8fs7jt8w1j8YFeQru89VzY3JAJyeD19S1LtA59D1SLKGNa5WWchc4AJrX9WwfW1fWsC",
+              "slot": 503859180,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859252,
+          "exit_sig": "2ijDz9smLQECwjebBfeSftDNx6UvFC3pKsJDnTabs7DdyDMjCHJ4YXEC8uxaqrjgGjdBxYQVQ4sQqKMQ8vavyUpe",
+          "launch_sig": "2i8YaDdN55snNH4nNhPTUB3h4iCGXRfXnN7SYxt8DtArjMdXVikpUeT983k35C65j41MNfnvVUXCPABPsLkqabLc",
+          "pool_lamports": 30690880
+        },
+        {
+          "delegate_solana_ms": 7688,
+          "enter_er_ms": 7991,
+          "enter_er_tries": 1,
+          "join_ms": [
+            82,
+            93
+          ],
+          "exit_er_tx_ms": 83,
+          "back_on_solana_ms": 858,
+          "launch_tx_ms": 9537,
+          "launch_ready_ms": 10457,
+          "solana_txs": [
+            {
+              "sig": "66poDapig4xXwHPD7DmQxKCRboqSCpZLtBe8yJRwWLSGb1oBgwEKTgfqytXpTVRTKjB2mFssjydnDDjgvSVCM89j",
+              "slot": 503859308,
+              "err": null
+            },
+            {
+              "sig": "2LyYsV36XYQAtRz2nBVVuVzJo47MFf6om2CbYHrFzoFRP564Qr3XjdTxjnmKUPSwZA7WBddDF3ZPMbQ1UuWgR11z",
+              "slot": 503859257,
+              "err": null
+            },
+            {
+              "sig": "2i8YaDdN55snNH4nNhPTUB3h4iCGXRfXnN7SYxt8DtArjMdXVikpUeT983k35C65j41MNfnvVUXCPABPsLkqabLc",
+              "slot": 503859252,
+              "err": null
+            },
+            {
+              "sig": "Bn7FYJRk84vqP8ZfyqR7BZhZ2TxTZrsxMW6icCEm5Pa9eLcyyg2Kbv39XyMbVM3Ekq1c4kz9c9SKo1KYPS854q5",
+              "slot": 503859246,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859313,
+          "exit_sig": "3W7XHsz1ZGPN2unFErzWjqv3LWYFu9dMiacFdtMrRvyGqyjppdcQ3CRjYvGsF135o99pBy5sJDaz3z8sSXxNkQG1",
+          "launch_sig": "4oYmXTGsNLipv5mTsHvARYcsZwC4DdfsKno17sqB79K9GW28gH8FFDTBqnickebhwxbpRw18BAdTYrpErYs5biQ5",
+          "pool_lamports": 36690880
+        },
+        {
+          "delegate_solana_ms": 7799,
+          "enter_er_ms": 8341,
+          "enter_er_tries": 1,
+          "join_ms": [
+            105,
+            117
+          ],
+          "exit_er_tx_ms": 77,
+          "back_on_solana_ms": 808,
+          "launch_tx_ms": 764,
+          "launch_ready_ms": 1624,
+          "solana_txs": [
+            {
+              "sig": "D931YFpyuUjZCzvxHerux8QUsVALqbHkuMpyJqAvHDED1QJjDPgzvD2CP36k9FK8VsR1GeEfZwyGqKxwv7vcPvc",
+              "slot": 503859430,
+              "err": null
+            },
+            {
+              "sig": "4qxtzMhDnVFrfK3BLrYBZFekKsbRXbEqtyvb75dxA9HMm1ohw388oTuNR8wVbqvzpECMEib7Lh8Z1Q7WHXebngDA",
+              "slot": 503859372,
+              "err": null
+            },
+            {
+              "sig": "4oYmXTGsNLipv5mTsHvARYcsZwC4DdfsKno17sqB79K9GW28gH8FFDTBqnickebhwxbpRw18BAdTYrpErYs5biQ5",
+              "slot": 503859313,
+              "err": null
+            },
+            {
+              "sig": "66poDapig4xXwHPD7DmQxKCRboqSCpZLtBe8yJRwWLSGb1oBgwEKTgfqytXpTVRTKjB2mFssjydnDDjgvSVCM89j",
+              "slot": 503859308,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859434,
+          "exit_sig": "5GSDxh5YdTfvhctsmXq4ZsTPNb7AtkmnidDKPtbPZ7miH1L8RNcJ4uhegCwsWECR7Au4H6RDqdAYw64dytXLvnpQ",
+          "launch_sig": "3KZSLiVtnoSJi4KmFkANRXRiMcmVNBQ7RNVJHGbNVdX3EMJ86FcxnHf3GDMoQ9XKSFNgUkLSv1cD81eCNCwSNBts",
+          "pool_lamports": 42690880
+        },
+        {
+          "delegate_solana_ms": 9836,
+          "enter_er_ms": 10072,
+          "enter_er_tries": 1,
+          "join_ms": [
+            62,
+            64
+          ],
+          "exit_er_tx_ms": 63,
+          "back_on_solana_ms": 762,
+          "launch_tx_ms": 13612,
+          "launch_ready_ms": 14410,
+          "solana_txs": [
+            {
+              "sig": "2FwQRDL2HfE1swBLQg7Jpbeh7tv9j1yMvAE74CGEj1RksCUXFGaWuUejrf2YgHYve5dW4hdpQL62ZkwxCL3oEmsZ",
+              "slot": 503859502,
+              "err": null
+            },
+            {
+              "sig": "2E5H2aKGeTP5YdtRAp4uzdmXvXVvXrX6HzydxoXak565SQ9GM64Qfz4wqV8RsNdZXZP9sXa6AeZaZP1j37sWpWTm",
+              "slot": 503859439,
+              "err": null
+            },
+            {
+              "sig": "3KZSLiVtnoSJi4KmFkANRXRiMcmVNBQ7RNVJHGbNVdX3EMJ86FcxnHf3GDMoQ9XKSFNgUkLSv1cD81eCNCwSNBts",
+              "slot": 503859434,
+              "err": null
+            },
+            {
+              "sig": "D931YFpyuUjZCzvxHerux8QUsVALqbHkuMpyJqAvHDED1QJjDPgzvD2CP36k9FK8VsR1GeEfZwyGqKxwv7vcPvc",
+              "slot": 503859430,
+              "err": null
+            }
+          ],
+          "launch_slot": 503859505,
+          "exit_sig": "4SjkTwxdG8pvMeJ5LMrhV4YZkH5mUxyZ71gyR2HxJzTEyrAhgayZWPrFMeAHi2ZNtqM2JTHzgpPMZ43offTpoD7c",
+          "launch_sig": "4wWXsQADo6sDS1AfHGQCnE9CBdT7MsQaRgaNbgFCcCzj6M34oWQAiueXA1xQkf5DVWjiVE9qR5AxUDrtAx3PLdmj",
+          "pool_lamports": 48690880
+        }
+      ],
+      "summary": {
+        "enter_er_ms": {
+          "min": 990,
+          "median": 9025,
+          "max": 11535
+        },
+        "join_ms": {
+          "min": 62,
+          "median": 82,
+          "max": 117
+        },
+        "exit_er_tx_ms": {
+          "min": 63,
+          "median": 79,
+          "max": 106
+        },
+        "back_on_solana_ms": {
+          "min": 762,
+          "median": 858,
+          "max": 1194
+        },
+        "launch_ready_ms": {
+          "min": 1593,
+          "median": 1874,
+          "max": 14410
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "mooner-presale"
+version = "0.1.0"
+edition = "2021"
+description = "Mooner presale vault: buyers deposit SOL, one pooled buy at launch, pro-rata claims"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "=2.3.0"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+opt-level = "z"

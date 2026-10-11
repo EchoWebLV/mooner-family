@@ -1,0 +1,25 @@
+[package]
+name = "er-speed"
+version = "0.1.0"
+edition = "2021"
+
+# Devnet timing test: how long a pool takes to leave a MagicBlock Ephemeral Rollup and be
+# usable on Solana again. Dependency versions match magicblock-engine-examples/counter/native-rust.
+
+[features]
+no-entrypoint = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+borsh = "1.6.1"
+solana-program = "4.0.0"
+solana-system-interface = { version = "3.0.0", features = ["bincode"] }
+ephemeral-rollups-sdk = { version = "0.16.2" }
+
+[lib]
+name = "er_speed"
+crate-type = ["cdylib", "lib"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
