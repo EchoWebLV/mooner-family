@@ -70,5 +70,9 @@ export function makeApi(base = "", fetchFn = (url, init) => fetch(url, init), { 
     // XP and the Seeker Genesis check (server/xproutes.js)
     xp: async (wallet) => (await call("GET", `/api/xp/${encodeURIComponent(wallet)}`)).json,
     genesis: async (token) => (await call("POST", "/api/genesis", { token })).json,
+    // the wallet's X account, for Raider XP (server/xlink.js)
+    xLink: async (wallet) => (await call("GET", `/api/x/${encodeURIComponent(wallet)}`)).json.x ?? null,
+    xStart: async (token) => (await call("POST", "/api/x/start", { token })).json.url,
+    xUnlink: async (token) => (await call("POST", "/api/x/unlink", { token })).json,
   };
 }

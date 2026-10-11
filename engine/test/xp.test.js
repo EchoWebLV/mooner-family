@@ -10,7 +10,7 @@ test("xp rules: four titles, the web's curve, one points table", () => {
     assert.ok(Number.isInteger(p.points) && p.points > 0, `${reason} is worth whole points`);
     assert.ok(p.title === null ? reason === "genesis" : TITLES.includes(p.title), `${reason} counts for a title`);
   }
-  assert.deepEqual(Object.keys(POINTS), ["devLaunch", "devMigrate", "kolLaunch", "kolMigrate", "raiderJoin", "diamondMigrate", "genesis"]);
+  assert.deepEqual(Object.keys(POINTS), ["devLaunch", "devMigrate", "kolLaunch", "kolMigrate", "raiderJoin", "raiderPost", "raiderRepost", "raiderHit", "diamondMigrate", "genesis"]);
 });
 
 test("xp rules: the board on `profiles` is the top 500", () => {

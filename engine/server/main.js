@@ -19,10 +19,12 @@ import { NoPin, Pinata } from "./pinata.js";
 import { Keeper } from "./keeper.js";
 import { makeReads, makeRoutes } from "./api.js";
 import { makeSessions, makeSocialRoutes } from "./social.js";
-import { Referrals } from "./referrals.js";
 import { XpLedger } from "./xp.js";
 import { XpRules, holds, keeperHooks, openSeats, readLaunch } from "./xprules.js";
 import { makeXpRoutes } from "./xproutes.js";
+import { XLinks, makeXRoutes } from "./xlink.js";
+import { Raiders } from "./raiders.js";
+import { Sorsa } from "./sorsa.js";
 import { appLinksLog, makeAppLinkRoutes } from "./applinks.js";
 import { makeRpcRoutes } from "./rpcproxy.js";
 import { createServer } from "./http.js";
@@ -139,7 +141,7 @@ const feed = new Feed({
 });
 const xpPush = (wallets) => feed.xpChanged(ledger.rows(wallets, Date.now()));
 const rules = new XpRules({
-  ledger, referrals: new Referrals(ctx.store.db),
+  ledger,
   readLaunch: (presale) => readLaunch(ctx.bot, ctx.l1, presale),
   openSeats: (presale) => openSeats(ctx.bot, presale),
   holds: (wallet, mint) => holds(ctx.l1, wallet, mint),
@@ -153,6 +155,14 @@ const keeper = new Keeper({
   bot: ctx.bot, store: ctx.store, pid: cfg.pid, pollMs: cfg.pollMs, scanMs: cfg.scanMs, log: (m) => log(`keeper ${m}`),
   onScan: (keys) => feed.scanned(keys), ...keeperHooks({ feed, rules, log }),
 }).start();
+// Raider XP from X (xlink.js, raiders.js): X sign-in links a wallet, Sorsa reads the posts
+const xLinks = new XLinks(ctx.store.db);
+const raiders = cfg.sorsaKey && new Raiders({
+  sorsa: new Sorsa({ key: cfg.sorsaKey, perDay: cfg.sorsaPerDay }), links: xLinks, ledger,
+  coins: () => ctx.store.launches(100_000).map((l) => ({ mint: l.mint, symbol: l.token.symbol, at: l.launch.at })),
+  onChange: xpPush, log: (m) => log(m),
+});
+const sessions = makeSessions(ctx.store.db);
 const routes = makeRoutes({
   pid: cfg.pid, l1: ctx.l1, bot: ctx.bot, gateKey: ctx.gate, alt: ctx.alt, dbcConfig: cfg.dbcConfig, store: ctx.store,
   pinner: ctx.pinner, openers: ctx.openers, cluster: cfg.cluster, canary: cfg.canary, keeper, feed, xp: rules, reads,
@@ -160,8 +170,13 @@ const routes = makeRoutes({
   store: ctx.store, isPresale: (key) => !!ctx.store.tokenOfPresale(new PublicKey(key)),
   onChat: (row) => feed.chat(row), onProfile: (wallet, pfp) => feed.profile(wallet, pfp),
 })).concat(makeAppLinkRoutes({ certs: cfg.androidCerts })).concat(makeXpRoutes({
-  ledger, l1: ctx.l1, walletOf: makeSessions(ctx.store.db).walletOf, onXp: xpPush,
+  ledger, l1: ctx.l1, walletOf: sessions.walletOf, onXp: xpPush,
+})).concat(makeXRoutes({
+  links: xLinks, walletOf: sessions.walletOf, clientId: cfg.xClientId, clientSecret: cfg.xClientSecret, callback: cfg.xCallback,
+  onLink: (wallet, link) => raiders?.linked(wallet, link), log,
 })).concat(makeRpcRoutes({ url: cfg.appRpc, log }));
+log(cfg.xClientId && cfg.xClientSecret && cfg.xCallback ? `X sign-in on, back to ${cfg.xCallback}` : "X sign-in off (set X_CLIENT_ID, X_CLIENT_SECRET, MOONER_X_CALLBACK)");
+log(raiders ? `Raider XP from X on, ${xLinks.count()} linked account(s), ${cfg.sorsaPerDay} Sorsa requests a day at most` : "Raider XP from X off (set SORSA_API_KEY)");
 if (cfg.appRpc !== cfg.rpc) log(`the apps' RPC (/api/rpc): ${new URL(cfg.appRpc).host}`);
 const web = fs.existsSync(`${cfg.web}/index.html`) ? cfg.web : null;
 log(web ? `web app from ${web}` : `no web app at ${cfg.web} (npm run build in web/): API only`);
@@ -173,6 +188,7 @@ const hub = new Hub(server, {
 await feed.start(hub);
 // what launched or migrated while the server was down (the feed has read its pools)
 rules.catchUp().catch((e) => log(`xp: catch-up: ${e?.message ?? e}`));
+raiders?.start();
 log("live updates on /api/ws");
 server.listen(cfg.port, cfg.host, () => log(`listening on http://${cfg.host}:${server.address().port}`));
 
@@ -184,6 +200,7 @@ async function shutdown(sig) {
   hub.close();
   server.close();
   await keeper.stop();
+  await raiders?.stop();
   await feed.stop();
   ctx.store.close();
   process.exit(0);

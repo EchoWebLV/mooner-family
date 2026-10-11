@@ -4,12 +4,13 @@
 // was down. Every point goes through XpLedger.award, which counts an event once, so a call
 // that runs twice (a retry, the catch-up after a live event) gives nothing twice.
 //
-//   launch     Dev (the presale's creator), KOL (each other seat with SOL in), Raider (each
-//              confirmed referral whose joiner has a seat with SOL in; never yourself)
+//   launch     Dev (the presale's creator), KOL (each other seat with SOL in)
 //   migration  Dev and KOL again (whoever got them at launch), Diamond Hands (each seat whose
 //              wallet still holds its presale share, or whose seat is still open: nothing
 //              delivered, nothing sold)
 //   co-sign    a confirmed join or open (api.js): that UTC day, for the streak
+//   X          Raider: posts and reposts about a coin from a linked X account (raiders.js);
+//              referrals gave Raider XP (raiderJoin) until 2026-10-10
 //
 // Seats are counted before any claim: a claim closes its seat (finish.rs), so the keeper hands
 // over the seats it reads right before its claims (keeperHooks onSeats -> seatsRead), and the
@@ -57,13 +58,13 @@ export async function holds(l1, wallet, mint) {
 
 export class XpRules {
   /**
-   * `ledger`: an XpLedger. `referrals`: Referrals. `readLaunch(presale)`, `openSeats(presale)`,
+   * `ledger`: an XpLedger. `readLaunch(presale)`, `openSeats(presale)`,
    * `holds(wallet, mint)`: the reads above, bound to the server's bot and connection.
    * `launches()`: every launch ({ presale, mint }, store.launches). `isMigrated(mint)`: the
    * feed knows the coin's DBC pool migrated. `onChange(wallets)`: their rows changed.
    */
-  constructor({ ledger, referrals, readLaunch, openSeats, holds, launches, isMigrated, onChange = () => {}, now = Date.now, log = console.log, tries = 3, retryMs = 500 }) {
-    Object.assign(this, { ledger, referrals, readLaunch, openSeats, holds, launches, isMigrated, onChange, now, log, tries, retryMs });
+  constructor({ ledger, readLaunch, openSeats, holds, launches, isMigrated, onChange = () => {}, now = Date.now, log = console.log, tries = 3, retryMs = 500 }) {
+    Object.assign(this, { ledger, readLaunch, openSeats, holds, launches, isMigrated, onChange, now, log, tries, retryMs });
   }
 
   /** A confirmed join or open by `wallet` at `at` (ms), from api.js: a streak day. */
@@ -104,8 +105,8 @@ export class XpRules {
     this.count(presale, l);
   }
 
-  /** Counts `presale`'s launch from `l` (launchOf) in one write: Dev, KOL, Raider, each seat's
-   *  share kept, and the launch marked done. Nothing when it's done already. */
+  /** Counts `presale`'s launch from `l` (launchOf) in one write: Dev, KOL, each seat's share
+   *  kept, and the launch marked done. Nothing when it's done already. */
   count(presale, l) {
     if (this.ledger.done(presale, "launch")) return;
     const at = this.now();
@@ -115,10 +116,6 @@ export class XpRules {
       const paid = l.seats.filter((s) => s.commit > 0n);
       give(l.creator, "devLaunch", presale);
       for (const s of paid) if (s.wallet !== l.creator) give(s.wallet, "kolLaunch", presale);
-      const seated = new Set(paid.map((s) => s.wallet));
-      for (const r of this.referrals.confirmedIn(presale)) {
-        if (seated.has(r.user) && r.referrer !== r.user) give(r.referrer, "raiderJoin", `${presale}:${r.user}`);
-      }
       this.ledger.keepSeats(presale, l.mint, paid.map((s) => ({ wallet: s.wallet, tokens: tokenShare(l.total, 0n, s.commit, l.raised, false) })));
       this.ledger.markDone(presale, "launch", at);
     });

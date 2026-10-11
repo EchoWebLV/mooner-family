@@ -15,6 +15,12 @@ export const LEVEL_XP = [0, 100, 300, 800, 2000];
  *   kolLaunch      you put SOL in someone else's presale and it launched
  *   kolMigrate     ... and the coin migrated
  *   raiderJoin     a wallet joined through your link, put SOL in, and the presale launched
+ *                  (no longer given since 2026-10-10; kept for the rows that have it)
+ *   raiderPost     your linked X account posted about a Mooner coin ($TICKER or its address,
+ *                  a quote counts, a reply doesn't): once per coin per UTC day
+ *   raiderRepost   ... reposted one of the coin's top posts: once per coin per UTC day
+ *   raiderHit      one of your posts about the coin got RAIDER_HIT likes, reposts, replies and
+ *                  quotes together: once per coin
  *   diamondMigrate at migration your wallet still held the tokens the presale gave you
  *   genesis        your Seeker Genesis Token, once */
 export const POINTS = {
@@ -23,9 +29,22 @@ export const POINTS = {
   kolLaunch: { title: "kol", points: 25 },
   kolMigrate: { title: "kol", points: 50 },
   raiderJoin: { title: "raider", points: 25 },
+  raiderPost: { title: "raider", points: 10 },
+  raiderRepost: { title: "raider", points: 5 },
+  raiderHit: { title: "raider", points: 25 },
   diamondMigrate: { title: "diamond", points: 100 },
   genesis: { title: null, points: 250 },
 };
+
+/** Likes, reposts, replies and quotes on one post for raiderHit. */
+export const RAIDER_HIT = 20;
+
+/** What an X account needs before its posts and reposts give Raider XP (the jackpot keeper's
+ *  floor against throwaway accounts): this many followers and this many days since it was made. */
+export const RAIDER_FLOOR = { followers: 50, days: 90 };
+
+/** An X account with `followers` that was made at `since` (ms) passes RAIDER_FLOOR at `now`. */
+export const raiderOk = (followers, since, now) => followers >= RAIDER_FLOOR.followers && Number.isFinite(since) && now - since >= RAIDER_FLOOR.days * 86_400_000;
 
 /** How many wallets the board on `profiles` holds: the top ones by total, ties by wallet. */
 export const BOARD_TOP = 500;

@@ -25,7 +25,6 @@ function setup(over = {}) {
   const logs = [];
   const rules = new XpRules({
     ledger,
-    referrals,
     readLaunch: async () => assert.fail("no launch read in this test"),
     openSeats: async () => [],
     holds: async () => 0n,
@@ -55,28 +54,23 @@ function launched() {
   return { presale, mint, creator, a, b, c, empty, launch, share };
 }
 
-test("XpRules: a launch gives Dev to the creator, KOL to each other seat with SOL in, Raider for each confirmed referral that came in", async () => {
+test("XpRules: a launch gives Dev to the creator, KOL to each other seat with SOL in, and nothing for referrals (Raider comes from X since 2026-10-10)", async () => {
   const L = launched();
   const w = setup({ readLaunch: async (p) => (assert.equal(p, L.presale), L.launch) });
   const [raider, stranger] = [key(), key()];
   const pk = (s) => new PublicKey(s);
-  w.referrals.add(pk(L.presale), pk(L.a), raider, "S1", T, true); // counts
-  w.referrals.add(pk(L.presale), pk(L.b), raider, "S2", T, false); // unconfirmed: no
-  w.referrals.add(pk(L.presale), pk(L.empty), raider, "S3", T, true); // no SOL in: no
-  w.referrals.add(pk(L.presale), stranger, raider, "S4", T, true); // no seat at launch: no
-  w.referrals.add(pk(L.presale), pk(L.c), pk(L.c), "S5", T, true); // yourself: no
+  w.referrals.add(pk(L.presale), pk(L.a), raider, "S1", T, true); // a confirmed referral that came in
+  w.referrals.add(pk(L.presale), stranger, raider, "S4", T, true);
   await w.rules.launched(L.presale);
   const counts = (wallet) => w.ledger.row(wallet, T).counts;
   assert.equal(counts(L.creator).devLaunch, 1);
   assert.equal(counts(L.creator).kolLaunch, 0, "the creator's own seat isn't KOL");
   for (const k of [L.a, L.b, L.c]) assert.equal(counts(k).kolLaunch, 1);
   assert.equal(counts(L.empty).kolLaunch, 0, "a seat with nothing in isn't KOL");
-  assert.equal(counts(raider.toBase58()).raiderJoin, 1, "one confirmed referral that came in");
-  assert.equal(counts(L.c).raiderJoin, 0, "never yourself");
-  assert.equal(w.ledger.row(raider.toBase58(), T).total, POINTS.raiderJoin.points);
+  assert.equal(w.ledger.row(raider.toBase58(), T).total, 0, "a referral gives no XP");
   const kept = [L.creator, L.a, L.b, L.c].map((wallet) => ({ wallet, mint: L.mint, tokens: L.share(wallet) }));
   assert.deepEqual(w.ledger.seatsOf(L.presale), kept.sort(byWallet), "each seat with SOL in keeps its claim's share");
-  assert.deepEqual(new Set(w.changes), new Set([L.creator, L.a, L.b, L.c, raider.toBase58()]));
+  assert.deepEqual(new Set(w.changes), new Set([L.creator, L.a, L.b, L.c]));
   assert.equal(w.ledger.done(L.presale, "launch"), true);
   w.changes.length = 0;
   await w.rules.launched(L.presale);
@@ -202,11 +196,9 @@ test("the reads: the presale as launch left it, the seats still open, a wallet's
 
 test("XpRules: the seats the keeper reads before its claims count the launch, though the read after the launch lands late and finds them claimed", async () => {
   const L = launched();
-  const raider = b58();
   const claimed = { ...L.launch, seats: L.launch.seats.filter((s) => s.wallet === L.c) }; // a, b and the creator claimed: their seats closed
   let reads = 0;
   const w = setup({ readLaunch: async () => (reads++, claimed) });
-  w.referrals.add(new PublicKey(L.presale), new PublicKey(L.a), new PublicKey(raider), "S1", T, true);
   const reading = w.rules.launched(L.presale); // onLaunch: the read goes out
   w.rules.seatsRead(L.presale, L.launch); // the keeper's tick, right before its claims
   await reading;
@@ -214,10 +206,9 @@ test("XpRules: the seats the keeper reads before its claims count the launch, th
   const counts = (wallet) => w.ledger.row(wallet, T).counts;
   assert.equal(counts(L.creator).devLaunch, 1);
   assert.deepEqual([L.a, L.b, L.c].map((k) => counts(k).kolLaunch), [1, 1, 1], "every seat with SOL in, claimed later or not");
-  assert.equal(counts(raider).raiderJoin, 1);
   assert.deepEqual(w.ledger.seatsOf(L.presale).map((s) => s.wallet), [L.creator, L.a, L.b, L.c].sort(), "each seat kept for Diamond Hands");
   assert.equal(w.ledger.done(L.presale, "launch"), true);
-  assert.deepEqual(w.changes.sort(), [L.creator, L.a, L.b, L.c, raider].sort(), "each wallet pushed once");
+  assert.deepEqual(w.changes.sort(), [L.creator, L.a, L.b, L.c].sort(), "each wallet pushed once");
 
   // the other way round: the read counted it first, the keeper's seats add nothing
   const M = launched();

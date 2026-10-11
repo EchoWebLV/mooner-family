@@ -25,6 +25,10 @@
 //   MOONER_SCAN_MS       time between the keeper's full scans   (10000)
 //   PINATA_JWT           Pinata API key; required on mainnet
 //   MOONER_IPFS_GATEWAY  prefix of the token links            (IPFS_GATEWAY)
+//   X_CLIENT_ID, X_CLIENT_SECRET  the X app's OAuth 2.0 keys, for X sign-in (xlink.js); none: no linking
+//   MOONER_X_CALLBACK    this server's /api/x/callback, exactly as the X app lists it
+//   SORSA_API_KEY        Sorsa key, for Raider XP from X (raiders.js); none: no Raider XP from X
+//   MOONER_SORSA_PER_DAY Sorsa requests allowed each UTC day   (300)
 //   MOONER_ANDROID_CERTS SHA-256 fingerprints of the Android app's signing keys, comma or space
 //                        separated, for /.well-known/assetlinks.json (none: no such file)
 
@@ -104,6 +108,11 @@ export function loadConfig(env = process.env) {
     scanMs: Number(env.MOONER_SCAN_MS ?? 10_000),
     pinataJwt: env.PINATA_JWT || null,
     gateway: env.MOONER_IPFS_GATEWAY ?? IPFS_GATEWAY,
+    xClientId: env.X_CLIENT_ID || null,
+    xClientSecret: env.X_CLIENT_SECRET || null,
+    xCallback: env.MOONER_X_CALLBACK || null,
+    sorsaKey: env.SORSA_API_KEY || null,
+    sorsaPerDay: Number(env.MOONER_SORSA_PER_DAY ?? 300),
     ...androidCertsFrom(env.MOONER_ANDROID_CERTS ?? ""),
   };
 }

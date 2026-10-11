@@ -10,7 +10,7 @@ import { DAY_MS, POINTS } from "../src/xp.js";
 const wallet = () => Keypair.generate().publicKey.toBase58();
 const T = Date.UTC(2026, 9, 1, 12); // 2026-10-01 12:00 UTC
 const ZERO_TITLES = { dev: 0, kol: 0, raider: 0, diamond: 0 };
-const ZERO_COUNTS = { devLaunch: 0, devMigrate: 0, kolLaunch: 0, kolMigrate: 0, raiderJoin: 0, diamondMigrate: 0 };
+const ZERO_COUNTS = { devLaunch: 0, devMigrate: 0, kolLaunch: 0, kolMigrate: 0, raiderJoin: 0, raiderPost: 0, raiderRepost: 0, raiderHit: 0, diamondMigrate: 0 };
 
 test("XpLedger: an event counts once per ref, and the rows stay on a second open of the file", () => {
   const store = new Store(":memory:");

@@ -13,12 +13,14 @@ const read = (f) => fs.readFileSync(new URL(`../../${f}`, import.meta.url), "utf
 const SAME = { PRESALE_TARGET: "TARGET", MIN_COMMIT: "MIN_SEAT", MAX_COMMIT: "MAX_SEAT", COMMIT_STEP: "STEP" };
 
 /** What in a constants.ts differs from N. The creator cap is worked out from the file's own
- *  expression and must be what the co-signer and the program allow: min(MAX_SEAT, TARGET - MIN_SEAT). */
+ *  expression and must be what the co-signer and the program allow: min(MAX_SEAT, TARGET - MIN_SEAT).
+ *  A number may be `FULL_POOL ? <recording> : <n>` (web's VITE_FULL_POOL=1, for the demo server);
+ *  <n>, what every other build uses, is the one checked. */
 function webDiffers(src, N) {
   const out = [];
   const vals = {};
   for (const [web, eng] of Object.entries(SAME)) {
-    const m = src.match(new RegExp(`^export const ${web} = ([0-9_]+)$`, "m"));
+    const m = src.match(new RegExp(`^export const ${web} = (?:FULL_POOL \\? [0-9_]+ : )?([0-9_]+)$`, "m"));
     if (!m) { out.push(`${web} is missing or not a plain number`); continue; }
     vals[web] = BigInt(m[1].replaceAll("_", ""));
     if (vals[web] !== N[eng]) out.push(`${web} is ${vals[web]}, ${eng} is ${N[eng]}`);

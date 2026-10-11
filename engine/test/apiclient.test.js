@@ -145,6 +145,22 @@ test("xp reads a wallet's row with a GET; genesis posts the sign-in", async () =
   assert.deepEqual(JSON.parse(f.calls[1].init.body), { token: "T" });
 });
 
+test("xLink reads a wallet's X account; xStart and xUnlink post the sign-in", async () => {
+  const x = { handle: "moonboi", name: "Moon Boi", avatar: null, ok: true };
+  const f = fakeFetch([[200, { x }], [200, { x: null }], [200, { url: "https://x.com/i/oauth2/authorize?a=1" }], [200, { x: null }]]);
+  const api = makeApi("https://app.mooner.family", f);
+  assert.deepEqual(await api.xLink("a/b"), x);
+  assert.equal(f.calls[0].url, "https://app.mooner.family/api/x/a%2Fb");
+  assert.equal(f.calls[0].init.method, "GET");
+  assert.equal(await api.xLink("W"), null);
+  assert.equal(await api.xStart("T"), "https://x.com/i/oauth2/authorize?a=1");
+  assert.equal(f.calls[2].url, "https://app.mooner.family/api/x/start");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body), { token: "T" });
+  assert.deepEqual(await api.xUnlink("T"), { x: null });
+  assert.equal(f.calls[3].url, "https://app.mooner.family/api/x/unlink");
+  assert.deepEqual(JSON.parse(f.calls[3].init.body), { token: "T" });
+});
+
 test("xp puts the wallet in the path encoded", async () => {
   const f = fakeFetch([[200, {}]]);
   await makeApi("", f).xp("a/b?c#d");

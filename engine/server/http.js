@@ -122,7 +122,8 @@ function sendFile(res, root, file, method) {
 /**
  * routes: [{ method, path: RegExp (named groups become params), body: max bytes, cors?, handler }]
  * A handler gets { params, body, ip, url } and returns { status?, json, type? } (type: the
- * content-type; JSON in UTF-8 by default), or { raw } in place of json: text sent as it is.
+ * content-type; JSON in UTF-8 by default), or { raw } in place of json: text sent as it is,
+ * or { location }: a redirect there (302 unless `status` says otherwise).
  * `cors: false` on a route: no Access-Control-Allow-Origin on its path, so only our own
  * pages (and apps, which have no CORS) can read it.
  * `web`: the built web app's folder (absolute), served for GETs outside /api/.
@@ -170,6 +171,10 @@ export function createServer(routes, { cors = "*", trustProxy = false, log = con
       if (!hit) throw new HttpError(pathMatched ? 405 : 404, pathMatched ? "method not allowed" : "not found");
       const body = req.method === "POST" ? await readBody(req, hit.r.body ?? 65_536) : {};
       const out = await hit.r.handler({ params: hit.params, body, ip: clientIp(req, trustProxy), url });
+      if (out.location) {
+        res.writeHead(out.status ?? 302, { location: out.location, "cache-control": "no-store", "referrer-policy": "no-referrer" });
+        return res.end();
+      }
       reply(out.status ?? 200, out.json, out.type, out.raw);
     } catch (e) {
       if (e instanceof HttpError) {
